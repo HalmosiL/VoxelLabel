@@ -1,0 +1,17 @@
+[project]
+name = "shared-auth"
+version = "0.1.0"
+description = "Keycloak JWT validation and project-role authorization helpers for the CT annotation platform"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "pyjwt[crypto]>=2.8",
+    "sqlalchemy>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shared_auth*"]

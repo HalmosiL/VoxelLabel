@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ctplatform
+      POSTGRES_PASSWORD: ctplatform
+      POSTGRES_DB: ctplatform
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  # Dev-mode Keycloak (in-memory, single node). Production uses the
+  # Keycloak Operator with its own HA Postgres -- see infra/k8s/README.md.
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+
+  ingestion-service:
+    build:
+      context: .
+      dockerfile: services/ingestion-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+    ports:
+      - "8001:8000"
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: services/ingestion-service/Dockerfile
+    command: ["celery", "-A", "app.worker", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+  data-service:
+    build:
+      context: .
+      dockerfile: services/data-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+    ports:
+      - "8002:8000"
+    depends_on:
+      - postgres
+      - minio
+
+  annotation-service:
+    build:
+      context: .
+      dockerfile: services/annotation-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+    ports:
+      - "8003:8000"
+    depends_on:
+      - postgres
+
+  admin-service:
+    build:
+      context: .
+      dockerfile: services/admin-service/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+    ports:
+      - "8004:8000"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres-data:
+  minio-data:

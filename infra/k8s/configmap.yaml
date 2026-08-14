@@ -1,0 +1,14 @@
+# Non-secret configuration shared by all services. Secrets (DB credentials,
+# object storage keys) live in secret.example.yaml instead -- never commit
+# real secret values here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ct-platform-config
+  namespace: ct-platform
+data:
+  OBJECT_STORAGE_ENDPOINT: "http://minio:9000"
+  OBJECT_STORAGE_BUCKET: "ct-pixel-data"
+  KEYCLOAK_ISSUER: "http://keycloak:8080/realms/ct-platform"
+  KEYCLOAK_AUDIENCE: "ct-platform"
+  REDIS_URL: "redis://redis:6379/0"

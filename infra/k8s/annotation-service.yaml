@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: annotation-service
+  namespace: ct-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: annotation-service
+  template:
+    metadata:
+      labels:
+        app: annotation-service
+    spec:
+      containers:
+        - name: annotation-service
+          image: REPLACE_WITH_REGISTRY/annotation-service:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: ct-platform-config
+            - secretRef:
+                name: ct-platform-secrets
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: annotation-service
+  namespace: ct-platform
+spec:
+  selector:
+    app: annotation-service
+  ports:
+    - port: 80
+      targetPort: 8000

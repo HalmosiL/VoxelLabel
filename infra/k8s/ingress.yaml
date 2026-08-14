@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ct-platform
+  namespace: ct-platform
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ct-platform.example.internal
+      http:
+        paths:
+          - path: /api/ingestion(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: ingestion-service, port: { number: 80 } }
+          - path: /api/data(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: data-service, port: { number: 80 } }
+          - path: /api/annotation(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: annotation-service, port: { number: 80 } }
+          - path: /api/admin(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: admin-service, port: { number: 80 } }
+          - path: /auth(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service: { name: keycloak, port: { number: 8080 } }
