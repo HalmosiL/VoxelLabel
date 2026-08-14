@@ -1,5 +1,4 @@
 """HTTP API for DICOM ingestion: upload and job status."""
-import os
 import uuid
 
 from fastapi import APIRouter, Depends, UploadFile
@@ -8,7 +7,7 @@ from sqlalchemy.orm import Session
 from shared_auth import CurrentUser, get_current_user, require_project_role
 from shared_models.database import get_db
 
-from app.core.config import settings
+from app.storage import upload_staged_file
 from app.tasks import ingest_dicom_file
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
@@ -25,14 +24,14 @@ async def upload_dicom(
 
     Returns immediately with a job id; processing happens asynchronously in
     the Celery worker (see app/worker.py, app/tasks.py, app/pipeline.py).
+    The file is staged in object storage, not local disk -- this API and
+    the worker run in separate containers with no shared filesystem.
     """
     require_project_role(db, project_id, user, allowed_roles=["data_manager", "admin"])
 
     job_id = str(uuid.uuid4())
-    os.makedirs(settings.staging_dir, exist_ok=True)
-    staged_path = os.path.join(settings.staging_dir, f"{job_id}.dcm")
-    with open(staged_path, "wb") as staged_file:
-        staged_file.write(await file.read())
+    staging_key = f"_staging/{job_id}.dcm"
+    upload_staged_file(staging_key, await file.read())
 
-    ingest_dicom_file.delay(job_id=job_id, project_id=project_id, staged_path=staged_path)
+    ingest_dicom_file.delay(job_id=job_id, project_id=project_id, staging_key=staging_key)
     return {"job_id": job_id, "status": "queued"}

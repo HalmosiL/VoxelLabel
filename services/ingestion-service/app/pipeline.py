@@ -4,6 +4,7 @@ Kept separate from the Celery task wrapper (app/tasks.py) so this logic can
 be unit-tested directly, without a running Celery worker or broker.
 """
 import hashlib
+import io
 import uuid
 
 import pydicom
@@ -13,7 +14,7 @@ from shared_models.database import SessionLocal
 from shared_models.models import Instance, Patient, PatientIdentityMap, Series, Study
 
 from app.deidentify import apply_deidentification_profile
-from app.storage import upload_pixel_data
+from app.storage import delete_staged_file, download_staged_file, upload_pixel_data
 
 REQUIRED_TAGS = ("StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID")
 
@@ -22,10 +23,14 @@ class DicomValidationError(Exception):
     """Raised when an uploaded file is missing required DICOM tags."""
 
 
-def ingest_dicom(job_id: str, project_id: str, staged_path: str) -> dict:
+def ingest_dicom(job_id: str, project_id: str, staging_key: str) -> dict:
     """Process one staged DICOM file end to end. Idempotent: re-ingesting an
-    already-known SOPInstanceUID is a no-op that reports "duplicate"."""
-    dataset = pydicom.dcmread(staged_path)
+    already-known SOPInstanceUID is a no-op that reports "duplicate".
+
+    The staged file is fetched from object storage (not local disk) since
+    this runs in a separate container/process from the API that staged it.
+    """
+    dataset = pydicom.dcmread(io.BytesIO(download_staged_file(staging_key)))
 
     missing = [tag for tag in REQUIRED_TAGS if tag not in dataset]
     if missing:
@@ -37,6 +42,7 @@ def ingest_dicom(job_id: str, project_id: str, staged_path: str) -> dict:
     try:
         existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
         if existing is not None:
+            delete_staged_file(staging_key)
             return {"job_id": job_id, "status": "duplicate", "instance_id": str(existing.id)}
 
         storage_key = f"{dataset.StudyInstanceUID}/{dataset.SeriesInstanceUID}/{dataset.SOPInstanceUID}.dcm"
@@ -56,6 +62,7 @@ def ingest_dicom(job_id: str, project_id: str, staged_path: str) -> dict:
         )
         db.add(instance)
         db.commit()
+        delete_staged_file(staging_key)
         return {"job_id": job_id, "status": "completed", "instance_id": str(instance.id)}
     finally:
         db.close()

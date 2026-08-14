@@ -17,7 +17,7 @@ def _require_global_admin(user: CurrentUser) -> None:
 @router.post("")
 def create_project(
     name: str,
-    description: str | None,
+    description: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:

@@ -10,6 +10,8 @@ global Keycloak `admin` realm role.
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
 - `POST /admin/deidentification-profiles` -- create a de-identification profile
 - `POST /admin/deidentification-profiles/{profile_id}/rules` -- add a per-tag rule (keep/remove/replace_fixed/hash)
+- `POST /admin/annotation-types` -- register a new annotation type with its JSON Schema
+- `GET /admin/annotation-types` -- list registered annotation types
 - `GET /health` -- liveness/readiness probe
 
 ## Module layout
@@ -19,6 +21,7 @@ global Keycloak `admin` realm role.
 | `app/main.py` | FastAPI app, route registration |
 | `app/api/projects.py` | Project + membership management |
 | `app/api/deidentification.py` | De-identification profile/rule management |
+| `app/api/annotation_types.py` | Annotation type registration (the JSON Schema that `annotation-service` validates payloads against) |
 
 ## Running standalone
 

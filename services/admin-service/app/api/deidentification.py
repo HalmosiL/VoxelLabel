@@ -40,7 +40,7 @@ def add_rule(
     profile_id: uuid.UUID,
     dicom_tag: str,
     action: DeidentificationAction,
-    replacement_value: str | None,
+    replacement_value: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:

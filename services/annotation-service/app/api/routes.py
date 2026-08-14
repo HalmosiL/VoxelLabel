@@ -75,7 +75,7 @@ def list_annotations_for_target(
 def review_annotation(
     annotation_id: uuid.UUID,
     decision: str,
-    comment: str | None,
+    comment: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
