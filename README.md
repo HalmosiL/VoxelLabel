@@ -42,9 +42,9 @@ services. Ports:
 | Keycloak | 8080 |
 | MinIO console | 9001 |
 
-**First-time setup still needed** (not yet automated):
-1. Configure a `ct-platform` realm and client in Keycloak (http://localhost:8080).
-2. Generate and apply the initial DB migration -- see `infra/migrations/README.md`.
+**First-time setup:**
+1. `./infra/keycloak/setup-dev-realm.sh` -- provisions the `ct-platform` realm, client, and a test admin user (see `infra/keycloak/README.md`). Safe to re-run.
+2. Generate and apply the initial DB migration -- see `infra/migrations/README.md`. (Already generated: `infra/migrations/versions/0e59bfd285e6_initial_schema.py` -- just run `make migrate` against a fresh database.)
 
 ## Running a single service outside Docker
 

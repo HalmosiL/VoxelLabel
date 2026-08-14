@@ -37,6 +37,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
       - "8080:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
 
   ingestion-service:
     build:
@@ -109,3 +111,4 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  keycloak-data:
