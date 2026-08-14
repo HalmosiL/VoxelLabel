@@ -24,8 +24,17 @@ from sqlalchemy.orm import Session
 KEYCLOAK_ISSUER = os.environ.get("KEYCLOAK_ISSUER", "http://keycloak:8080/realms/ct-platform")
 KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "ct-platform")
 
+# The `iss` claim in a token reflects whatever hostname the *caller* used to
+# reach Keycloak -- a browser goes through the published port (e.g.
+# localhost:8080), while a backend-to-backend caller inside the docker/k8s
+# network uses the internal service hostname (e.g. keycloak:8080). Those can
+# differ, so JWKS fetching (this service reaching Keycloak) is configured
+# separately from issuer validation (matching what's actually in the token).
+# Defaults to KEYCLOAK_ISSUER for the common case where they're the same.
+KEYCLOAK_JWKS_URL = os.environ.get("KEYCLOAK_JWKS_URL", f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs")
+
 _bearer_scheme = HTTPBearer()
-_jwks_client = jwt.PyJWKClient(f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs")
+_jwks_client = jwt.PyJWKClient(KEYCLOAK_JWKS_URL)
 
 
 @dataclass

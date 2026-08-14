@@ -48,7 +48,8 @@ services:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
       REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
     ports:
       - "8001:8000"
     depends_on:
@@ -77,7 +78,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
     ports:
       - "8002:8000"
     depends_on:
@@ -90,7 +92,8 @@ services:
       dockerfile: services/annotation-service/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
-      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
     ports:
       - "8003:8000"
     depends_on:
@@ -102,11 +105,23 @@ services:
       dockerfile: services/admin-service/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
-      KEYCLOAK_ISSUER: http://keycloak:8080/realms/ct-platform
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
     ports:
       - "8004:8000"
     depends_on:
       - postgres
+
+  # Browser-facing React app -- talks to the four APIs and Keycloak directly
+  # from the browser (all ports above are published to the host), not
+  # server-to-server, so no runtime env wiring is needed here beyond the
+  # build-time defaults in admin-ui/src/config.ts.
+  admin-ui:
+    build:
+      context: .
+      dockerfile: admin-ui/Dockerfile
+    ports:
+      - "5173:80"
 
 volumes:
   postgres-data:

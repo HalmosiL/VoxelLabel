@@ -14,6 +14,19 @@ def _require_global_admin(user: CurrentUser) -> None:
         raise HTTPException(status_code=403, detail="Admin realm role required")
 
 
+@router.get("")
+def list_projects(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    _require_global_admin(user)
+    projects = db.query(Project).all()
+    return [
+        {"id": str(p.id), "name": p.name, "description": p.description, "deidentification_profile_id": str(p.deidentification_profile_id) if p.deidentification_profile_id else None}
+        for p in projects
+    ]
+
+
 @router.post("")
 def create_project(
     name: str,
@@ -26,6 +39,17 @@ def create_project(
     db.add(project)
     db.commit()
     return {"id": str(project.id), "name": project.name}
+
+
+@router.get("/{project_id}/members")
+def list_project_members(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    _require_global_admin(user)
+    memberships = db.query(ProjectMembership).filter_by(project_id=project_id).all()
+    return [{"user_id": m.user_id, "role": m.role.value} for m in memberships]
 
 
 @router.post("/{project_id}/members")

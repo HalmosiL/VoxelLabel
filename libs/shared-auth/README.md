@@ -33,7 +33,16 @@ def list_studies(
 
 ## Env vars
 
-- `KEYCLOAK_ISSUER` -- e.g. `http://keycloak:8080/realms/ct-platform`
+- `KEYCLOAK_ISSUER` -- must exactly match the `iss` claim callers' tokens will
+  have, which depends on the hostname *they* used to reach Keycloak (e.g.
+  `http://localhost:8080/realms/ct-platform` for browser clients going
+  through a published port).
+- `KEYCLOAK_JWKS_URL` -- where *this service* fetches Keycloak's public keys
+  from, which may need a different, internally-reachable hostname (e.g.
+  `http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs`
+  inside docker-compose/Kubernetes). Defaults to `{KEYCLOAK_ISSUER}/protocol/openid-connect/certs`
+  when unset, which is correct only if issuer and JWKS are reachable at the
+  same hostname.
 - `KEYCLOAK_AUDIENCE` -- the client id configured for this platform in Keycloak
 
 ## Installing (local dev)

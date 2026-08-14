@@ -52,6 +52,35 @@ def create_annotation(
     return {"id": str(annotation.id), "status": annotation.status.value}
 
 
+@router.get("/projects/{project_id}")
+def list_annotations_for_project(
+    project_id: str,
+    status: AnnotationStatus | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """List annotations in a project, optionally filtered by status --
+    e.g. `?status=submitted` for a reviewer's queue."""
+    require_project_role(db, project_id, user, allowed_roles=_READ_ROLES)
+
+    query = db.query(Annotation).filter_by(project_id=project_id)
+    if status is not None:
+        query = query.filter_by(status=status)
+
+    return [
+        {
+            "id": str(a.id),
+            "target_type": a.target_type,
+            "target_id": str(a.target_id),
+            "type_id": str(a.type_id),
+            "payload": a.payload,
+            "status": a.status.value,
+            "annotator_id": a.annotator_id,
+        }
+        for a in query.all()
+    ]
+
+
 @router.get("/{target_type}/{target_id}")
 def list_annotations_for_target(
     target_type: str,

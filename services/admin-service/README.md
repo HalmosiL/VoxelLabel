@@ -6,8 +6,11 @@ global Keycloak `admin` realm role.
 
 ## Endpoints
 
+- `GET /admin/projects` -- list projects
 - `POST /admin/projects` -- create a project
+- `GET /admin/projects/{project_id}/members` -- list a project's members
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
+- `GET /admin/deidentification-profiles` -- list de-identification profiles (with their rules)
 - `POST /admin/deidentification-profiles` -- create a de-identification profile
 - `POST /admin/deidentification-profiles/{profile_id}/rules` -- add a per-tag rule (keep/remove/replace_fixed/hash)
 - `POST /admin/annotation-types` -- register a new annotation type with its JSON Schema

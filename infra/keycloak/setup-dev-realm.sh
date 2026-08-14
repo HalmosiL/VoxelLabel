@@ -22,6 +22,7 @@ ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 TEST_USERNAME="${TEST_USERNAME:-platform-admin}"
 TEST_PASSWORD="${TEST_PASSWORD:-platform-admin}"
+ADMIN_UI_ORIGIN="${ADMIN_UI_ORIGIN:-http://localhost:5173}"
 
 echo "Waiting for Keycloak at $KEYCLOAK_URL ..."
 for _ in $(seq 1 60); do
@@ -51,9 +52,12 @@ curl -sf -X POST "$KEYCLOAK_URL/admin/realms" \
   -d "{\"realm\": \"$REALM\", \"enabled\": true, \"displayName\": \"CT Annotation Platform\"}" >/dev/null
 
 echo "Creating client '$CLIENT_ID' ..."
+# redirectUris/webOrigins allow the admin-ui (a browser app, standard
+# Authorization Code + PKCE flow) to log in via this client. directAccessGrants
+# stays enabled too, for the password-grant testing shown in this repo's docs.
 curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "{\"clientId\": \"$CLIENT_ID\", \"enabled\": true, \"publicClient\": true, \"directAccessGrantsEnabled\": true, \"standardFlowEnabled\": true, \"protocol\": \"openid-connect\"}" >/dev/null
+  -d "{\"clientId\": \"$CLIENT_ID\", \"enabled\": true, \"publicClient\": true, \"directAccessGrantsEnabled\": true, \"standardFlowEnabled\": true, \"protocol\": \"openid-connect\", \"redirectUris\": [\"$ADMIN_UI_ORIGIN/*\"], \"webOrigins\": [\"$ADMIN_UI_ORIGIN\"]}" >/dev/null
 
 CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$CLIENT_ID" \
   -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')

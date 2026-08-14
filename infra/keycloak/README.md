@@ -45,23 +45,19 @@ curl -s -X POST http://localhost:8080/realms/ct-platform/protocol/openid-connect
   | jq -r .access_token
 ```
 
-**Caveat:** the token's `iss` claim reflects the hostname you requested it
-from. A token fetched via `localhost:8080` has `iss=http://localhost:8080/...`,
-but the services (running inside the docker-compose network) validate
-against `KEYCLOAK_ISSUER=http://keycloak:8080/realms/ct-platform`. For a
-token that validates against the services, request it from inside the
-same docker network, e.g.:
+This works against the services out of the box: `KEYCLOAK_ISSUER` for all
+four services is set to `http://localhost:8080/realms/ct-platform` in
+`docker-compose.yml`, matching the hostname a token was actually issued
+from -- whether that's this curl command or the `admin-ui` browser login.
 
-```bash
-docker run --rm --network annotator-pipline_default curlimages/curl:latest \
-  curl -s -X POST http://keycloak:8080/realms/ct-platform/protocol/openid-connect/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=ct-platform" -d "username=platform-admin" -d "password=platform-admin" -d "grant_type=password"
-```
-
-A real frontend would instead use the standard authorization code flow
-through a browser redirect to Keycloak's own hostname, which does not have
-this mismatch.
+**Why there's also a `KEYCLOAK_JWKS_URL`:** the services run inside the
+docker-compose network and can't reach Keycloak via `localhost:8080`
+themselves (that resolves to the container, not the Keycloak container) --
+they fetch the public signing keys via the internal hostname
+`http://keycloak:8080/...` instead, set separately via `KEYCLOAK_JWKS_URL`.
+Issuer *validation* (matching the token's `iss` claim) and key *fetching*
+are deliberately decoupled in `shared_auth` for exactly this asymmetry --
+see `libs/shared-auth/README.md`.
 
 ## Production
 

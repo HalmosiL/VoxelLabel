@@ -9,3 +9,5 @@ dist/
 build/
 .DS_Store
 infra/k8s/secret.yaml
+node_modules/
+admin-ui/.env

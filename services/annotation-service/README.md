@@ -8,6 +8,7 @@ new annotation type is added.
 ## Endpoints
 
 - `POST /annotations/projects/{project_id}` -- create a draft annotation (role: `annotator`/`admin`). Payload is validated against the type's JSON Schema.
+- `GET /annotations/projects/{project_id}?status=submitted` -- list annotations in a project, optionally filtered by status (e.g. a reviewer's queue)
 - `GET /annotations/{target_type}/{target_id}` -- list annotations for a target (role: `viewer`/`annotator`/`reviewer`/`admin`)
 - `POST /annotations/{annotation_id}/review` -- approve/reject (role: `reviewer`/`admin`)
 - `GET /health` -- liveness/readiness probe

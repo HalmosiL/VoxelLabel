@@ -21,10 +21,31 @@ def _require_global_admin(user: CurrentUser) -> None:
         raise HTTPException(status_code=403, detail="Admin realm role required")
 
 
+@router.get("")
+def list_profiles(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    _require_global_admin(user)
+    profiles = db.query(DeidentificationProfile).all()
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "is_default": p.is_default,
+            "rules": [
+                {"id": str(r.id), "dicom_tag": r.dicom_tag, "action": r.action.value, "replacement_value": r.replacement_value}
+                for r in p.rules
+            ],
+        }
+        for p in profiles
+    ]
+
+
 @router.post("")
 def create_profile(
     name: str,
-    is_default: bool,
+    is_default: bool = False,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:

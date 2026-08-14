@@ -8,6 +8,7 @@ callers get a short-lived presigned object storage URL and fetch directly.
 
 - `GET /data/projects/{project_id}/studies` -- list studies in a project
 - `GET /data/studies/{study_id}/series` -- list series within a study
+- `GET /data/series/{series_id}/instances` -- list instances within a series
 - `GET /data/instances/{instance_id}/pixel-data-url` -- presigned URL to the raw DICOM file
 - `GET /health` -- liveness/readiness probe
 

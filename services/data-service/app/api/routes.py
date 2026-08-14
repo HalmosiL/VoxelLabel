@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_project_role
 from shared_models.database import get_db
-from shared_models.models import Instance, Study
+from shared_models.models import Instance, Series, Study
 
 from app.storage import presigned_pixel_data_url
 
@@ -46,6 +46,21 @@ def list_series(
     return [
         {"id": str(s.id), "series_instance_uid": s.series_instance_uid, "series_description": s.series_description}
         for s in study.series
+    ]
+
+
+@router.get("/series/{series_id}/instances")
+def list_instances(
+    series_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    series = db.get(Series, series_id)
+    require_project_role(db, str(series.study.project_id), user, allowed_roles=_READ_ROLES)
+
+    return [
+        {"id": str(i.id), "sop_instance_uid": i.sop_instance_uid, "instance_number": i.instance_number}
+        for i in series.instances
     ]
 
 
