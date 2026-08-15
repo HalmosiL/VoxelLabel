@@ -6,6 +6,7 @@ export interface Project {
   name: string;
   description: string | null;
   deidentification_profile_id: string | null;
+  cover_image_url: string | null;
 }
 
 export interface ProjectMember {
@@ -42,6 +43,12 @@ export function listProjects(): Promise<Project[]> {
 export function createProject(name: string, description: string): Promise<{ id: string; name: string }> {
   const qs = new URLSearchParams({ name, ...(description ? { description } : {}) });
   return apiFetch(base, `/admin/projects?${qs}`, { method: "POST" });
+}
+
+export function uploadProjectCoverImage(projectId: string, file: File): Promise<{ id: string; cover_image_url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch(base, `/admin/projects/${projectId}/cover-image`, { method: "POST", body: formData });
 }
 
 export function listProjectMembers(projectId: string): Promise<ProjectMember[]> {

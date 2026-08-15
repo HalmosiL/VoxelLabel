@@ -110,6 +110,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
       KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
     ports:

@@ -9,8 +9,9 @@ writes require a project-scoped role instead (see `shared_auth`).
 
 ## Endpoints
 
-- `GET /admin/projects` -- list projects
+- `GET /admin/projects` -- list projects (each with a presigned `cover_image_url` if one is set)
 - `POST /admin/projects` -- create a project
+- `POST /admin/projects/{project_id}/cover-image` -- attach/replace a project's cover image
 - `GET /admin/projects/{project_id}/members` -- list a project's members
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
 - `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier

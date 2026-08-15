@@ -76,6 +76,9 @@ class Project(Base):
     deidentification_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("deidentification_profiles.id")
     )
+    # Optional cover image for the project card grid in admin-ui. Same
+    # pointer-to-object-storage pattern as Instance.object_storage_key.
+    cover_image_key: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     memberships: Mapped[list["ProjectMembership"]] = relationship(back_populates="project")

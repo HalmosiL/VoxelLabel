@@ -1,10 +1,14 @@
 """HTTP API for managing projects and project memberships (per-project roles)."""
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import Project, ProjectMembership, ProjectRole
+
+from app.storage import presigned_project_cover_image_url, upload_project_cover_image
 
 router = APIRouter(prefix="/admin/projects", tags=["admin:projects"])
 
@@ -22,7 +26,13 @@ def list_projects(
     _require_global_admin(user)
     projects = db.query(Project).all()
     return [
-        {"id": str(p.id), "name": p.name, "description": p.description, "deidentification_profile_id": str(p.deidentification_profile_id) if p.deidentification_profile_id else None}
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "description": p.description,
+            "deidentification_profile_id": str(p.deidentification_profile_id) if p.deidentification_profile_id else None,
+            "cover_image_url": presigned_project_cover_image_url(p.cover_image_key) if p.cover_image_key else None,
+        }
         for p in projects
     ]
 
@@ -39,6 +49,28 @@ def create_project(
     db.add(project)
     db.commit()
     return {"id": str(project.id), "name": project.name}
+
+
+@router.post("/{project_id}/cover-image")
+async def upload_cover_image(
+    project_id: str,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Attach (or replace) a project's cover image, shown on its card in
+    the admin-ui project grid."""
+    _require_global_admin(user)
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    storage_key = f"project-covers/{project_id}/{uuid.uuid4()}-{file.filename}"
+    upload_project_cover_image(storage_key, await file.read())
+
+    project.cover_image_key = storage_key
+    db.commit()
+    return {"id": str(project.id), "cover_image_url": presigned_project_cover_image_url(storage_key)}
 
 
 @router.get("/{project_id}/members")
