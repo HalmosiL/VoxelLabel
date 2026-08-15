@@ -2,6 +2,9 @@ import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { addProjectMember, listProjectMembers, ProjectMember } from "../api/adminApi";
+import Avatar from "../components/Avatar";
+import EmptyState from "../components/EmptyState";
+import PageHeader from "../components/PageHeader";
 import ReviewQueuePanel from "../components/ReviewQueuePanel";
 import StudiesPanel from "../components/StudiesPanel";
 
@@ -21,9 +24,9 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="page-title">Project</h1>
+      <PageHeader title="Project" />
 
-      <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex gap-1 border-b border-gray-200/70">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -79,21 +82,26 @@ function MembersPanel({ projectId }: { projectId: string }) {
         <table>
           <thead>
             <tr>
-              <th>User ID (Keycloak subject)</th>
+              <th>User</th>
               <th>Role</th>
             </tr>
           </thead>
           <tbody>
             {members.length === 0 && (
               <tr>
-                <td colSpan={2} className="py-6 text-center text-gray-400">
-                  No members yet.
+                <td colSpan={2}>
+                  <EmptyState message="No members yet -- add one below." />
                 </td>
               </tr>
             )}
             {members.map((m) => (
               <tr key={m.user_id}>
-                <td className="font-mono text-xs">{m.user_id}</td>
+                <td>
+                  <div className="flex items-center gap-2.5">
+                    <Avatar id={m.user_id} />
+                    <span className="font-mono text-xs text-gray-600">{m.user_id}</span>
+                  </div>
+                </td>
                 <td>
                   <span className="badge-blue">{m.role}</span>
                 </td>

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { Annotation, listAnnotationsForProject, reviewAnnotation } from "../api/annotationApi";
+import Avatar from "./Avatar";
+import EmptyState from "./EmptyState";
 
-const STATUS_BADGE: Record<Annotation["status"], string> = {
-  draft: "badge-gray",
-  submitted: "badge-blue",
-  approved: "badge-green",
-  rejected: "badge-red",
+const STATUS_STYLE: Record<Annotation["status"], { badge: string; dot: string }> = {
+  draft: { badge: "badge-gray", dot: "bg-gray-400" },
+  submitted: { badge: "badge-blue", dot: "bg-blue-500" },
+  approved: { badge: "badge-green", dot: "bg-emerald-500" },
+  rejected: { badge: "badge-red", dot: "bg-red-500" },
 };
 
 export default function ReviewQueuePanel({ projectId }: { projectId: string }) {
@@ -60,37 +62,48 @@ export default function ReviewQueuePanel({ projectId }: { projectId: string }) {
           <tbody>
             {annotations.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-gray-400">
-                  No annotations found.
+                <td colSpan={5}>
+                  <EmptyState message="No annotations found." />
                 </td>
               </tr>
             )}
-            {annotations.map((a) => (
-              <tr key={a.id}>
-                <td className="text-xs text-gray-500">
-                  {a.target_type}/<span className="font-mono">{a.target_id}</span>
-                </td>
-                <td>
-                  <code className="code-chip">{JSON.stringify(a.payload)}</code>
-                </td>
-                <td className="font-mono text-xs">{a.annotator_id}</td>
-                <td>
-                  <span className={STATUS_BADGE[a.status]}>{a.status}</span>
-                </td>
-                <td>
-                  {(a.status === "submitted" || a.status === "draft") && (
-                    <div className="flex gap-2">
-                      <button onClick={() => decide(a.id, "approve")} className="btn-secondary btn-sm">
-                        Approve
-                      </button>
-                      <button onClick={() => decide(a.id, "reject")} className="btn-danger btn-sm">
-                        Reject
-                      </button>
+            {annotations.map((a) => {
+              const style = STATUS_STYLE[a.status];
+              return (
+                <tr key={a.id}>
+                  <td className="text-xs text-gray-500">
+                    {a.target_type}/<span className="font-mono">{a.target_id}</span>
+                  </td>
+                  <td>
+                    <code className="code-chip">{JSON.stringify(a.payload)}</code>
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <Avatar id={a.annotator_id} />
+                      <span className="font-mono text-xs text-gray-500">{a.annotator_id.slice(0, 8)}…</span>
                     </div>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td>
+                    <span className={style.badge}>
+                      <span className={`badge-dot ${style.dot}`} />
+                      {a.status}
+                    </span>
+                  </td>
+                  <td>
+                    {(a.status === "submitted" || a.status === "draft") && (
+                      <div className="flex gap-2">
+                        <button onClick={() => decide(a.id, "approve")} className="btn-secondary btn-sm">
+                          Approve
+                        </button>
+                        <button onClick={() => decide(a.id, "reject")} className="btn-danger btn-sm">
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

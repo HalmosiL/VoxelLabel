@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import { AnnotationType, createAnnotationType, listAnnotationTypes } from "../api/adminApi";
+import EmptyState from "../components/EmptyState";
+import PageHeader from "../components/PageHeader";
 
 const EXAMPLE_SCHEMA = JSON.stringify(
   {
@@ -45,7 +47,10 @@ export default function AnnotationTypesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="page-title">Annotation types</h1>
+      <PageHeader
+        title="Annotation types"
+        subtitle="Register the payload shapes annotators can use -- new types can be added anytime without a deployment."
+      />
       {error && <p className="alert-error">{error}</p>}
 
       <div className="table-wrap">
@@ -59,8 +64,8 @@ export default function AnnotationTypesPage() {
           <tbody>
             {types.length === 0 && (
               <tr>
-                <td colSpan={2} className="py-6 text-center text-gray-400">
-                  No annotation types registered yet.
+                <td colSpan={2}>
+                  <EmptyState message="No annotation types registered yet." />
                 </td>
               </tr>
             )}

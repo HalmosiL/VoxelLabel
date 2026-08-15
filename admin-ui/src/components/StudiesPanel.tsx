@@ -2,6 +2,7 @@ import { ChangeEvent, ReactNode, useEffect, useState } from "react";
 
 import { getPixelDataUrl, Instance, listInstances, listSeries, listStudies, Series, Study } from "../api/dataApi";
 import { uploadDicom } from "../api/ingestionApi";
+import EmptyState from "./EmptyState";
 
 type View =
   | { level: "studies" }
@@ -122,8 +123,8 @@ function StudiesTable({ studies, onSelect }: { studies: Study[]; onSelect: (s: S
         <tbody>
           {studies.length === 0 && (
             <tr>
-              <td colSpan={4} className="py-6 text-center text-gray-400">
-                No studies yet -- upload a DICOM file above.
+              <td colSpan={4}>
+                <EmptyState message="No studies yet -- upload a DICOM file above." />
               </td>
             </tr>
           )}
@@ -163,8 +164,8 @@ function SeriesTable({ study, onSelect }: { study: Study; onSelect: (s: Series) 
         <tbody>
           {series.length === 0 && (
             <tr>
-              <td colSpan={3} className="py-6 text-center text-gray-400">
-                No series in this study.
+              <td colSpan={3}>
+                <EmptyState message="No series in this study." />
               </td>
             </tr>
           )}
@@ -208,8 +209,8 @@ function InstancesTable({ series }: { series: Series }) {
         <tbody>
           {instances.length === 0 && (
             <tr>
-              <td colSpan={3} className="py-6 text-center text-gray-400">
-                No instances in this series.
+              <td colSpan={3}>
+                <EmptyState message="No instances in this series." />
               </td>
             </tr>
           )}

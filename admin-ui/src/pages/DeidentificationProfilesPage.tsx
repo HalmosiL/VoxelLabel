@@ -6,6 +6,8 @@ import {
   DeidentificationProfile,
   listDeidentificationProfiles,
 } from "../api/adminApi";
+import EmptyState from "../components/EmptyState";
+import PageHeader from "../components/PageHeader";
 
 export default function DeidentificationProfilesPage() {
   const [profiles, setProfiles] = useState<DeidentificationProfile[]>([]);
@@ -35,10 +37,13 @@ export default function DeidentificationProfilesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="page-title">De-identification profiles</h1>
+      <PageHeader
+        title="De-identification profiles"
+        subtitle="Configure how DICOM tags are handled on ingestion -- assigned to a project in the Admin API."
+      />
       {error && <p className="alert-error">{error}</p>}
 
-      {profiles.length === 0 && <p className="hint">No profiles yet -- create one below.</p>}
+      {profiles.length === 0 && <EmptyState message="No profiles yet -- create one below." />}
       {profiles.map((profile) => (
         <ProfileCard key={profile.id} profile={profile} onRuleAdded={refresh} />
       ))}
@@ -87,7 +92,16 @@ function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfil
 
   return (
     <div className="card">
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="stat-icon bg-brand-50 text-brand-600" style={{ height: "2.25rem", width: "2.25rem" }}>
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+            <path
+              fillRule="evenodd"
+              d="M10 1l7 3v6c0 4.418-3.134 7.803-7 9-3.866-1.197-7-4.582-7-9V4l7-3zm0 3.5a1 1 0 00-1 1v4a1 1 0 001 1 1 1 0 001-1v-4a1 1 0 00-1-1zm0 8a1 1 0 100 2 1 1 0 000-2z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </span>
         <h3 className="section-title">{profile.name}</h3>
         {profile.is_default && <span className="badge-green">default</span>}
       </div>
