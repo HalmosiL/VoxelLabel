@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { addProjectMember, listProjectMembers, ProjectMember } from "../api/adminApi";
+import { addProjectMember, KeycloakUser, listKeycloakUsers, listProjectMembers, ProjectMember } from "../api/adminApi";
 import Avatar from "../components/Avatar";
 import CasesPanel from "../components/CasesPanel";
 import EmptyState from "../components/EmptyState";
@@ -51,8 +51,9 @@ export default function ProjectDetailPage() {
 
 function MembersPanel({ projectId }: { projectId: string }) {
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [users, setUsers] = useState<KeycloakUser[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [userId, setUserId] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
   const [role, setRole] = useState("viewer");
 
   function refresh() {
@@ -62,12 +63,25 @@ function MembersPanel({ projectId }: { projectId: string }) {
   }
 
   useEffect(refresh, [projectId]);
+  useEffect(() => {
+    listKeycloakUsers()
+      .then(setUsers)
+      .catch((err) => setError(String(err)));
+  }, []);
+
+  function labelFor(userId: string): string {
+    const user = users.find((u) => u.id === userId);
+    return user ? (user.username ?? user.email ?? userId) : userId;
+  }
+
+  const memberIds = new Set(members.map((m) => m.user_id));
+  const availableUsers = users.filter((u) => !memberIds.has(u.id));
 
   async function handleAdd(event: FormEvent) {
     event.preventDefault();
     try {
-      await addProjectMember(projectId, userId, role);
-      setUserId("");
+      await addProjectMember(projectId, selectedUserId, role);
+      setSelectedUserId("");
       refresh();
     } catch (err) {
       setError(String(err));
@@ -99,7 +113,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
                 <td>
                   <div className="flex items-center gap-2.5">
                     <Avatar id={m.user_id} />
-                    <span className="font-mono text-xs text-gray-600">{m.user_id}</span>
+                    <span className="text-sm text-gray-700">{labelFor(m.user_id)}</span>
                   </div>
                 </td>
                 <td>
@@ -115,8 +129,18 @@ function MembersPanel({ projectId }: { projectId: string }) {
         <h3 className="section-title mb-4">Add member</h3>
         <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-4">
           <label className="field flex-1">
-            <span className="label">User ID</span>
-            <input className="input" value={userId} onChange={(e) => setUserId(e.target.value)} required />
+            <span className="label">User</span>
+            <select className="input" value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} required>
+              <option value="" disabled>
+                Select a user…
+              </option>
+              {availableUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.username ?? u.id}
+                  {u.email ? ` (${u.email})` : ""}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="field w-48">
             <span className="label">Role</span>
@@ -128,10 +152,13 @@ function MembersPanel({ projectId }: { projectId: string }) {
               <option value="admin">admin</option>
             </select>
           </label>
-          <button type="submit" className="btn-primary">
+          <button type="submit" className="btn-primary" disabled={availableUsers.length === 0}>
             Add
           </button>
         </form>
+        {availableUsers.length === 0 && users.length > 0 && (
+          <p className="hint mt-2">Every realm user is already a member of this project.</p>
+        )}
       </div>
     </div>
   );

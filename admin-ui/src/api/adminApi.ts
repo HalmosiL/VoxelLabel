@@ -28,6 +28,12 @@ export interface DeidentificationProfile {
   rules: DeidentificationRule[];
 }
 
+export interface KeycloakUser {
+  id: string;
+  username: string | null;
+  email: string | null;
+}
+
 export interface AnnotationType {
   id: string;
   name: string;
@@ -136,6 +142,10 @@ export function addClinicalDataConsent(
 ): Promise<{ id: string; consent_type: string; status: string }> {
   const qs = new URLSearchParams({ consent_type: consentType, status });
   return apiFetch(base, `/admin/clinical-data-items/${itemId}/consents?${qs}`, { method: "POST" });
+}
+
+export function listKeycloakUsers(): Promise<KeycloakUser[]> {
+  return apiFetch(base, "/admin/keycloak-users");
 }
 
 export function listAnnotationTypes(): Promise<AnnotationType[]> {

@@ -113,6 +113,10 @@ services:
       OBJECT_STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
       KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ct-platform
+      KEYCLOAK_ADMIN_CLIENT_ID: admin-service-account
+      KEYCLOAK_ADMIN_CLIENT_SECRET: admin-service-account-secret
     ports:
       - "8004:8000"
     depends_on:

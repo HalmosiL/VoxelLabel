@@ -16,6 +16,7 @@ writes require a project-scoped role instead (see `shared_auth`).
 - `POST /admin/projects/{project_id}/cover-image` -- attach/replace a project's cover image
 - `GET /admin/projects/{project_id}/members` -- list a project's members
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
+- `GET /admin/keycloak-users` -- list realm users (id/username/email), for the project-member picker in admin-ui
 - `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier
 - `POST /admin/cases/{case_id}/clinical-data-items` -- attach a clinical data item to a case, with an optional file
 - `POST /admin/clinical-data-items/{item_id}/tags` -- add a tag to an item
@@ -41,6 +42,8 @@ ARCHITECTURE.md, "Case-centric data model".
 | `app/api/clinical_data.py` | Clinical data item / tag / consent creation, incl. file upload |
 | `app/api/deidentification.py` | De-identification profile/rule management |
 | `app/api/annotation_types.py` | Annotation type registration (the JSON Schema that `annotation-service` validates payloads against) |
+| `app/api/users.py` | Keycloak realm user lookup (project-member picker) |
+| `app/keycloak_admin.py` | Keycloak Admin API client (client-credentials token + user listing), using a narrowly-scoped service account -- not master-realm admin credentials |
 | `app/storage.py` | Object storage upload for clinical data files (internal hostname -- real uploads, unlike data-service) |
 
 ## Running standalone

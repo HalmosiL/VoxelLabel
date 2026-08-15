@@ -23,6 +23,8 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 TEST_USERNAME="${TEST_USERNAME:-platform-admin}"
 TEST_PASSWORD="${TEST_PASSWORD:-platform-admin}"
 ADMIN_UI_ORIGIN="${ADMIN_UI_ORIGIN:-http://localhost:5173}"
+SERVICE_ACCOUNT_CLIENT_ID="${SERVICE_ACCOUNT_CLIENT_ID:-admin-service-account}"
+SERVICE_ACCOUNT_CLIENT_SECRET="${SERVICE_ACCOUNT_CLIENT_SECRET:-admin-service-account-secret}"
 
 echo "Waiting for Keycloak at $KEYCLOAK_URL ..."
 for _ in $(seq 1 60); do
@@ -93,5 +95,29 @@ echo "Granting 'admin' role to '$TEST_USERNAME' ..."
 curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/users/$USER_ID/role-mappings/realm" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d "[$ROLE_JSON]" >/dev/null
+
+echo "Creating service-account client '$SERVICE_ACCOUNT_CLIENT_ID' (admin-service -> Keycloak user lookups) ..."
+# Confidential, client-credentials-only client -- no browser flow, no
+# direct-access-grants. Scoped narrowly (view-users only, below) rather
+# than using master-realm admin credentials, so a leak of this secret
+# can't do more than read this realm's user list.
+curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"clientId\": \"$SERVICE_ACCOUNT_CLIENT_ID\", \"enabled\": true, \"publicClient\": false, \"secret\": \"$SERVICE_ACCOUNT_CLIENT_SECRET\", \"serviceAccountsEnabled\": true, \"standardFlowEnabled\": false, \"directAccessGrantsEnabled\": false, \"protocol\": \"openid-connect\"}" >/dev/null
+
+SERVICE_ACCOUNT_CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$SERVICE_ACCOUNT_CLIENT_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+SERVICE_ACCOUNT_USER_ID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients/$SERVICE_ACCOUNT_CLIENT_UUID/service-account-user" \
+  -H "Authorization: Bearer $TOKEN" | jq -r '.id')
+
+REALM_MGMT_CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=realm-management" \
+  -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+VIEW_USERS_ROLE=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients/$REALM_MGMT_CLIENT_UUID/roles/view-users" \
+  -H "Authorization: Bearer $TOKEN")
+
+echo "Granting 'view-users' (realm-management) to the service account ..."
+curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/users/$SERVICE_ACCOUNT_USER_ID/role-mappings/clients/$REALM_MGMT_CLIENT_UUID" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "[$VIEW_USERS_ROLE]" >/dev/null
 
 echo "Done. Test user: $TEST_USERNAME / $TEST_PASSWORD (realm role: admin)"

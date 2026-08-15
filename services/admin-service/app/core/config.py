@@ -23,6 +23,13 @@ class Settings:
     object_storage_bucket: str = os.environ.get("OBJECT_STORAGE_BUCKET", "ct-pixel-data")
     object_storage_access_key: str = os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
     object_storage_secret_key: str = os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin")
+    # For calling Keycloak's own Admin API (listing realm users for the
+    # project-member picker) -- a real server-to-server call, so the
+    # internal hostname, not the browser-facing KEYCLOAK_ISSUER.
+    keycloak_internal_url: str = os.environ.get("KEYCLOAK_INTERNAL_URL", "http://keycloak:8080")
+    keycloak_realm: str = os.environ.get("KEYCLOAK_REALM", "ct-platform")
+    keycloak_admin_client_id: str = os.environ.get("KEYCLOAK_ADMIN_CLIENT_ID", "admin-service-account")
+    keycloak_admin_client_secret: str = os.environ.get("KEYCLOAK_ADMIN_CLIENT_SECRET", "admin-service-account-secret")
 
 
 settings = Settings()

@@ -2,8 +2,11 @@
 
 `setup-dev-realm.sh` provisions everything the four services need to
 validate JWTs locally: the `ct-platform` realm, an OIDC client with an
-audience mapper, the global `admin` realm role, and one test user holding
-it.
+audience mapper, the global `admin` realm role, one test user holding it,
+and a narrowly-scoped `admin-service-account` service-account client
+(client-credentials, `view-users` role only) that admin-service uses to
+list realm users for the project-member picker in admin-ui -- see
+`services/admin-service/app/keycloak_admin.py`.
 
 ## Why this exists as a script, not manual clicking
 
