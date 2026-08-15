@@ -153,6 +153,68 @@ export function createClinicalDataItem(
   });
 }
 
+export interface DocumentFormFields {
+  type?: string;
+  title?: string;
+  itemDate?: string;
+}
+
+export function updateClinicalDataItem(
+  itemId: string,
+  fields: DocumentFormFields
+): Promise<{ id: string; type: string; title: string; date: string | null }> {
+  const qs = new URLSearchParams({
+    ...(fields.type ? { type: fields.type } : {}),
+    ...(fields.title ? { title: fields.title } : {}),
+    ...(fields.itemDate !== undefined ? { item_date: fields.itemDate } : {}),
+  });
+  return apiFetch(base, `/admin/clinical-data-items/${itemId}?${qs}`, { method: "PATCH" });
+}
+
+export function deleteClinicalDataItem(itemId: string): Promise<void> {
+  return apiFetch(base, `/admin/clinical-data-items/${itemId}`, { method: "DELETE" });
+}
+
+export interface StudyFormFields {
+  description?: string;
+  modality?: string;
+}
+
+export function updateStudy(
+  studyId: string,
+  fields: StudyFormFields
+): Promise<{ id: string; description: string | null; modality: string | null }> {
+  const qs = new URLSearchParams({
+    ...(fields.description !== undefined ? { description: fields.description } : {}),
+    ...(fields.modality !== undefined ? { modality: fields.modality } : {}),
+  });
+  return apiFetch(base, `/admin/studies/${studyId}?${qs}`, { method: "PATCH" });
+}
+
+export function deleteStudy(studyId: string): Promise<void> {
+  return apiFetch(base, `/admin/studies/${studyId}`, { method: "DELETE" });
+}
+
+export interface SeriesFormFields {
+  seriesDescription?: string;
+  bodyPart?: string;
+}
+
+export function updateSeries(
+  seriesId: string,
+  fields: SeriesFormFields
+): Promise<{ id: string; series_description: string | null; body_part: string | null }> {
+  const qs = new URLSearchParams({
+    ...(fields.seriesDescription !== undefined ? { series_description: fields.seriesDescription } : {}),
+    ...(fields.bodyPart !== undefined ? { body_part: fields.bodyPart } : {}),
+  });
+  return apiFetch(base, `/admin/series/${seriesId}?${qs}`, { method: "PATCH" });
+}
+
+export function deleteSeries(seriesId: string): Promise<void> {
+  return apiFetch(base, `/admin/series/${seriesId}`, { method: "DELETE" });
+}
+
 export function addClinicalDataTag(itemId: string, label: string): Promise<{ id: string; label: string }> {
   const qs = new URLSearchParams({ label });
   return apiFetch(base, `/admin/clinical-data-items/${itemId}/tags?${qs}`, { method: "POST" });

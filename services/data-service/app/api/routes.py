@@ -194,6 +194,18 @@ def get_pixel_data_url(
     return {"url": presigned_pixel_data_url(instance.object_storage_key)}
 
 
+def _serialize_clinical_data_item(item: ClinicalDataItem) -> dict:
+    return {
+        "id": str(item.id),
+        "date": item.date.isoformat() if item.date else None,
+        "type": item.type,
+        "title": item.title,
+        "has_file": item.object_storage_key is not None,
+        "tags": [t.label for t in item.tags],
+        "consents": [{"consent_type": c.consent_type, "status": c.status.value} for c in item.consents],
+    }
+
+
 @router.get("/cases/{case_id}/clinical-data-items")
 def list_clinical_data_items(
     case_id: str,
@@ -204,18 +216,7 @@ def list_clinical_data_items(
     require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
 
     items = db.query(ClinicalDataItem).filter_by(case_id=case_id).all()
-    return [
-        {
-            "id": str(i.id),
-            "date": i.date.isoformat() if i.date else None,
-            "type": i.type,
-            "title": i.title,
-            "has_file": i.object_storage_key is not None,
-            "tags": [t.label for t in i.tags],
-            "consents": [{"consent_type": c.consent_type, "status": c.status.value} for c in i.consents],
-        }
-        for i in items
-    ]
+    return [_serialize_clinical_data_item(i) for i in items]
 
 
 @router.get("/patients")
@@ -238,9 +239,9 @@ def list_patient_cases(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     """A patient "profile" view: every case the patient has, across every
-    project, each with its studies and the flattened set of tags from its
-    clinical data items -- enough to render an overview without further
-    round-trips per case."""
+    project, each with its studies (with preview thumbnails) and clinical
+    data items -- enough to browse, edit, and delete a patient's data
+    without navigating into each case individually."""
     _require_global_admin(user)
 
     patient = db.get(Patient, patient_id)
@@ -262,9 +263,11 @@ def list_patient_cases(
                         "study_instance_uid": s.study_instance_uid,
                         "modality": s.modality,
                         "description": s.description,
+                        "thumbnail_url": _thumbnail_url_for_study(s),
                     }
                     for s in case.studies
                 ],
+                "documents": [_serialize_clinical_data_item(i) for i in case.clinical_data_items],
                 "tags": _case_tags(case),
             }
         )

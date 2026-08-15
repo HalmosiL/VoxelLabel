@@ -18,7 +18,7 @@ clinical data items, tags, consents) lives in admin-service, not here.
 - `GET /data/cases/{case_id}/clinical-data-items` -- list clinical data items in a case (with tags/consents)
 - `GET /data/clinical-data-items/{item_id}/file-url` -- presigned URL to the item's attached file (404 if it has none)
 - `GET /data/patients` -- list all patients, across every project (global `admin` role only -- see below)
-- `GET /data/patients/{patient_id}/cases` -- a patient's cases across every project, each with its studies and flattened clinical-data tags (global `admin` role only)
+- `GET /data/patients/{patient_id}/cases` -- a patient's cases across every project, each with its studies (with `thumbnail_url`), full clinical data items, and flattened tags (global `admin` role only) -- enough to edit/delete a patient's images and documents without opening each case
 - `GET /health` -- liveness/readiness probe
 
 The two `/data/patients*` endpoints require the global Keycloak `admin`

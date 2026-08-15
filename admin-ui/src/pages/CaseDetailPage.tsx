@@ -2,18 +2,17 @@ import { ChangeEvent, FormEvent, ReactNode, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import {
-  addClinicalDataConsent,
-  addClinicalDataTag,
   CaseFormFields,
   createClinicalDataItem,
+  deleteSeries,
   updateCase,
+  updateSeries,
 } from "../api/adminApi";
 import {
   CaseSeries,
   CaseSummary,
   ClinicalDataItem,
   getCase,
-  getClinicalDataFileUrl,
   getPixelDataUrl,
   Instance,
   listCaseSeries,
@@ -23,8 +22,12 @@ import {
   Study,
 } from "../api/dataApi";
 import { uploadDicom } from "../api/ingestionApi";
+import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
+import StudyModal from "../components/StudyModal";
+import Thumbnail from "../components/Thumbnail";
+import { DocumentIcon } from "../components/icons";
 
 export default function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -217,22 +220,11 @@ function SectionHeader({ title, action }: { title: string; action?: ReactNode })
   );
 }
 
-function Thumbnail({ url, label }: { url: string | null; label?: string }) {
-  return (
-    <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-gray-100">
-      {url ? (
-        <img src={url} alt={label ?? ""} className="h-full w-full object-cover" />
-      ) : (
-        <ImageIcon className="h-8 w-8 text-gray-300" />
-      )}
-    </div>
-  );
-}
-
 function StudiesSection({ caseId }: { caseId: string }) {
   const [studies, setStudies] = useState<Study[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [openStudy, setOpenStudy] = useState<Study | null>(null);
 
   function refresh() {
     listStudies(caseId).then(setStudies).catch((err) => setError(String(err)));
@@ -278,15 +270,30 @@ function StudiesSection({ caseId }: { caseId: string }) {
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {studies.map((s) => (
-            <div key={s.id} title={s.study_instance_uid}>
+            <button key={s.id} onClick={() => setOpenStudy(s)} className="text-left" title={s.study_instance_uid}>
               <Thumbnail url={s.thumbnail_url} label={s.description ?? undefined} />
               <div className="mt-1.5 flex items-center gap-1">
                 {s.modality && <span className="badge-blue">{s.modality}</span>}
               </div>
               <p className="mt-1 truncate text-xs text-gray-600">{s.description ?? s.study_instance_uid}</p>
-            </div>
+            </button>
           ))}
         </div>
+      )}
+
+      {openStudy && (
+        <StudyModal
+          study={openStudy}
+          onClose={() => setOpenStudy(null)}
+          onSaved={() => {
+            setOpenStudy(null);
+            refresh();
+          }}
+          onDeleted={() => {
+            setOpenStudy(null);
+            refresh();
+          }}
+        />
       )}
     </div>
   );
@@ -297,9 +304,11 @@ function SeriesSection({ caseId }: { caseId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [openSeriesId, setOpenSeriesId] = useState<string | null>(null);
 
-  useEffect(() => {
+  function refresh() {
     listCaseSeries(caseId).then(setSeries).catch((err) => setError(String(err)));
-  }, [caseId]);
+  }
+
+  useEffect(refresh, [caseId]);
 
   return (
     <div className="card">
@@ -322,13 +331,35 @@ function SeriesSection({ caseId }: { caseId: string }) {
         </div>
       )}
 
-      {openSeriesId && <SeriesInstancesModal seriesId={openSeriesId} onClose={() => setOpenSeriesId(null)} />}
+      {openSeriesId && (
+        <SeriesInstancesModal
+          seriesId={openSeriesId}
+          series={series.find((s) => s.id === openSeriesId) ?? null}
+          onClose={() => setOpenSeriesId(null)}
+          onChanged={() => {
+            setOpenSeriesId(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function SeriesInstancesModal({ seriesId, onClose }: { seriesId: string; onClose: () => void }) {
+function SeriesInstancesModal({
+  seriesId,
+  series,
+  onClose,
+  onChanged,
+}: {
+  seriesId: string;
+  series: CaseSeries | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   const [instances, setInstances] = useState<Instance[]>([]);
+  const [seriesDescription, setSeriesDescription] = useState(series?.series_description ?? "");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     listInstances(seriesId).then(setInstances);
@@ -339,49 +370,65 @@ function SeriesInstancesModal({ seriesId, onClose }: { seriesId: string; onClose
     window.open(url, "_blank");
   }
 
+  async function handleSaveDescription(event: FormEvent) {
+    event.preventDefault();
+    try {
+      await updateSeries(seriesId, { seriesDescription });
+      onChanged();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm("Delete this series and all its images? This cannot be undone.")) return;
+    try {
+      await deleteSeries(seriesId);
+      onChanged();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   return (
     <Modal title="Series instances" onClose={onClose}>
-      <div className="flex max-h-96 flex-col gap-2 overflow-y-auto">
-        {instances.length === 0 && <p className="hint">No instances.</p>}
-        {instances.map((i) => (
-          <div key={i.id} className="flex items-center gap-3 rounded-lg border border-gray-100 p-2">
-            <div className="h-12 w-12 flex-shrink-0">
-              <Thumbnail url={i.thumbnail_url} />
+      <div className="flex flex-col gap-4">
+        {error && <p className="alert-error">{error}</p>}
+
+        <form onSubmit={handleSaveDescription} className="flex items-end gap-2">
+          <label className="field flex-1">
+            <span className="label">Series description</span>
+            <input className="input" value={seriesDescription} onChange={(e) => setSeriesDescription(e.target.value)} />
+          </label>
+          <button type="submit" className="btn-secondary btn-sm">
+            Save
+          </button>
+        </form>
+
+        <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
+          {instances.length === 0 && <p className="hint">No instances.</p>}
+          {instances.map((i) => (
+            <div key={i.id} className="flex items-center gap-3 rounded-lg border border-gray-100 p-2">
+              <div className="h-12 w-12 flex-shrink-0">
+                <Thumbnail url={i.thumbnail_url} />
+              </div>
+              <div className="flex-1 truncate text-xs text-gray-600">
+                #{i.instance_number ?? "?"} {i.sop_instance_uid}
+              </div>
+              <button onClick={() => openPixelData(i.id)} className="btn-secondary btn-sm flex-shrink-0">
+                Download
+              </button>
             </div>
-            <div className="flex-1 truncate text-xs text-gray-600">
-              #{i.instance_number ?? "?"} {i.sop_instance_uid}
-            </div>
-            <button onClick={() => openPixelData(i.id)} className="btn-secondary btn-sm flex-shrink-0">
-              Download
-            </button>
-          </div>
-        ))}
+          ))}
+        </div>
+
+        <div className="flex justify-end border-t border-gray-100 pt-4">
+          <button onClick={handleDelete} className="btn-danger btn-sm">
+            Delete series
+          </button>
+        </div>
       </div>
     </Modal>
-  );
-}
-
-function DocumentIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
-      <path
-        fillRule="evenodd"
-        d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-function ImageIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
-      <path
-        fillRule="evenodd"
-        d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
-        clipRule="evenodd"
-      />
-    </svg>
   );
 }
 
@@ -445,6 +492,10 @@ function DocumentsSection({ caseId }: { caseId: string }) {
               setOpenItem(updated.find((i) => i.id === openItem.id) ?? null);
             });
           }}
+          onDeleted={() => {
+            setOpenItem(null);
+            refresh();
+          }}
         />
       )}
     </div>
@@ -497,99 +548,6 @@ function NewDocumentModal({ caseId, onClose, onSaved }: { caseId: string; onClos
           </button>
         </div>
       </form>
-    </Modal>
-  );
-}
-
-function DocumentModal({ item, onClose, onChanged }: { item: ClinicalDataItem; onClose: () => void; onChanged: () => void }) {
-  const [tagLabel, setTagLabel] = useState("");
-  const [consentType, setConsentType] = useState("");
-  const [consentStatus, setConsentStatus] = useState<"granted" | "revoked">("granted");
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleAddTag(event: FormEvent) {
-    event.preventDefault();
-    try {
-      await addClinicalDataTag(item.id, tagLabel);
-      setTagLabel("");
-      onChanged();
-    } catch (err) {
-      setError(String(err));
-    }
-  }
-
-  async function handleAddConsent(event: FormEvent) {
-    event.preventDefault();
-    try {
-      await addClinicalDataConsent(item.id, consentType, consentStatus);
-      setConsentType("");
-      onChanged();
-    } catch (err) {
-      setError(String(err));
-    }
-  }
-
-  async function openFile() {
-    const { url } = await getClinicalDataFileUrl(item.id);
-    window.open(url, "_blank");
-  }
-
-  return (
-    <Modal title={item.title} onClose={onClose}>
-      <div className="flex flex-col gap-4">
-        {error && <p className="alert-error">{error}</p>}
-        <div className="flex items-center gap-2">
-          <span className="badge-blue">{item.type}</span>
-          {item.date && <span className="hint">{item.date}</span>}
-        </div>
-
-        {item.has_file && (
-          <button onClick={openFile} className="btn-secondary btn-sm self-start">
-            Download file
-          </button>
-        )}
-
-        <div className="flex flex-wrap gap-1.5">
-          {item.tags.map((label) => (
-            <span key={label} className="badge-gray">
-              {label}
-            </span>
-          ))}
-          {item.consents.map((c, i) => (
-            <span key={i} className={c.status === "granted" ? "badge-green" : "badge-red"}>
-              <span className={`badge-dot ${c.status === "granted" ? "bg-emerald-500" : "bg-red-500"}`} />
-              {c.consent_type}: {c.status}
-            </span>
-          ))}
-        </div>
-
-        <form onSubmit={handleAddTag} className="flex items-end gap-2">
-          <label className="field flex-1">
-            <span className="label">Add tag</span>
-            <input className="input" value={tagLabel} onChange={(e) => setTagLabel(e.target.value)} required />
-          </label>
-          <button type="submit" className="btn-secondary btn-sm">
-            Add
-          </button>
-        </form>
-
-        <form onSubmit={handleAddConsent} className="flex items-end gap-2">
-          <label className="field flex-1">
-            <span className="label">Consent type</span>
-            <input className="input" value={consentType} onChange={(e) => setConsentType(e.target.value)} required />
-          </label>
-          <label className="field w-32">
-            <span className="label">Status</span>
-            <select className="input" value={consentStatus} onChange={(e) => setConsentStatus(e.target.value as "granted" | "revoked")}>
-              <option value="granted">granted</option>
-              <option value="revoked">revoked</option>
-            </select>
-          </label>
-          <button type="submit" className="btn-secondary btn-sm">
-            Add
-          </button>
-        </form>
-      </div>
     </Modal>
   );
 }

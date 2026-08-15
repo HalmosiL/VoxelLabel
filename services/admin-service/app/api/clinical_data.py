@@ -13,7 +13,7 @@ from shared_auth import CurrentUser, get_current_user, require_project_role
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, Consent, ConsentStatus, Tag
 
-from app.storage import upload_clinical_data_file
+from app.storage import delete_object, upload_clinical_data_file
 
 router = APIRouter(prefix="/admin", tags=["admin:clinical-data"])
 
@@ -61,6 +61,59 @@ async def create_clinical_data_item(
     db.add(item)
     db.commit()
     return {"id": str(item.id), "title": item.title}
+
+
+@router.patch("/clinical-data-items/{item_id}")
+def update_clinical_data_item(
+    item_id: uuid.UUID,
+    type: str | None = None,
+    title: str | None = None,
+    item_date: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Partial update. `type`/`title` are required fields on the model, so
+    (unlike Case's optional fields) an empty value is ignored rather than
+    clearing them -- only `item_date` can be cleared with an empty string."""
+    item = _clinical_data_item_or_404(db, item_id)
+    case = _case_or_404(db, str(item.case_id))
+    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+
+    if type:
+        item.type = type
+    if title:
+        item.title = title
+    if item_date is not None:
+        item.date = date_type.fromisoformat(item_date) if item_date else None
+
+    db.commit()
+    return {
+        "id": str(item.id),
+        "type": item.type,
+        "title": item.title,
+        "date": item.date.isoformat() if item.date else None,
+    }
+
+
+@router.delete("/clinical-data-items/{item_id}")
+def delete_clinical_data_item(
+    item_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    item = _clinical_data_item_or_404(db, item_id)
+    case = _case_or_404(db, str(item.case_id))
+    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+
+    if item.object_storage_key:
+        delete_object(item.object_storage_key)
+    for tag in item.tags:
+        db.delete(tag)
+    for consent in item.consents:
+        db.delete(consent)
+    db.delete(item)
+    db.commit()
+    return {"deleted": True}
 
 
 @router.post("/clinical-data-items/{item_id}/tags")

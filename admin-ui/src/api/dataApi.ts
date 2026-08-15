@@ -57,13 +57,22 @@ export interface PatientSummary {
   case_count: number;
 }
 
+export interface PatientCaseStudy {
+  id: string;
+  study_instance_uid: string;
+  modality: string | null;
+  description: string | null;
+  thumbnail_url: string | null;
+}
+
 export interface PatientCase {
   id: string;
   project_id: string;
   project_name: string;
   accession_number: string | null;
   title: string | null;
-  studies: { id: string; study_instance_uid: string; modality: string | null; description: string | null }[];
+  studies: PatientCaseStudy[];
+  documents: ClinicalDataItem[];
   tags: string[];
 }
 

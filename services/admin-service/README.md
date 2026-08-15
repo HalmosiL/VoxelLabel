@@ -20,8 +20,14 @@ writes require a project-scoped role instead (see `shared_auth`).
 - `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier, with optional date/type/title/comment
 - `PATCH /admin/cases/{case_id}` -- update a case's accession number, date, type, title, or comment
 - `POST /admin/cases/{case_id}/clinical-data-items` -- attach a clinical data item to a case, with an optional file
+- `PATCH /admin/clinical-data-items/{item_id}` -- update an item's type/title/date
+- `DELETE /admin/clinical-data-items/{item_id}` -- delete an item, its tags/consents, and its attached file
 - `POST /admin/clinical-data-items/{item_id}/tags` -- add a tag to an item
 - `POST /admin/clinical-data-items/{item_id}/consents` -- add a consent record to an item
+- `PATCH /admin/studies/{study_id}` -- update a study's description/modality
+- `DELETE /admin/studies/{study_id}` -- delete a study, cascading to its series/instances and their object storage files (pixel data + thumbnails)
+- `PATCH /admin/series/{series_id}` -- update a series' description/body part
+- `DELETE /admin/series/{series_id}` -- delete a series, cascading to its instances and their object storage files
 - `GET /admin/deidentification-profiles` -- list de-identification profiles (with their rules)
 - `POST /admin/deidentification-profiles` -- create a de-identification profile
 - `POST /admin/deidentification-profiles/{profile_id}/rules` -- add a per-tag rule (keep/remove/replace_fixed/hash)
@@ -40,12 +46,13 @@ ARCHITECTURE.md, "Case-centric data model".
 | `app/main.py` | FastAPI app, route registration |
 | `app/api/projects.py` | Project + membership management |
 | `app/api/cases.py` | Case creation + patient identity resolution (pseudonymization) |
-| `app/api/clinical_data.py` | Clinical data item / tag / consent creation, incl. file upload |
+| `app/api/clinical_data.py` | Clinical data item create/update/delete, tag/consent creation, incl. file upload |
+| `app/api/imaging.py` | Study/Series metadata edit and cascading delete (series/instances + their object storage files) |
 | `app/api/deidentification.py` | De-identification profile/rule management |
 | `app/api/annotation_types.py` | Annotation type registration (the JSON Schema that `annotation-service` validates payloads against) |
 | `app/api/users.py` | Keycloak realm user lookup (project-member picker) |
 | `app/keycloak_admin.py` | Keycloak Admin API client (client-credentials token + user listing), using a narrowly-scoped service account -- not master-realm admin credentials |
-| `app/storage.py` | Object storage upload for clinical data files (internal hostname -- real uploads, unlike data-service) |
+| `app/storage.py` | Object storage upload/delete for clinical data files, project cover images, and (via `delete_object`) pixel data/thumbnails written by ingestion-service -- all services share one bucket |
 
 ## Running standalone
 

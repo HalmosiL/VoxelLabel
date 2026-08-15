@@ -31,6 +31,15 @@ def upload_clinical_data_file(storage_key: str, data: bytes) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data)
 
 
+def delete_object(storage_key: str) -> None:
+    """Delete one object from the shared bucket -- used when deleting a
+    Study/Series/Instance (pixel data + thumbnail) or a ClinicalDataItem's
+    attached file. All three services share one bucket (`ct-pixel-data`),
+    so this works regardless of which service originally wrote the key.
+    """
+    _client.delete_object(Bucket=settings.object_storage_bucket, Key=storage_key)
+
+
 def upload_project_cover_image(storage_key: str, data: bytes) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data)
 
