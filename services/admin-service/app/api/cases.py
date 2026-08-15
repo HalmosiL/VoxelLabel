@@ -1,12 +1,14 @@
-"""HTTP API for creating cases -- the central entity that ties a patient to
-a project. Patient identity resolution (pseudonymization) happens here,
-once, at case-creation time, rather than being repeated on every DICOM
-upload. See ARCHITECTURE.md, "Case-centric data model".
+"""HTTP API for creating and updating cases -- the central entity that
+ties a patient to a project. Patient identity resolution
+(pseudonymization) happens here, once, at case-creation time, rather than
+being repeated on every DICOM upload. See ARCHITECTURE.md, "Case-centric
+data model".
 """
 import hashlib
 import uuid
+from datetime import date as date_type
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_project_role
@@ -40,6 +42,10 @@ def create_case(
     project_id: str,
     external_patient_id: str,
     accession_number: str | None = None,
+    case_date: str | None = None,
+    type: str | None = None,
+    title: str | None = None,
+    comment: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
@@ -48,7 +54,55 @@ def create_case(
     require_project_role(db, project_id, user, allowed_roles=["data_manager", "admin"])
 
     patient = _get_or_create_patient(db, external_patient_id)
-    case = Case(project_id=project_id, patient_id=patient.id, accession_number=accession_number)
+    case = Case(
+        project_id=project_id,
+        patient_id=patient.id,
+        accession_number=accession_number,
+        date=date_type.fromisoformat(case_date) if case_date else None,
+        type=type,
+        title=title,
+        comment=comment,
+    )
     db.add(case)
     db.commit()
     return {"id": str(case.id), "patient_id": str(patient.id), "accession_number": case.accession_number}
+
+
+@router.patch("/cases/{case_id}")
+def update_case(
+    case_id: str,
+    accession_number: str | None = None,
+    case_date: str | None = None,
+    type: str | None = None,
+    title: str | None = None,
+    comment: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Partial update -- only fields explicitly passed are changed. To
+    clear a field, pass an empty string."""
+    case = db.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+
+    if accession_number is not None:
+        case.accession_number = accession_number or None
+    if case_date is not None:
+        case.date = date_type.fromisoformat(case_date) if case_date else None
+    if type is not None:
+        case.type = type or None
+    if title is not None:
+        case.title = title or None
+    if comment is not None:
+        case.comment = comment or None
+
+    db.commit()
+    return {
+        "id": str(case.id),
+        "accession_number": case.accession_number,
+        "date": case.date.isoformat() if case.date else None,
+        "type": case.type,
+        "title": case.title,
+        "comment": case.comment,
+    }

@@ -102,16 +102,39 @@ export function addDeidentificationRule(
   return apiFetch(base, `/admin/deidentification-profiles/${profileId}/rules?${qs}`, { method: "POST" });
 }
 
+export interface CaseFormFields {
+  accessionNumber?: string;
+  date?: string;
+  type?: string;
+  title?: string;
+  comment?: string;
+}
+
 export function createCase(
   projectId: string,
   externalPatientId: string,
-  accessionNumber: string
+  fields: CaseFormFields
 ): Promise<{ id: string; patient_id: string; accession_number: string | null }> {
   const qs = new URLSearchParams({
     external_patient_id: externalPatientId,
-    ...(accessionNumber ? { accession_number: accessionNumber } : {}),
+    ...(fields.accessionNumber ? { accession_number: fields.accessionNumber } : {}),
+    ...(fields.date ? { case_date: fields.date } : {}),
+    ...(fields.type ? { type: fields.type } : {}),
+    ...(fields.title ? { title: fields.title } : {}),
+    ...(fields.comment ? { comment: fields.comment } : {}),
   });
   return apiFetch(base, `/admin/projects/${projectId}/cases?${qs}`, { method: "POST" });
+}
+
+export function updateCase(caseId: string, fields: CaseFormFields): Promise<void> {
+  const qs = new URLSearchParams({
+    ...(fields.accessionNumber !== undefined ? { accession_number: fields.accessionNumber } : {}),
+    ...(fields.date !== undefined ? { case_date: fields.date } : {}),
+    ...(fields.type !== undefined ? { type: fields.type } : {}),
+    ...(fields.title !== undefined ? { title: fields.title } : {}),
+    ...(fields.comment !== undefined ? { comment: fields.comment } : {}),
+  });
+  return apiFetch(base, `/admin/cases/${caseId}?${qs}`, { method: "PATCH" });
 }
 
 export function createClinicalDataItem(

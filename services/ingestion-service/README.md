@@ -25,6 +25,7 @@ patient it belongs to) must already exist, created via admin-service's
 | `app/tasks.py` | Celery task wrapper (retries, error classification) |
 | `app/pipeline.py` | Core ingestion logic: parse, validate, dedupe, persist -- no Celery/FastAPI dependency, directly unit-testable |
 | `app/deidentify.py` | Applies a project's `DeidentificationProfile` to a pydicom dataset |
+| `app/thumbnail.py` | Generates a small PNG preview from an instance's pixel data (min-max normalized, not diagnostic windowing) |
 | `app/storage.py` | Object storage (MinIO/S3) upload |
 | `app/worker.py` | Celery worker process entrypoint |
 

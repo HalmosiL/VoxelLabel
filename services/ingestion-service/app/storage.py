@@ -21,6 +21,10 @@ def upload_pixel_data(storage_key: str, dataset) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=buffer.getvalue())
 
 
+def upload_thumbnail(storage_key: str, png_bytes: bytes) -> None:
+    _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=png_bytes, ContentType="image/png")
+
+
 def upload_staged_file(staging_key: str, data: bytes) -> None:
     """Stage a just-uploaded file's raw bytes in object storage under a
     `_staging/` prefix, so the Celery worker -- a separate container/

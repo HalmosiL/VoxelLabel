@@ -17,7 +17,8 @@ writes require a project-scoped role instead (see `shared_auth`).
 - `GET /admin/projects/{project_id}/members` -- list a project's members
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
 - `GET /admin/keycloak-users` -- list realm users (id/username/email), for the project-member picker in admin-ui
-- `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier
+- `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier, with optional date/type/title/comment
+- `PATCH /admin/cases/{case_id}` -- update a case's accession number, date, type, title, or comment
 - `POST /admin/cases/{case_id}/clinical-data-items` -- attach a clinical data item to a case, with an optional file
 - `POST /admin/clinical-data-items/{item_id}/tags` -- add a tag to an item
 - `POST /admin/clinical-data-items/{item_id}/consents` -- add a consent record to an item

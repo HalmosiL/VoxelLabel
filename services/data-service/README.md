@@ -8,11 +8,12 @@ clinical data items, tags, consents) lives in admin-service, not here.
 
 ## Endpoints
 
-- `GET /data/projects/{project_id}/cases` -- list cases in a project
+- `GET /data/projects/{project_id}/cases` -- list cases in a project (with date/type/title/comment and rolled-up tags)
 - `GET /data/cases/{case_id}` -- get one case
-- `GET /data/cases/{case_id}/studies` -- list studies in a case
-- `GET /data/studies/{study_id}/series` -- list series within a study
-- `GET /data/series/{series_id}/instances` -- list instances within a series
+- `GET /data/cases/{case_id}/studies` -- list studies in a case, each with a representative `thumbnail_url`
+- `GET /data/cases/{case_id}/series` -- every series across every study in the case, flattened, each with `thumbnail_url` and its parent study reference
+- `GET /data/studies/{study_id}/series` -- list series within one study, with `thumbnail_url`
+- `GET /data/series/{series_id}/instances` -- list instances within a series, with `thumbnail_url`
 - `GET /data/instances/{instance_id}/pixel-data-url` -- presigned URL to the raw DICOM file
 - `GET /data/cases/{case_id}/clinical-data-items` -- list clinical data items in a case (with tags/consents)
 - `GET /data/clinical-data-items/{item_id}/file-url` -- presigned URL to the item's attached file (404 if it has none)

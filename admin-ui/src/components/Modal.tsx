@@ -1,7 +1,8 @@
 import { ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export default function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" onClick={onClose}>
       <div
         className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
@@ -24,6 +25,7 @@ export default function Modal({ title, onClose, children }: { title: string; onC
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

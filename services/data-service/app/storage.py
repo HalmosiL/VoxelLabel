@@ -42,3 +42,7 @@ def presigned_clinical_data_url(storage_key: str, expires_in: int = 300) -> str:
     """Same as presigned_pixel_data_url, for a ClinicalDataItem's attached
     file instead of a DICOM instance."""
     return _presigned_url(storage_key, expires_in)
+
+
+def presigned_thumbnail_url(storage_key: str, expires_in: int = 300) -> str:
+    return _presigned_url(storage_key, expires_in)

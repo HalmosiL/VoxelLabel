@@ -6,7 +6,7 @@ from shared_auth import CurrentUser, get_current_user, require_project_role
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, Instance, Patient, Series, Study
 
-from app.storage import presigned_clinical_data_url, presigned_pixel_data_url
+from app.storage import presigned_clinical_data_url, presigned_pixel_data_url, presigned_thumbnail_url
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -29,6 +29,42 @@ def _require_global_admin(user: CurrentUser) -> None:
         raise HTTPException(status_code=403, detail="Admin realm role required")
 
 
+def _thumbnail_url_for_series(series: Series) -> str | None:
+    """The first instance in the series that has a thumbnail, presigned --
+    used as the representative preview for a whole series (and, one level
+    up, for the study it belongs to)."""
+    for instance in series.instances:
+        if instance.thumbnail_key:
+            return presigned_thumbnail_url(instance.thumbnail_key)
+    return None
+
+
+def _thumbnail_url_for_study(study: Study) -> str | None:
+    for series in study.series:
+        url = _thumbnail_url_for_series(series)
+        if url:
+            return url
+    return None
+
+
+def _case_tags(case: Case) -> list[str]:
+    return sorted({tag.label for item in case.clinical_data_items for tag in item.tags})
+
+
+def _serialize_case(case: Case) -> dict:
+    return {
+        "id": str(case.id),
+        "project_id": str(case.project_id),
+        "patient_pseudonym_id": case.patient.pseudonym_id,
+        "accession_number": case.accession_number,
+        "date": case.date.isoformat() if case.date else None,
+        "type": case.type,
+        "title": case.title,
+        "comment": case.comment,
+        "tags": _case_tags(case),
+    }
+
+
 @router.get("/projects/{project_id}/cases")
 def list_cases(
     project_id: str,
@@ -38,14 +74,7 @@ def list_cases(
     require_project_role(db, project_id, user, allowed_roles=_READ_ROLES)
 
     cases = db.query(Case).filter_by(project_id=project_id).all()
-    return [
-        {
-            "id": str(c.id),
-            "patient_pseudonym_id": c.patient.pseudonym_id,
-            "accession_number": c.accession_number,
-        }
-        for c in cases
-    ]
+    return [_serialize_case(c) for c in cases]
 
 
 @router.get("/cases/{case_id}")
@@ -56,13 +85,7 @@ def get_case(
 ) -> dict:
     case = _case_or_404(db, case_id)
     require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
-
-    return {
-        "id": str(case.id),
-        "project_id": str(case.project_id),
-        "patient_pseudonym_id": case.patient.pseudonym_id,
-        "accession_number": case.accession_number,
-    }
+    return _serialize_case(case)
 
 
 @router.get("/cases/{case_id}/studies")
@@ -82,9 +105,38 @@ def list_studies(
             "study_date": s.study_date.isoformat() if s.study_date else None,
             "modality": s.modality,
             "description": s.description,
+            "thumbnail_url": _thumbnail_url_for_study(s),
         }
         for s in studies
     ]
+
+
+@router.get("/cases/{case_id}/series")
+def list_case_series(
+    case_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Every series across every study in the case, flattened -- the
+    single-page case profile shows series directly, without a per-study
+    drill-down step."""
+    case = _case_or_404(db, case_id)
+    require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
+
+    result = []
+    for study in case.studies:
+        for series in study.series:
+            result.append(
+                {
+                    "id": str(series.id),
+                    "series_instance_uid": series.series_instance_uid,
+                    "series_description": series.series_description,
+                    "study_id": str(study.id),
+                    "study_description": study.description,
+                    "thumbnail_url": _thumbnail_url_for_series(series),
+                }
+            )
+    return result
 
 
 @router.get("/studies/{study_id}/series")
@@ -97,7 +149,12 @@ def list_series(
     require_project_role(db, str(study.case.project_id), user, allowed_roles=_READ_ROLES)
 
     return [
-        {"id": str(s.id), "series_instance_uid": s.series_instance_uid, "series_description": s.series_description}
+        {
+            "id": str(s.id),
+            "series_instance_uid": s.series_instance_uid,
+            "series_description": s.series_description,
+            "thumbnail_url": _thumbnail_url_for_series(s),
+        }
         for s in study.series
     ]
 
@@ -112,7 +169,12 @@ def list_instances(
     require_project_role(db, str(series.study.case.project_id), user, allowed_roles=_READ_ROLES)
 
     return [
-        {"id": str(i.id), "sop_instance_uid": i.sop_instance_uid, "instance_number": i.instance_number}
+        {
+            "id": str(i.id),
+            "sop_instance_uid": i.sop_instance_uid,
+            "instance_number": i.instance_number,
+            "thumbnail_url": presigned_thumbnail_url(i.thumbnail_key) if i.thumbnail_key else None,
+        }
         for i in series.instances
     ]
 
@@ -187,13 +249,13 @@ def list_patient_cases(
 
     result = []
     for case in patient.cases:
-        tags = sorted({tag.label for item in case.clinical_data_items for tag in item.tags})
         result.append(
             {
                 "id": str(case.id),
                 "project_id": str(case.project_id),
                 "project_name": case.project.name,
                 "accession_number": case.accession_number,
+                "title": case.title,
                 "studies": [
                     {
                         "id": str(s.id),
@@ -203,7 +265,7 @@ def list_patient_cases(
                     }
                     for s in case.studies
                 ],
-                "tags": tags,
+                "tags": _case_tags(case),
             }
         )
     return result

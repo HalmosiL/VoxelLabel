@@ -4,6 +4,7 @@ Kept separate from the Celery task wrapper (app/tasks.py) so this logic can
 be unit-tested directly, without a running Celery worker or broker.
 """
 import io
+import uuid
 
 import pydicom
 from sqlalchemy.orm import Session
@@ -12,7 +13,8 @@ from shared_models.database import SessionLocal
 from shared_models.models import Case, Instance, Series, Study
 
 from app.deidentify import apply_deidentification_profile
-from app.storage import delete_staged_file, download_staged_file, upload_pixel_data
+from app.storage import delete_staged_file, download_staged_file, upload_pixel_data, upload_thumbnail
+from app.thumbnail import ThumbnailGenerationError, generate_thumbnail
 
 REQUIRED_TAGS = ("StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID")
 
@@ -53,11 +55,24 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
         study = _get_or_create_study(db, dataset, case)
         series = _get_or_create_series(db, dataset, study)
 
+        instance_id = uuid.uuid4()
+        thumbnail_key = None
+        try:
+            thumbnail_key = f"thumbnails/{instance_id}.png"
+            upload_thumbnail(thumbnail_key, generate_thumbnail(dataset))
+        except ThumbnailGenerationError:
+            # A preview image is a nice-to-have, not a requirement for a
+            # successful ingest (e.g. an unsupported transfer syntax
+            # pydicom can't decode without an extra codec plugin).
+            thumbnail_key = None
+
         instance = Instance(
+            id=instance_id,
             series_id=series.id,
             sop_instance_uid=dataset.SOPInstanceUID,
             instance_number=getattr(dataset, "InstanceNumber", None),
             object_storage_key=storage_key,
+            thumbnail_key=thumbnail_key,
             rows=getattr(dataset, "Rows", None),
             columns=getattr(dataset, "Columns", None),
         )

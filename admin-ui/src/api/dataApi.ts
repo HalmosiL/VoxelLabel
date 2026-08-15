@@ -3,8 +3,14 @@ import { apiFetch } from "./client";
 
 export interface CaseSummary {
   id: string;
+  project_id: string;
   patient_pseudonym_id: string;
   accession_number: string | null;
+  date: string | null;
+  type: string | null;
+  title: string | null;
+  comment: string | null;
+  tags: string[];
 }
 
 export interface Study {
@@ -13,18 +19,26 @@ export interface Study {
   study_date: string | null;
   modality: string | null;
   description: string | null;
+  thumbnail_url: string | null;
 }
 
 export interface Series {
   id: string;
   series_instance_uid: string;
   series_description: string | null;
+  thumbnail_url: string | null;
+}
+
+export interface CaseSeries extends Series {
+  study_id: string;
+  study_description: string | null;
 }
 
 export interface Instance {
   id: string;
   sop_instance_uid: string;
   instance_number: number | null;
+  thumbnail_url: string | null;
 }
 
 export interface ClinicalDataItem {
@@ -48,6 +62,7 @@ export interface PatientCase {
   project_id: string;
   project_name: string;
   accession_number: string | null;
+  title: string | null;
   studies: { id: string; study_instance_uid: string; modality: string | null; description: string | null }[];
   tags: string[];
 }
@@ -58,12 +73,16 @@ export function listCases(projectId: string): Promise<CaseSummary[]> {
   return apiFetch(base, `/data/projects/${projectId}/cases`);
 }
 
-export function getCase(caseId: string): Promise<CaseSummary & { project_id: string }> {
+export function getCase(caseId: string): Promise<CaseSummary> {
   return apiFetch(base, `/data/cases/${caseId}`);
 }
 
 export function listStudies(caseId: string): Promise<Study[]> {
   return apiFetch(base, `/data/cases/${caseId}/studies`);
+}
+
+export function listCaseSeries(caseId: string): Promise<CaseSeries[]> {
+  return apiFetch(base, `/data/cases/${caseId}/series`);
 }
 
 export function listSeries(studyId: string): Promise<Series[]> {
