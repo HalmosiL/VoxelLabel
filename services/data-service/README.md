@@ -16,7 +16,13 @@ clinical data items, tags, consents) lives in admin-service, not here.
 - `GET /data/instances/{instance_id}/pixel-data-url` -- presigned URL to the raw DICOM file
 - `GET /data/cases/{case_id}/clinical-data-items` -- list clinical data items in a case (with tags/consents)
 - `GET /data/clinical-data-items/{item_id}/file-url` -- presigned URL to the item's attached file (404 if it has none)
+- `GET /data/patients` -- list all patients, across every project (global `admin` role only -- see below)
+- `GET /data/patients/{patient_id}/cases` -- a patient's cases across every project, each with its studies and flattened clinical-data tags (global `admin` role only)
 - `GET /health` -- liveness/readiness probe
+
+The two `/data/patients*` endpoints require the global Keycloak `admin`
+realm role rather than a project-scoped one: a patient's cases can span
+multiple projects, so there is no single project to check a role against.
 
 All endpoints require a project role in `["viewer", "annotator", "reviewer", "data_manager", "admin"]`, checked via `shared_auth.require_project_role`.
 

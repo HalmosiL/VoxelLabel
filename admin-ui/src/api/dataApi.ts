@@ -37,6 +37,21 @@ export interface ClinicalDataItem {
   consents: { consent_type: string; status: "granted" | "revoked" }[];
 }
 
+export interface PatientSummary {
+  id: string;
+  pseudonym_id: string;
+  case_count: number;
+}
+
+export interface PatientCase {
+  id: string;
+  project_id: string;
+  project_name: string;
+  accession_number: string | null;
+  studies: { id: string; study_instance_uid: string; modality: string | null; description: string | null }[];
+  tags: string[];
+}
+
 const base = API.data;
 
 export function listCases(projectId: string): Promise<CaseSummary[]> {
@@ -69,4 +84,12 @@ export function listClinicalDataItems(caseId: string): Promise<ClinicalDataItem[
 
 export function getClinicalDataFileUrl(itemId: string): Promise<{ url: string }> {
   return apiFetch(base, `/data/clinical-data-items/${itemId}/file-url`);
+}
+
+export function listPatients(): Promise<PatientSummary[]> {
+  return apiFetch(base, "/data/patients");
+}
+
+export function listPatientCases(patientId: string): Promise<PatientCase[]> {
+  return apiFetch(base, `/data/patients/${patientId}/cases`);
 }

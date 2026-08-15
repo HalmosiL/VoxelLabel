@@ -1,11 +1,19 @@
 # admin-ui
 
 The browser-based management interface for the platform: projects,
-project memberships, studies/series/instances browsing, DICOM upload,
-annotation review, de-identification profiles, and annotation type
-registration. Talks directly to the four backend APIs from the browser
-(ingestion/data/annotation/admin) and to Keycloak for login -- there is no
-server-side component of its own beyond the static file server.
+project memberships, cases (patient + accession number), studies/series/
+instances browsing, DICOM upload, clinical data items (files, tags,
+consents), a cross-project patient profile view, annotation review,
+de-identification profiles, and annotation type registration. Talks
+directly to the four backend APIs from the browser (ingestion/data/
+annotation/admin) and to Keycloak for login -- there is no server-side
+component of its own beyond the static file server.
+
+Navigation: Projects -> Project detail (Cases / Annotation review /
+Members) -> Case detail (Studies / Clinical Data). Patients is a separate,
+cross-project entry point: Patients -> Patient detail lists every case for
+that patient across all projects, each with its studies and tags, with a
+link into the corresponding Case detail page.
 
 ## Stack
 
@@ -63,9 +71,9 @@ ports to the host.
 
 ## Known limitations
 
-- Project listing/creation and de-identification/annotation-type
-  management require the global Keycloak `admin` realm role -- there is
-  no reduced-permission admin view yet.
+- Project listing/creation, de-identification/annotation-type management,
+  and the Patients cross-project view all require the global Keycloak
+  `admin` realm role -- there is no reduced-permission admin view yet.
 - No pagination anywhere; fine at the target scale (10k-100k studies) for
   studies, but the plain list views will need it if used against very
   large single projects.

@@ -6,7 +6,10 @@ import keycloak from "../keycloak";
 const navGroups = [
   {
     label: "Workspace",
-    items: [{ to: "/projects", label: "Projects", icon: FolderIcon }],
+    items: [
+      { to: "/projects", label: "Projects", icon: FolderIcon },
+      { to: "/patients", label: "Patients", icon: UserIcon },
+    ],
   },
   {
     label: "Configuration",
@@ -95,6 +98,18 @@ function FolderIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">
       <path d="M2 4a2 2 0 012-2h4l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4z" />
+    </svg>
+  );
+}
+
+function UserIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }

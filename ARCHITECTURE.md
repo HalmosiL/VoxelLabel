@@ -114,6 +114,13 @@ model around a hand-drawn sketch: `Patient` -> `Case` -> (`Study` ->
   /data/projects/{project_id}/cases`, `GET /data/cases/{case_id}/studies`,
   `GET /data/cases/{case_id}/clinical-data-items`, etc.) -- consistent with
   `data-service` already owning all "read-focused browsing."
+- **Cross-project patient view.** `GET /data/patients` and `GET
+  /data/patients/{patient_id}/cases` (a patient "profile": every case for
+  that patient across every project, each with its studies and the
+  flattened tags from its clinical data items) require the global
+  Keycloak `admin` role rather than `require_project_role` -- a patient's
+  cases can span multiple projects, so there is no single project to check
+  a role against. Everything else in this data model stays project-scoped.
 
 ## Annotation schema: polymorphic by design
 

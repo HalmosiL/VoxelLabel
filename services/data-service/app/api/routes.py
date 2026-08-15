@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_project_role
 from shared_models.database import get_db
-from shared_models.models import Case, ClinicalDataItem, Instance, Series, Study
+from shared_models.models import Case, ClinicalDataItem, Instance, Patient, Series, Study
 
 from app.storage import presigned_clinical_data_url, presigned_pixel_data_url
 
@@ -18,6 +18,15 @@ def _case_or_404(db: Session, case_id: str) -> Case:
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
     return case
+
+
+def _require_global_admin(user: CurrentUser) -> None:
+    """A patient's cases can span multiple projects; there is no single
+    project to check a role against, so cross-project patient views
+    require the global Keycloak `admin` role rather than
+    `require_project_role`."""
+    if "admin" not in user.realm_roles:
+        raise HTTPException(status_code=403, detail="Admin realm role required")
 
 
 @router.get("/projects/{project_id}/cases")
@@ -145,6 +154,59 @@ def list_clinical_data_items(
         }
         for i in items
     ]
+
+
+@router.get("/patients")
+def list_patients(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Cross-project patient list -- see _require_global_admin for why this
+    needs the global admin role instead of a project-scoped check."""
+    _require_global_admin(user)
+
+    patients = db.query(Patient).all()
+    return [{"id": str(p.id), "pseudonym_id": p.pseudonym_id, "case_count": len(p.cases)} for p in patients]
+
+
+@router.get("/patients/{patient_id}/cases")
+def list_patient_cases(
+    patient_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """A patient "profile" view: every case the patient has, across every
+    project, each with its studies and the flattened set of tags from its
+    clinical data items -- enough to render an overview without further
+    round-trips per case."""
+    _require_global_admin(user)
+
+    patient = db.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    result = []
+    for case in patient.cases:
+        tags = sorted({tag.label for item in case.clinical_data_items for tag in item.tags})
+        result.append(
+            {
+                "id": str(case.id),
+                "project_id": str(case.project_id),
+                "project_name": case.project.name,
+                "accession_number": case.accession_number,
+                "studies": [
+                    {
+                        "id": str(s.id),
+                        "study_instance_uid": s.study_instance_uid,
+                        "modality": s.modality,
+                        "description": s.description,
+                    }
+                    for s in case.studies
+                ],
+                "tags": tags,
+            }
+        )
+    return result
 
 
 @router.get("/clinical-data-items/{item_id}/file-url")
