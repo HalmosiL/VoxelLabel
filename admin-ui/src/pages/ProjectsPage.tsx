@@ -86,14 +86,14 @@ export default function ProjectsPage() {
       <div className="card">
         <h2 className="section-title mb-4">New project</h2>
         <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-4">
-          <div className="field w-64">
-            <label className="label">Name</label>
+          <label className="field w-64">
+            <span className="label">Name</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div className="field flex-1">
-            <label className="label">Description</label>
+          </label>
+          <label className="field flex-1">
+            <span className="label">Description</span>
             <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
-          </div>
+          </label>
           <button type="submit" className="btn-primary">
             Create
           </button>

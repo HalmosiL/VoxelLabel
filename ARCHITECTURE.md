@@ -56,9 +56,9 @@ passwords or sessions themselves.
 | Service | Responsibility |
 |---|---|
 | `ingestion-service` | Accepts DICOM uploads, orchestrates async processing (Celery) |
-| `data-service` | Read-only browsing of studies/series/instances, presigned pixel data URLs |
+| `data-service` | Read-only browsing of cases/studies/series/instances/clinical data, presigned file URLs |
 | `annotation-service` | Annotation create/list/review workflow |
-| `admin-service` | Projects, project memberships, de-identification profile management |
+| `admin-service` | Projects, project memberships, cases, clinical data items, de-identification profile management |
 
 ## Storage layer (custom, not a PACS)
 
@@ -76,6 +76,44 @@ No Orthanc/PACS layer -- deliberately custom:
 See `libs/shared-models/shared_models/models.py` for the full schema (this
 is the single source of truth -- read it rather than trusting this
 document to stay perfectly in sync).
+
+## Case-centric data model
+
+Added after the initial scaffold, in response to rethinking the data
+model around a hand-drawn sketch: `Patient` -> `Case` -> (`Study` ->
+`Series` -> `Image`) alongside `Case` -> `ClinicalDataItem` -> (`Tag`,
+`Consent`).
+
+- **`Case`** is the central entity, not `Project` or `Patient` directly.
+  Every `Study` (imaging) and every `ClinicalDataItem` (generic,
+  non-imaging file/data -- a report, referral letter, anything else)
+  hangs off a `Case`, which in turn belongs to exactly one `Project` and
+  one `Patient`. This gives a single place that answers "everything
+  belonging to this patient's episode," regardless of kind.
+- **Patient identity resolution happens once, at case-creation time** --
+  `POST /admin/projects/{project_id}/cases` (admin-service) takes a
+  real-world identifier (e.g. an MRN), hashes it, and finds-or-creates the
+  pseudonymized `Patient` + `PatientIdentityMap` row. DICOM ingestion no
+  longer resolves patients itself -- `POST /ingestion/cases/{case_id}/upload`
+  requires an existing case and just adds `Study`/`Series`/`Instance` rows
+  under it. This keeps identity resolution in one place instead of
+  repeating it on every upload.
+- **`ClinicalDataItem`** is deliberately generic (`type` is a free-form
+  string, like `AnnotationType.name`) since the concrete kinds of
+  non-imaging data are open-ended. Its optional file (if any) lives in
+  object storage via `object_storage_key`, the same pattern as
+  `Instance.object_storage_key` -- an item can also be metadata-only.
+- **`Tag`** is item-specific (one row per label per item), not a shared,
+  reusable vocabulary -- a deliberate simplicity choice over a many-to-many
+  tag taxonomy.
+- **`Consent`** records a type + granted/revoked status per item; no
+  document/expiry fields yet (not requested).
+- Write vs. read split follows the existing service boundaries: creating a
+  case or clinical data item is an `admin-service` endpoint; listing/
+  browsing them is a `data-service` endpoint (`GET
+  /data/projects/{project_id}/cases`, `GET /data/cases/{case_id}/studies`,
+  `GET /data/cases/{case_id}/clinical-data-items`, etc.) -- consistent with
+  `data-service` already owning all "read-focused browsing."
 
 ## Annotation schema: polymorphic by design
 
@@ -113,9 +151,11 @@ Two-tier authorization:
   user_id, role`) for a role scoped to the specific project being accessed.
   Roles: `admin`, `data_manager`, `annotator`, `reviewer`, `viewer`.
 
-Every `study` belongs to exactly one `project`. This lookup is implemented
-once in `libs/shared-auth` (`require_project_role`) and reused by every
-service, rather than reimplemented per service.
+Every `case` belongs to exactly one `project` (and every `study`/
+`clinical_data_item` belongs to exactly one `case`), so project-scoped
+access checks always resolve up through `case.project_id`. This lookup is
+implemented once in `libs/shared-auth` (`require_project_role`) and reused
+by every service, rather than reimplemented per service.
 
 This was chosen over Keycloak fine-grained authorization (which would push
 per-project access rules into Keycloak itself) because the simpler
@@ -141,19 +181,19 @@ admin to configure per project rather than assumed by this codebase.
 
 ## Ingestion pipeline
 
-1. `POST /ingestion/projects/{project_id}/upload` stages the file and
-   enqueues a Celery job; returns a `job_id` immediately (async, not
-   blocking).
+1. `POST /ingestion/cases/{case_id}/upload` stages the file and enqueues a
+   Celery job; returns a `job_id` immediately (async, not blocking). The
+   case must already exist -- see "Case-centric data model" above.
 2. Worker (`app/pipeline.py`):
    - Parses the DICOM header (`pydicom`), validates required tags
      (`StudyInstanceUID`, `SeriesInstanceUID`, `SOPInstanceUID`).
+   - Looks up the case's project, applies its de-identification profile.
    - **Duplicate check**: an existing `sop_instance_uid` is a no-op
      ("duplicate"), not an error -- makes re-uploads and partial retries
      idempotent.
-   - Applies the project's de-identification profile.
    - Uploads pixel data to object storage.
-   - Upserts `patient` / `study` / `series`, inserts `instance`, in one
-     transaction.
+   - Upserts `study` / `series` (under the given case), inserts
+     `instance`, in one transaction.
 3. One instance's failure does not fail the whole batch. Transient errors
    (network/storage) retry with backoff (`app/tasks.py`); permanent
    validation errors (`DicomValidationError`) do not retry.
@@ -197,6 +237,23 @@ ones above:
   requirement (e.g. the annotator viewer client is not scaffolded, since
   it was explicitly deferred).
 
+## admin-ui
+
+A browser-based management interface (`admin-ui/`, React + TypeScript +
+Vite + Tailwind), added after the initial backend-only scaffold because
+there was no way to interact with the system besides curl/Swagger. Talks
+directly to the four backend APIs and to Keycloak (Authorization Code +
+PKCE) from the browser -- no server-side component beyond static file
+serving. Covers: projects, project members, cases (create + browse),
+DICOM upload and study/series/instance browsing, clinical data items
+(create + file upload + tags + consents), annotation review queue,
+de-identification profiles, annotation type registration. See
+`admin-ui/README.md`.
+
+Still explicitly out of scope: the annotator DICOM viewer client (see
+below) -- `admin-ui` is a management/admin surface, not an annotation
+workstation.
+
 ## Deliberately deferred / open items
 
 - Annotator DICOM viewer client (separate API, later phase).
@@ -204,5 +261,6 @@ ones above:
 - Target deployment environment: cloud vs. on-prem Kubernetes.
 - CI pipeline (build/test/push container images).
 - Dataset snapshot creation/export endpoints (schema exists; no API yet).
-- Initial Alembic migration has not been generated -- run it against a
-  running Postgres per `infra/migrations/README.md`.
+- A reduced-permission admin-ui view -- case/clinical-data creation
+  currently requires a project-scoped role, but project/profile
+  management in admin-ui still assumes the global Keycloak `admin` role.

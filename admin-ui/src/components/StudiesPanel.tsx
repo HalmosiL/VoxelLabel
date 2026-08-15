@@ -9,26 +9,26 @@ type View =
   | { level: "series"; study: Study }
   | { level: "instances"; study: Study; series: Series };
 
-export default function StudiesPanel({ projectId }: { projectId: string }) {
+export default function StudiesPanel({ caseId }: { caseId: string }) {
   const [studies, setStudies] = useState<Study[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [view, setView] = useState<View>({ level: "studies" });
 
   function refresh() {
-    listStudies(projectId)
+    listStudies(caseId)
       .then(setStudies)
       .catch((err) => setError(String(err)));
   }
 
-  useEffect(refresh, [projectId]);
+  useEffect(refresh, [caseId]);
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     setUploadStatus("Uploading...");
     try {
-      const result = await uploadDicom(projectId, file);
+      const result = await uploadDicom(caseId, file);
       setUploadStatus(`Queued as job ${result.job_id}. Processing happens in the background -- refresh in a moment.`);
     } catch (err) {
       setUploadStatus(null);

@@ -76,6 +76,48 @@ export function addDeidentificationRule(
   return apiFetch(base, `/admin/deidentification-profiles/${profileId}/rules?${qs}`, { method: "POST" });
 }
 
+export function createCase(
+  projectId: string,
+  externalPatientId: string,
+  accessionNumber: string
+): Promise<{ id: string; patient_id: string; accession_number: string | null }> {
+  const qs = new URLSearchParams({
+    external_patient_id: externalPatientId,
+    ...(accessionNumber ? { accession_number: accessionNumber } : {}),
+  });
+  return apiFetch(base, `/admin/projects/${projectId}/cases?${qs}`, { method: "POST" });
+}
+
+export function createClinicalDataItem(
+  caseId: string,
+  type: string,
+  title: string,
+  itemDate: string,
+  file: File | null
+): Promise<{ id: string; title: string }> {
+  const qs = new URLSearchParams({ type, title, ...(itemDate ? { item_date: itemDate } : {}) });
+  const formData = new FormData();
+  if (file) formData.append("file", file);
+  return apiFetch(base, `/admin/cases/${caseId}/clinical-data-items?${qs}`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export function addClinicalDataTag(itemId: string, label: string): Promise<{ id: string; label: string }> {
+  const qs = new URLSearchParams({ label });
+  return apiFetch(base, `/admin/clinical-data-items/${itemId}/tags?${qs}`, { method: "POST" });
+}
+
+export function addClinicalDataConsent(
+  itemId: string,
+  consentType: string,
+  status: "granted" | "revoked"
+): Promise<{ id: string; consent_type: string; status: string }> {
+  const qs = new URLSearchParams({ consent_type: consentType, status });
+  return apiFetch(base, `/admin/clinical-data-items/${itemId}/consents?${qs}`, { method: "POST" });
+}
+
 export function listAnnotationTypes(): Promise<AnnotationType[]> {
   return apiFetch(base, "/admin/annotation-types");
 }

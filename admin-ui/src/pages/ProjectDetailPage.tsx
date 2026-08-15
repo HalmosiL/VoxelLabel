@@ -3,22 +3,22 @@ import { useParams } from "react-router-dom";
 
 import { addProjectMember, listProjectMembers, ProjectMember } from "../api/adminApi";
 import Avatar from "../components/Avatar";
+import CasesPanel from "../components/CasesPanel";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
 import ReviewQueuePanel from "../components/ReviewQueuePanel";
-import StudiesPanel from "../components/StudiesPanel";
 
-type Tab = "studies" | "review" | "members";
+type Tab = "cases" | "review" | "members";
 
 const tabs: { id: Tab; label: string }[] = [
-  { id: "studies", label: "Studies" },
+  { id: "cases", label: "Cases" },
   { id: "review", label: "Annotation review" },
   { id: "members", label: "Members" },
 ];
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [tab, setTab] = useState<Tab>("studies");
+  const [tab, setTab] = useState<Tab>("cases");
 
   if (!projectId) return null;
 
@@ -42,7 +42,7 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      {tab === "studies" && <StudiesPanel projectId={projectId} />}
+      {tab === "cases" && <CasesPanel projectId={projectId} />}
       {tab === "review" && <ReviewQueuePanel projectId={projectId} />}
       {tab === "members" && <MembersPanel projectId={projectId} />}
     </div>
@@ -114,12 +114,12 @@ function MembersPanel({ projectId }: { projectId: string }) {
       <div className="card">
         <h3 className="section-title mb-4">Add member</h3>
         <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-4">
-          <div className="field flex-1">
-            <label className="label">User ID</label>
+          <label className="field flex-1">
+            <span className="label">User ID</span>
             <input className="input" value={userId} onChange={(e) => setUserId(e.target.value)} required />
-          </div>
-          <div className="field w-48">
-            <label className="label">Role</label>
+          </label>
+          <label className="field w-48">
+            <span className="label">Role</span>
             <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="viewer">viewer</option>
               <option value="annotator">annotator</option>
@@ -127,7 +127,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
               <option value="data_manager">data_manager</option>
               <option value="admin">admin</option>
             </select>
-          </div>
+          </label>
           <button type="submit" className="btn-primary">
             Add
           </button>

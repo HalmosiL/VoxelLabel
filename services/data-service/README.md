@@ -1,15 +1,21 @@
 # data-service
 
-Read-focused API for browsing ingested studies/series/instances and
-fetching pixel data. Pixel data is never proxied through this service --
-callers get a short-lived presigned object storage URL and fetch directly.
+Read-focused API for browsing cases, ingested studies/series/instances,
+and clinical data items, plus fetching their files. Files are never
+proxied through this service -- callers get a short-lived presigned
+object storage URL and fetch directly. Writing/creating this data (cases,
+clinical data items, tags, consents) lives in admin-service, not here.
 
 ## Endpoints
 
-- `GET /data/projects/{project_id}/studies` -- list studies in a project
+- `GET /data/projects/{project_id}/cases` -- list cases in a project
+- `GET /data/cases/{case_id}` -- get one case
+- `GET /data/cases/{case_id}/studies` -- list studies in a case
 - `GET /data/studies/{study_id}/series` -- list series within a study
 - `GET /data/series/{series_id}/instances` -- list instances within a series
 - `GET /data/instances/{instance_id}/pixel-data-url` -- presigned URL to the raw DICOM file
+- `GET /data/cases/{case_id}/clinical-data-items` -- list clinical data items in a case (with tags/consents)
+- `GET /data/clinical-data-items/{item_id}/file-url` -- presigned URL to the item's attached file (404 if it has none)
 - `GET /health` -- liveness/readiness probe
 
 All endpoints require a project role in `["viewer", "annotator", "reviewer", "data_manager", "admin"]`, checked via `shared_auth.require_project_role`.

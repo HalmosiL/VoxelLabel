@@ -1,15 +1,19 @@
 # ingestion-service
 
-Accepts DICOM CT uploads, de-identifies them per an admin-configured
-project profile, stores pixel data in object storage, and writes
-patient/study/series/instance metadata to Postgres. Processing is
-asynchronous: the HTTP API only stages the file and enqueues a job.
+Accepts DICOM CT uploads for an existing case, de-identifies them per the
+case's project's admin-configured profile, stores pixel data in object
+storage, and writes study/series/instance metadata to Postgres. Processing
+is asynchronous: the HTTP API only stages the file and enqueues a job.
+Patient identity resolution is not part of this service -- a case (and the
+patient it belongs to) must already exist, created via admin-service's
+`POST /admin/projects/{project_id}/cases`.
 
 ## Endpoints
 
-- `POST /ingestion/projects/{project_id}/upload` -- upload a single DICOM
-  file (requires `data_manager` or `admin` role on the project). Returns a
-  `job_id` immediately; the file is processed by the Celery worker.
+- `POST /ingestion/cases/{case_id}/upload` -- upload a single DICOM file
+  for an existing case (requires `data_manager` or `admin` role on the
+  case's project). Returns a `job_id` immediately; the file is processed
+  by the Celery worker.
 - `GET /health` -- liveness/readiness probe.
 
 ## Module layout

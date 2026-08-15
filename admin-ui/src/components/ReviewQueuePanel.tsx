@@ -37,8 +37,8 @@ export default function ReviewQueuePanel({ projectId }: { projectId: string }) {
     <div className="flex flex-col gap-4">
       {error && <p className="alert-error">{error}</p>}
 
-      <div className="field w-48">
-        <label className="label">Filter by status</label>
+      <label className="field w-48">
+        <span className="label">Filter by status</span>
         <select className="input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All</option>
           <option value="draft">draft</option>
@@ -46,7 +46,7 @@ export default function ReviewQueuePanel({ projectId }: { projectId: string }) {
           <option value="approved">approved</option>
           <option value="rejected">rejected</option>
         </select>
-      </div>
+      </label>
 
       <div className="table-wrap">
         <table>

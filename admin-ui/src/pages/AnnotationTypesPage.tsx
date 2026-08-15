@@ -86,19 +86,19 @@ export default function AnnotationTypesPage() {
       <div className="card">
         <h2 className="section-title mb-4">Register a new type</h2>
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
-          <div className="field">
-            <label className="label">Name</label>
+          <label className="field">
+            <span className="label">Name</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div className="field">
-            <label className="label">JSON Schema (payload validation)</label>
+          </label>
+          <label className="field">
+            <span className="label">JSON Schema (payload validation)</span>
             <textarea
               className="input font-mono text-xs"
               rows={10}
               value={schemaText}
               onChange={(e) => setSchemaText(e.target.value)}
             />
-          </div>
+          </label>
           <button type="submit" className="btn-primary self-start">
             Register
           </button>

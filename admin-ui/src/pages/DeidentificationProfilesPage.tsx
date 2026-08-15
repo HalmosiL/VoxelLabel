@@ -51,10 +51,10 @@ export default function DeidentificationProfilesPage() {
       <div className="card">
         <h2 className="section-title mb-4">New profile</h2>
         <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-4">
-          <div className="field flex-1">
-            <label className="label">Name</label>
+          <label className="field flex-1">
+            <span className="label">Name</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
+          </label>
           <label className="flex items-center gap-2 pb-2 text-sm text-gray-700">
             <input
               type="checkbox"
@@ -138,8 +138,8 @@ function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfil
       </div>
 
       <form onSubmit={handleAddRule} className="flex flex-wrap items-end gap-3">
-        <div className="field">
-          <label className="label">DICOM tag</label>
+        <label className="field">
+          <span className="label">DICOM tag</span>
           <input
             className="input w-40"
             value={dicomTag}
@@ -147,25 +147,25 @@ function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfil
             placeholder="(gggg,eeee)"
             required
           />
-        </div>
-        <div className="field">
-          <label className="label">Action</label>
+        </label>
+        <label className="field">
+          <span className="label">Action</span>
           <select className="input w-40" value={action} onChange={(e) => setAction(e.target.value)}>
             <option value="keep">keep</option>
             <option value="remove">remove</option>
             <option value="replace_fixed">replace_fixed</option>
             <option value="hash">hash</option>
           </select>
-        </div>
+        </label>
         {action === "replace_fixed" && (
-          <div className="field">
-            <label className="label">Replacement value</label>
+          <label className="field">
+            <span className="label">Replacement value</span>
             <input
               className="input w-40"
               value={replacementValue}
               onChange={(e) => setReplacementValue(e.target.value)}
             />
-          </div>
+          </label>
         )}
         <button type="submit" className="btn-secondary">
           Add rule

@@ -11,6 +11,13 @@ class Settings:
     # Origins allowed to call this API directly from a browser (the admin-ui
     # dev server / deployment). Comma-separated.
     cors_allowed_origins: tuple = tuple(os.environ.get("ADMIN_UI_ORIGINS", "http://localhost:5173").split(","))
+    # Real uploads happen here (unlike data-service, which only signs
+    # presigned URLs) -- must be reachable from inside this container, so
+    # the internal hostname, not the browser-facing one.
+    object_storage_endpoint: str = os.environ.get("OBJECT_STORAGE_ENDPOINT", "http://localhost:9000")
+    object_storage_bucket: str = os.environ.get("OBJECT_STORAGE_BUCKET", "ct-pixel-data")
+    object_storage_access_key: str = os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
+    object_storage_secret_key: str = os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin")
 
 
 settings = Settings()

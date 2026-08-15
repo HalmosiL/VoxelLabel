@@ -23,12 +23,22 @@ _client = boto3.client(
 )
 
 
-def presigned_pixel_data_url(storage_key: str, expires_in: int = 300) -> str:
-    """Generate a short-lived presigned GET URL for a DICOM object, so
-    clients fetch pixel data directly from object storage rather than
-    proxying large binaries through this service."""
+def _presigned_url(storage_key: str, expires_in: int) -> str:
     return _client.generate_presigned_url(
         "get_object",
         Params={"Bucket": settings.object_storage_bucket, "Key": storage_key},
         ExpiresIn=expires_in,
     )
+
+
+def presigned_pixel_data_url(storage_key: str, expires_in: int = 300) -> str:
+    """Generate a short-lived presigned GET URL for a DICOM object, so
+    clients fetch pixel data directly from object storage rather than
+    proxying large binaries through this service."""
+    return _presigned_url(storage_key, expires_in)
+
+
+def presigned_clinical_data_url(storage_key: str, expires_in: int = 300) -> str:
+    """Same as presigned_pixel_data_url, for a ClinicalDataItem's attached
+    file instead of a DICOM instance."""
+    return _presigned_url(storage_key, expires_in)

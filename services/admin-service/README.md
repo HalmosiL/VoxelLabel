@@ -1,8 +1,11 @@
 # admin-service
 
 Platform administration: projects, project memberships (per-project
-roles), and de-identification profiles/rules. Every endpoint requires the
-global Keycloak `admin` realm role.
+roles), de-identification profiles/rules, cases (patient identity
+resolution), and clinical data items (generic files attached to a case,
+plus their tags/consents). Project/profile/annotation-type management
+requires the global Keycloak `admin` realm role; case and clinical-data
+writes require a project-scoped role instead (see `shared_auth`).
 
 ## Endpoints
 
@@ -10,6 +13,10 @@ global Keycloak `admin` realm role.
 - `POST /admin/projects` -- create a project
 - `GET /admin/projects/{project_id}/members` -- list a project's members
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
+- `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier
+- `POST /admin/cases/{case_id}/clinical-data-items` -- attach a clinical data item to a case, with an optional file
+- `POST /admin/clinical-data-items/{item_id}/tags` -- add a tag to an item
+- `POST /admin/clinical-data-items/{item_id}/consents` -- add a consent record to an item
 - `GET /admin/deidentification-profiles` -- list de-identification profiles (with their rules)
 - `POST /admin/deidentification-profiles` -- create a de-identification profile
 - `POST /admin/deidentification-profiles/{profile_id}/rules` -- add a per-tag rule (keep/remove/replace_fixed/hash)
@@ -17,14 +24,21 @@ global Keycloak `admin` realm role.
 - `GET /admin/annotation-types` -- list registered annotation types
 - `GET /health` -- liveness/readiness probe
 
+Reading/listing cases and clinical data items lives in `data-service`, not
+here -- this service only covers the write/creation side. See
+ARCHITECTURE.md, "Case-centric data model".
+
 ## Module layout
 
 | File | Responsibility |
 |---|---|
 | `app/main.py` | FastAPI app, route registration |
 | `app/api/projects.py` | Project + membership management |
+| `app/api/cases.py` | Case creation + patient identity resolution (pseudonymization) |
+| `app/api/clinical_data.py` | Clinical data item / tag / consent creation, incl. file upload |
 | `app/api/deidentification.py` | De-identification profile/rule management |
 | `app/api/annotation_types.py` | Annotation type registration (the JSON Schema that `annotation-service` validates payloads against) |
+| `app/storage.py` | Object storage upload for clinical data files (internal hostname -- real uploads, unlike data-service) |
 
 ## Running standalone
 
@@ -34,9 +48,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Requires `DATABASE_URL` and `KEYCLOAK_ISSUER`/`KEYCLOAK_AUDIENCE` env vars
--- see `.env.example` at the repo root, or run `docker compose up` from the
-repo root for a fully wired local environment.
+Requires `DATABASE_URL`, `OBJECT_STORAGE_*` and
+`KEYCLOAK_ISSUER`/`KEYCLOAK_AUDIENCE` env vars -- see `.env.example` at the
+repo root, or run `docker compose up` from the repo root for a fully wired
+local environment.
 
 ## Testing standalone
 

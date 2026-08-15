@@ -59,8 +59,13 @@ class DeidentificationAction(str, enum.Enum):
     HASH = "hash"
 
 
+class ConsentStatus(str, enum.Enum):
+    GRANTED = "granted"
+    REVOKED = "revoked"
+
+
 class Project(Base):
-    """A project scopes data access: every study belongs to exactly one
+    """A project scopes data access: every case belongs to exactly one
     project, and per-project roles are granted via ProjectMembership."""
 
     __tablename__ = "projects"
@@ -74,7 +79,7 @@ class Project(Base):
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     memberships: Mapped[list["ProjectMembership"]] = relationship(back_populates="project")
-    studies: Mapped[list["Study"]] = relationship(back_populates="project")
+    cases: Mapped[list["Case"]] = relationship(back_populates="project")
 
 
 class ProjectMembership(Base):
@@ -137,6 +142,8 @@ class Patient(Base):
     pseudonym_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    cases: Mapped[list["Case"]] = relationship(back_populates="patient")
+
 
 class PatientIdentityMap(Base):
     """Restricted-access table mapping a hashed external patient id back to
@@ -152,19 +159,98 @@ class PatientIdentityMap(Base):
     access_restricted: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
-class Study(Base):
-    __tablename__ = "studies"
+class Case(Base):
+    """The central clinical entity. A Case identifies which patient and
+    project a body of data belongs to; both imaging (Study -> Series ->
+    Instance) and non-imaging (ClinicalDataItem) data hang off a Case
+    rather than referencing Project/Patient directly, so "everything
+    belonging to this patient's episode" has one place to attach to,
+    regardless of kind. See ARCHITECTURE.md, "Case-centric data model".
+    """
+
+    __tablename__ = "cases"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
     patient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    accession_number: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    project: Mapped["Project"] = relationship(back_populates="cases")
+    patient: Mapped["Patient"] = relationship(back_populates="cases")
+    studies: Mapped[list["Study"]] = relationship(back_populates="case")
+    clinical_data_items: Mapped[list["ClinicalDataItem"]] = relationship(back_populates="case")
+
+
+class ClinicalDataItem(Base):
+    """A generic, non-imaging piece of data attached to a Case -- a report,
+    referral letter, or any other file/document. `type` is a free-form
+    label rather than an enum (like AnnotationType.name), since the
+    concrete set of clinical data kinds is expected to grow. The actual
+    file, if any, lives in object storage; `object_storage_key` is a
+    pointer, the same pattern as Instance.object_storage_key -- an item
+    can also be metadata-only (object_storage_key left null).
+    """
+
+    __tablename__ = "clinical_data_items"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cases.id"), nullable=False)
+    date: Mapped[Date | None] = mapped_column(Date)
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_storage_key: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    case: Mapped["Case"] = relationship(back_populates="clinical_data_items")
+    tags: Mapped[list["Tag"]] = relationship(back_populates="clinical_data_item")
+    consents: Mapped[list["Consent"]] = relationship(back_populates="clinical_data_item")
+
+
+class Tag(Base):
+    """A free-text label on one ClinicalDataItem. Deliberately
+    item-specific rather than a shared/reusable tag vocabulary."""
+
+    __tablename__ = "tags"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    clinical_data_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clinical_data_items.id"), nullable=False
+    )
+    label: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    clinical_data_item: Mapped["ClinicalDataItem"] = relationship(back_populates="tags")
+
+
+class Consent(Base):
+    """A consent record (type + granted/revoked status) on one
+    ClinicalDataItem."""
+
+    __tablename__ = "consents"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    clinical_data_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clinical_data_items.id"), nullable=False
+    )
+    consent_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[ConsentStatus] = mapped_column(nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    clinical_data_item: Mapped["ClinicalDataItem"] = relationship(back_populates="consents")
+
+
+class Study(Base):
+    __tablename__ = "studies"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cases.id"), nullable=False)
     study_instance_uid: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     study_date: Mapped[Date | None] = mapped_column(Date)
     modality: Mapped[str | None] = mapped_column(String(16))
     description: Mapped[str | None] = mapped_column(Text)
     ingested_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    project: Mapped["Project"] = relationship(back_populates="studies")
+    case: Mapped["Case"] = relationship(back_populates="studies")
     series: Mapped[list["Series"]] = relationship(back_populates="study")
 
 
