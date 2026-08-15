@@ -1,4 +1,16 @@
-"""Read-only object storage access for the data service."""
+"""Read-only object storage access for the data service.
+
+`OBJECT_STORAGE_ENDPOINT` here must be the hostname a *browser* can reach
+(e.g. a published port like `http://localhost:9000`), not the internal
+docker/k8s service hostname -- generating a presigned URL is a purely local
+signing operation (no network call to object storage happens), but the
+signed URL is only valid for requests to the host it was signed for, and
+that request is made by the browser, not this service. Contrast with
+`services/ingestion-service/app/storage.py`, which performs real uploads
+from inside the network and so uses the internal hostname instead. Same
+category of issue as the Keycloak issuer/JWKS split -- see
+`libs/shared-auth/README.md`.
+"""
 import boto3
 
 from app.core.config import settings
