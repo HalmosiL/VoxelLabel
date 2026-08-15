@@ -1,13 +1,22 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { createProject, listProjects, Project, uploadProjectCoverImage } from "../api/adminApi";
+import {
+  createProject,
+  deleteProject,
+  listProjects,
+  Project,
+  updateProject,
+  uploadProjectCoverImage,
+} from "../api/adminApi";
+import Modal from "../components/Modal";
+
+type ModalState = { mode: "create" } | { mode: "edit"; project: Project } | null;
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [modal, setModal] = useState<ModalState>(null);
 
   function refresh() {
     listProjects()
@@ -17,12 +26,10 @@ export default function ProjectsPage() {
 
   useEffect(refresh, []);
 
-  async function handleCreate(event: FormEvent) {
-    event.preventDefault();
+  async function handleDelete(project: Project) {
+    if (!window.confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
     try {
-      await createProject(name, description);
-      setName("");
-      setDescription("");
+      await deleteProject(project.id);
       refresh();
     } catch (err) {
       setError(String(err));
@@ -36,32 +43,108 @@ export default function ProjectsPage() {
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {projects.map((p) => (
-          <ProjectCard key={p.id} project={p} onImageUploaded={refresh} />
+          <ProjectCard
+            key={p.id}
+            project={p}
+            onImageUploaded={refresh}
+            onEdit={() => setModal({ mode: "edit", project: p })}
+            onDelete={() => handleDelete(p)}
+          />
         ))}
+        <NewProjectTile onClick={() => setModal({ mode: "create" })} />
       </div>
-      {projects.length === 0 && <p className="hint">No projects yet -- create one below.</p>}
 
-      <div className="card">
-        <h2 className="section-title mb-4">New project</h2>
-        <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-4">
-          <label className="field w-64">
-            <span className="label">Name</span>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-          </label>
-          <label className="field flex-1">
-            <span className="label">Description</span>
-            <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
-          </label>
-          <button type="submit" className="btn-primary">
-            Create
-          </button>
-        </form>
-      </div>
+      {modal && (
+        <ProjectFormModal
+          state={modal}
+          onClose={() => setModal(null)}
+          onSaved={() => {
+            setModal(null);
+            refresh();
+          }}
+          onError={setError}
+        />
+      )}
     </div>
   );
 }
 
-function ProjectCard({ project, onImageUploaded }: { project: Project; onImageUploaded: () => void }) {
+function NewProjectTile({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex aspect-[4/3] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 transition-colors hover:border-brand-300 hover:bg-brand-50/50 hover:text-brand-600"
+    >
+      <PlusIcon className="h-8 w-8" />
+      <span className="text-sm font-medium">New project</span>
+    </button>
+  );
+}
+
+function ProjectFormModal({
+  state,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  state: { mode: "create" } | { mode: "edit"; project: Project };
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  const editing = state.mode === "edit" ? state.project : null;
+  const [name, setName] = useState(editing?.name ?? "");
+  const [description, setDescription] = useState(editing?.description ?? "");
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      if (editing) {
+        await updateProject(editing.id, name, description);
+      } else {
+        await createProject(name, description);
+      }
+      onSaved();
+    } catch (err) {
+      onError(String(err));
+    }
+  }
+
+  return (
+    <Modal title={editing ? "Edit project" : "New project"} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <label className="field">
+          <span className="label">Name</span>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <label className="field">
+          <span className="label">Description</span>
+          <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <div className="mt-2 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-secondary">
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary">
+            {editing ? "Save" : "Create"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ProjectCard({
+  project,
+  onImageUploaded,
+  onEdit,
+  onDelete,
+}: {
+  project: Project;
+  onImageUploaded: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const [uploading, setUploading] = useState(false);
 
   async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
@@ -93,13 +176,29 @@ function ProjectCard({ project, onImageUploaded }: { project: Project; onImageUp
         </div>
       </Link>
 
-      <label
-        className="absolute right-3 top-3 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-white/90 text-gray-600 opacity-0 shadow-sm transition-opacity hover:bg-white group-hover:opacity-100"
-        title="Set cover image"
-      >
-        {uploading ? <Spinner className="h-4 w-4" /> : <CameraIcon className="h-4 w-4" />}
-        <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
-      </label>
+      <div className="absolute right-3 top-3 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+        <label
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white"
+          title="Set cover image"
+        >
+          {uploading ? <Spinner className="h-4 w-4" /> : <CameraIcon className="h-4 w-4" />}
+          <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+        </label>
+        <button
+          onClick={onEdit}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white"
+          title="Edit project"
+        >
+          <PencilIcon className="h-4 w-4" />
+        </button>
+        <button
+          onClick={onDelete}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-red-600 shadow-sm hover:bg-white"
+          title="Delete project"
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -117,6 +216,34 @@ function CameraIcon({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">
       <path d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4z" />
       <path fillRule="evenodd" d="M10 8a3 3 0 100 6 3 3 0 000-6zm-5 3a5 5 0 1110 0 5 5 0 01-10 0z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482 41.03 41.03 0 00-2.365-.298V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" />
     </svg>
   );
 }

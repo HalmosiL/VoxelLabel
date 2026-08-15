@@ -11,6 +11,8 @@ writes require a project-scoped role instead (see `shared_auth`).
 
 - `GET /admin/projects` -- list projects (each with a presigned `cover_image_url` if one is set)
 - `POST /admin/projects` -- create a project
+- `PATCH /admin/projects/{project_id}` -- update a project's name/description
+- `DELETE /admin/projects/{project_id}` -- delete a project (409 if it still has cases -- remove them first)
 - `POST /admin/projects/{project_id}/cover-image` -- attach/replace a project's cover image
 - `GET /admin/projects/{project_id}/members` -- list a project's members
 - `POST /admin/projects/{project_id}/members` -- grant a user a role on a project

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import Project, ProjectMembership, ProjectRole
+from shared_models.models import Case, Project, ProjectMembership, ProjectRole
 
 from app.storage import presigned_project_cover_image_url, upload_project_cover_image
 
@@ -49,6 +49,55 @@ def create_project(
     db.add(project)
     db.commit()
     return {"id": str(project.id), "name": project.name}
+
+
+@router.patch("/{project_id}")
+def update_project(
+    project_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    _require_global_admin(user)
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if name is not None:
+        project.name = name
+    if description is not None:
+        project.description = description
+    db.commit()
+    return {"id": str(project.id), "name": project.name, "description": project.description}
+
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Deletes a project and its membership grants. Refuses to delete a
+    project that still has cases -- cases carry real (pseudonymized)
+    patient data, so removing them has to be a deliberate, separate
+    action, not a side effect of deleting the project they're grouped
+    under."""
+    _require_global_admin(user)
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    case_count = db.query(Case).filter_by(project_id=project_id).count()
+    if case_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete: this project still has {case_count} case(s). Remove them first.",
+        )
+
+    db.query(ProjectMembership).filter_by(project_id=project_id).delete()
+    db.delete(project)
+    db.commit()
 
 
 @router.post("/{project_id}/cover-image")

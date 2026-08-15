@@ -45,6 +45,19 @@ export function createProject(name: string, description: string): Promise<{ id: 
   return apiFetch(base, `/admin/projects?${qs}`, { method: "POST" });
 }
 
+export function updateProject(
+  projectId: string,
+  name: string,
+  description: string
+): Promise<{ id: string; name: string; description: string | null }> {
+  const qs = new URLSearchParams({ name, ...(description ? { description } : {}) });
+  return apiFetch(base, `/admin/projects/${projectId}?${qs}`, { method: "PATCH" });
+}
+
+export function deleteProject(projectId: string): Promise<void> {
+  return apiFetch(base, `/admin/projects/${projectId}`, { method: "DELETE" });
+}
+
 export function uploadProjectCoverImage(projectId: string, file: File): Promise<{ id: string; cover_image_url: string }> {
   const formData = new FormData();
   formData.append("file", file);
