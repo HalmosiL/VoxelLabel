@@ -5,7 +5,7 @@ validate JWTs locally: the `ct-platform` realm, an OIDC client with an
 audience mapper, the global `admin` realm role, one test user holding it,
 and a narrowly-scoped `admin-service-account` service-account client
 (client-credentials, `view-users` role only) that admin-service uses to
-list realm users for the project-member picker in admin-ui -- see
+list realm users for the study-member picker in admin-ui -- see
 `services/admin-service/app/keycloak_admin.py`.
 
 ## Why this exists as a script, not manual clicking
@@ -14,14 +14,14 @@ The realm configuration is exactly reproducible, reviewable, and re-runnable
 -- required for this codebase (see `ARCHITECTURE.md`, "Code organization
 and review requirements"). It has been run end-to-end against a clean
 Keycloak and verified to work in one pass (token issued, validated by
-`admin-service`, project written to Postgres) without manual fixes.
+`admin-service`, study written to Postgres) without manual fixes.
 
 ## What it does NOT create
 
-Per-project roles (`data_manager`, `annotator`, `reviewer`, `viewer`) --
-those are rows in the `project_memberships` table (see
-`shared_models.models.ProjectMembership`), granted via the admin-service
-API (`POST /admin/projects/{project_id}/members`), not Keycloak roles. Only
+Per-study roles (`data_manager`, `annotator`, `reviewer`, `viewer`) --
+those are rows in the `study_memberships` table (see
+`shared_models.models.StudyMembership`), granted via the admin-service
+API (`POST /admin/studies/{study_id}/members`), not Keycloak roles. Only
 the global `admin` realm role lives in Keycloak; see
 `libs/shared-auth/shared_auth/auth.py`.
 

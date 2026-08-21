@@ -1,13 +1,13 @@
-"""Keycloak JWT verification and project-scoped role checks, shared by every service.
+"""Keycloak JWT verification and study-scoped role checks, shared by every service.
 
 Identity always comes from a validated Keycloak access token; there is no
 local password/session store. Authorization is two-tiered:
 
 - a global Keycloak realm role "admin" grants access to everything
-- everyone else is checked against the `project_memberships` table for a
-  role scoped to the specific project being accessed
+- everyone else is checked against the `study_memberships` table for a
+  role scoped to the specific study being accessed
 
-This module queries `project_memberships` with raw SQL rather than the
+This module queries `study_memberships` with raw SQL rather than the
 `shared_models` ORM models, so it has no hard dependency on that package --
 the two libraries stay independently versionable and testable, per the
 project's modularity requirement.
@@ -71,28 +71,28 @@ def get_current_user(
     return CurrentUser(subject=claims["sub"], email=claims.get("email"), realm_roles=realm_roles)
 
 
-def require_project_role(db: Session, project_id: str, user: CurrentUser, allowed_roles: list[str]) -> None:
+def require_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles: list[str]) -> None:
     """Raise 403 unless `user` is a global admin or holds one of
-    `allowed_roles` on `project_id`.
+    `allowed_roles` on `study_id`.
 
     Usage in a route:
 
-        @router.get("/projects/{project_id}/studies")
-        def list_studies(
-            project_id: str,
+        @router.get("/studies/{study_id}/cases")
+        def list_cases(
+            study_id: str,
             db: Session = Depends(get_db),
             user: CurrentUser = Depends(get_current_user),
         ):
-            require_project_role(db, project_id, user, allowed_roles=["viewer", "annotator", "admin"])
+            require_study_role(db, study_id, user, allowed_roles=["viewer", "annotator", "admin"])
             ...
     """
     if "admin" in user.realm_roles:
         return
 
     row = db.execute(
-        text("SELECT role FROM project_memberships WHERE project_id = :pid AND user_id = :uid"),
-        {"pid": project_id, "uid": user.subject},
+        text("SELECT role FROM study_memberships WHERE study_id = :sid AND user_id = :uid"),
+        {"sid": study_id, "uid": user.subject},
     ).first()
 
     if row is None or row[0] not in allowed_roles:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient project role")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient study role")

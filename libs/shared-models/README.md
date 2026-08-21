@@ -8,10 +8,10 @@ tables.
 
 ## Contents
 
-- `shared_models/models.py` -- all ORM models (patients, studies, series,
-  instances, annotations, projects, de-identification profiles, dataset
-  snapshots, audit log). See the module docstrings for the reasoning behind
-  each table.
+- `shared_models/models.py` -- all ORM models (patients, imaging studies,
+  series, instances, annotations, studies (the top-level RBAC container),
+  de-identification profiles, dataset snapshots, audit log). See the module
+  docstrings for the reasoning behind each table.
 - `shared_models/database.py` -- SQLAlchemy engine/session factory and the
   `get_db()` FastAPI dependency, configured via the `DATABASE_URL` env var.
 

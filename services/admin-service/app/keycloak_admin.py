@@ -1,5 +1,5 @@
 """Keycloak Admin API client for looking up realm users -- backs the
-project-member "add user" picker in admin-ui.
+study-member "add user" picker in admin-ui.
 
 Uses a dedicated, narrowly-scoped service account client (granted only the
 `view-users` role, see infra/keycloak/setup-dev-realm.sh) instead of

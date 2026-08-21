@@ -1,35 +1,35 @@
 import { FormEvent, useState } from "react";
 
-import { deleteStudy, updateStudy } from "../api/adminApi";
+import { deleteImagingStudy, updateImagingStudy } from "../api/adminApi";
 import Modal from "./Modal";
 import Thumbnail from "./Thumbnail";
 
-interface StudyLike {
+interface ImagingStudyLike {
   id: string;
   description: string | null;
   modality: string | null;
   thumbnail_url: string | null;
 }
 
-export default function StudyModal({
-  study,
+export default function ImagingStudyModal({
+  imagingStudy,
   onClose,
   onSaved,
   onDeleted,
 }: {
-  study: StudyLike;
+  imagingStudy: ImagingStudyLike;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
 }) {
-  const [description, setDescription] = useState(study.description ?? "");
-  const [modality, setModality] = useState(study.modality ?? "");
+  const [description, setDescription] = useState(imagingStudy.description ?? "");
+  const [modality, setModality] = useState(imagingStudy.modality ?? "");
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
     try {
-      await updateStudy(study.id, { description, modality });
+      await updateImagingStudy(imagingStudy.id, { description, modality });
       onSaved();
     } catch (err) {
       setError(String(err));
@@ -37,9 +37,9 @@ export default function StudyModal({
   }
 
   async function handleDelete() {
-    if (!window.confirm("Delete this study, all its series, and all its images? This cannot be undone.")) return;
+    if (!window.confirm("Delete this imaging study, all its series, and all its images? This cannot be undone.")) return;
     try {
-      await deleteStudy(study.id);
+      await deleteImagingStudy(imagingStudy.id);
       onDeleted();
     } catch (err) {
       setError(String(err));
@@ -47,11 +47,11 @@ export default function StudyModal({
   }
 
   return (
-    <Modal title="Edit study" onClose={onClose}>
+    <Modal title="Edit imaging study" onClose={onClose}>
       <form onSubmit={handleSave} className="flex flex-col gap-4">
         {error && <p className="alert-error">{error}</p>}
         <div className="w-24">
-          <Thumbnail url={study.thumbnail_url} />
+          <Thumbnail url={imagingStudy.thumbnail_url} />
         </div>
         <label className="field">
           <span className="label">Description</span>
@@ -63,7 +63,7 @@ export default function StudyModal({
         </label>
         <div className="mt-2 flex items-center justify-between gap-2">
           <button type="button" onClick={handleDelete} className="btn-danger btn-sm">
-            Delete study
+            Delete imaging study
           </button>
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="btn-secondary">

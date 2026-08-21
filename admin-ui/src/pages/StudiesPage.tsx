@@ -2,34 +2,34 @@ import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
-  createProject,
-  deleteProject,
-  listProjects,
-  Project,
-  updateProject,
-  uploadProjectCoverImage,
+  createStudy,
+  deleteStudy,
+  listStudies,
+  Study,
+  updateStudy,
+  uploadStudyCoverImage,
 } from "../api/adminApi";
 import Modal from "../components/Modal";
 
-type ModalState = { mode: "create" } | { mode: "edit"; project: Project } | null;
+type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | null;
 
-export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
+export default function StudiesPage() {
+  const [studies, setStudies] = useState<Study[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
 
   function refresh() {
-    listProjects()
-      .then(setProjects)
+    listStudies()
+      .then(setStudies)
       .catch((err) => setError(String(err)));
   }
 
   useEffect(refresh, []);
 
-  async function handleDelete(project: Project) {
-    if (!window.confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
+  async function handleDelete(study: Study) {
+    if (!window.confirm(`Delete "${study.name}"? This cannot be undone.`)) return;
     try {
-      await deleteProject(project.id);
+      await deleteStudy(study.id);
       refresh();
     } catch (err) {
       setError(String(err));
@@ -38,24 +38,24 @@ export default function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="page-title">Projects</h1>
+      <h1 className="page-title">Studies</h1>
       {error && <p className="alert-error">{error}</p>}
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {projects.map((p) => (
-          <ProjectCard
-            key={p.id}
-            project={p}
+        {studies.map((s) => (
+          <StudyCard
+            key={s.id}
+            study={s}
             onImageUploaded={refresh}
-            onEdit={() => setModal({ mode: "edit", project: p })}
-            onDelete={() => handleDelete(p)}
+            onEdit={() => setModal({ mode: "edit", study: s })}
+            onDelete={() => handleDelete(s)}
           />
         ))}
-        <NewProjectTile onClick={() => setModal({ mode: "create" })} />
+        <NewStudyTile onClick={() => setModal({ mode: "create" })} />
       </div>
 
       {modal && (
-        <ProjectFormModal
+        <StudyFormModal
           state={modal}
           onClose={() => setModal(null)}
           onSaved={() => {
@@ -69,30 +69,30 @@ export default function ProjectsPage() {
   );
 }
 
-function NewProjectTile({ onClick }: { onClick: () => void }) {
+function NewStudyTile({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       className="flex aspect-[4/3] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 transition-colors hover:border-brand-300 hover:bg-brand-50/50 hover:text-brand-600"
     >
       <PlusIcon className="h-8 w-8" />
-      <span className="text-sm font-medium">New project</span>
+      <span className="text-sm font-medium">New study</span>
     </button>
   );
 }
 
-function ProjectFormModal({
+function StudyFormModal({
   state,
   onClose,
   onSaved,
   onError,
 }: {
-  state: { mode: "create" } | { mode: "edit"; project: Project };
+  state: { mode: "create" } | { mode: "edit"; study: Study };
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
 }) {
-  const editing = state.mode === "edit" ? state.project : null;
+  const editing = state.mode === "edit" ? state.study : null;
   const [name, setName] = useState(editing?.name ?? "");
   const [description, setDescription] = useState(editing?.description ?? "");
 
@@ -100,9 +100,9 @@ function ProjectFormModal({
     event.preventDefault();
     try {
       if (editing) {
-        await updateProject(editing.id, name, description);
+        await updateStudy(editing.id, name, description);
       } else {
-        await createProject(name, description);
+        await createStudy(name, description);
       }
       onSaved();
     } catch (err) {
@@ -111,7 +111,7 @@ function ProjectFormModal({
   }
 
   return (
-    <Modal title={editing ? "Edit project" : "New project"} onClose={onClose}>
+    <Modal title={editing ? "Edit study" : "New study"} onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="field">
           <span className="label">Name</span>
@@ -134,13 +134,13 @@ function ProjectFormModal({
   );
 }
 
-function ProjectCard({
-  project,
+function StudyCard({
+  study,
   onImageUploaded,
   onEdit,
   onDelete,
 }: {
-  project: Project;
+  study: Study;
   onImageUploaded: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -152,7 +152,7 @@ function ProjectCard({
     if (!file) return;
     setUploading(true);
     try {
-      await uploadProjectCoverImage(project.id, file);
+      await uploadStudyCoverImage(study.id, file);
       onImageUploaded();
     } finally {
       setUploading(false);
@@ -162,17 +162,17 @@ function ProjectCard({
 
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm transition-shadow hover:shadow-md">
-      <Link to={`/projects/${project.id}`} className="block">
+      <Link to={`/studies/${study.id}`} className="block">
         <div className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-gradient-to-br from-brand-100 to-brand-50">
-          {project.cover_image_url ? (
-            <img src={project.cover_image_url} alt="" className="h-full w-full object-cover" />
+          {study.cover_image_url ? (
+            <img src={study.cover_image_url} alt="" className="h-full w-full object-cover" />
           ) : (
             <FolderIcon className="h-12 w-12 text-brand-300" />
           )}
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-gray-900">{project.name}</h3>
-          {project.description && <p className="mt-1 text-sm text-gray-500">{project.description}</p>}
+          <h3 className="font-semibold text-gray-900">{study.name}</h3>
+          {study.description && <p className="mt-1 text-sm text-gray-500">{study.description}</p>}
         </div>
       </Link>
 
@@ -187,14 +187,14 @@ function ProjectCard({
         <button
           onClick={onEdit}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white"
-          title="Edit project"
+          title="Edit study"
         >
           <PencilIcon className="h-4 w-4" />
         </button>
         <button
           onClick={onDelete}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-red-600 shadow-sm hover:bg-white"
-          title="Delete project"
+          title="Delete study"
         >
           <TrashIcon className="h-4 w-4" />
         </button>

@@ -1,5 +1,5 @@
 """HTTP API for creating and updating cases -- the central entity that
-ties a patient to a project. Patient identity resolution
+ties a patient to a study. Patient identity resolution
 (pseudonymization) happens here, once, at case-creation time, rather than
 being repeated on every DICOM upload. See ARCHITECTURE.md, "Case-centric
 data model".
@@ -11,7 +11,7 @@ from datetime import date as date_type
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from shared_auth import CurrentUser, get_current_user, require_project_role
+from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case, Patient, PatientIdentityMap
 
@@ -37,9 +37,9 @@ def _get_or_create_patient(db: Session, external_patient_id: str) -> Patient:
     return patient
 
 
-@router.post("/projects/{project_id}/cases")
+@router.post("/studies/{study_id}/cases")
 def create_case(
-    project_id: str,
+    study_id: str,
     external_patient_id: str,
     accession_number: str | None = None,
     case_date: str | None = None,
@@ -49,13 +49,13 @@ def create_case(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Create a case in a project, resolving (or creating) the patient it
+    """Create a case in a study, resolving (or creating) the patient it
     belongs to from a real-world identifier."""
-    require_project_role(db, project_id, user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, study_id, user, allowed_roles=["data_manager", "admin"])
 
     patient = _get_or_create_patient(db, external_patient_id)
     case = Case(
-        project_id=project_id,
+        study_id=study_id,
         patient_id=patient.id,
         accession_number=accession_number,
         date=date_type.fromisoformat(case_date) if case_date else None,
@@ -84,7 +84,7 @@ def update_case(
     case = db.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     if accession_number is not None:
         case.accession_number = accession_number or None

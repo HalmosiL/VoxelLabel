@@ -1,15 +1,15 @@
 # shared-auth
 
-Keycloak JWT validation and project-scoped role checks, shared by every
+Keycloak JWT validation and study-scoped role checks, shared by every
 service in the platform.
 
 ## Exports
 
 - `get_current_user` -- FastAPI dependency that validates the bearer token
   against Keycloak's JWKS endpoint and returns a `CurrentUser`.
-- `require_project_role(db, project_id, user, allowed_roles)` -- raises 403
+- `require_study_role(db, study_id, user, allowed_roles)` -- raises 403
   unless the user is a global Keycloak realm admin or holds one of
-  `allowed_roles` on that project (checked against the `project_memberships`
+  `allowed_roles` on that study (checked against the `study_memberships`
   table via a raw SQL query, so this library does not depend on
   `shared-models`).
 
@@ -18,16 +18,16 @@ service in the platform.
 ```python
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from shared_auth import CurrentUser, get_current_user, require_project_role
+from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 
-@router.get("/projects/{project_id}/studies")
-def list_studies(
-    project_id: str,
+@router.get("/studies/{study_id}/cases")
+def list_cases(
+    study_id: str,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, user, allowed_roles=["viewer", "annotator", "reviewer", "admin"])
+    require_study_role(db, study_id, user, allowed_roles=["viewer", "annotator", "reviewer", "admin"])
     ...
 ```
 
@@ -55,4 +55,4 @@ pip install -e .
 
 `pytest` -- no live Keycloak or DB is required; tests should mock
 `jwt.PyJWKClient` and pass an in-memory/mock `Session` for the
-`require_project_role` checks.
+`require_study_role` checks.

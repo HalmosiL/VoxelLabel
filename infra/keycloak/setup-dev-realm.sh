@@ -4,11 +4,11 @@
 # validate against KEYCLOAK_AUDIENCE), the global "admin" realm role, and
 # one test user holding that role.
 #
-# Per-project roles (data_manager/annotator/reviewer/viewer) are NOT
-# created here -- those live in the project_memberships table (see
-# shared_models.models.ProjectMembership), not in Keycloak. Only the
+# Per-study roles (data_manager/annotator/reviewer/viewer) are NOT
+# created here -- those live in the study_memberships table (see
+# shared_models.models.StudyMembership), not in Keycloak. Only the
 # global "admin" role is a Keycloak realm role; see ARCHITECTURE.md
-# ("Access control: project-scoped RBAC").
+# ("Access control: study-scoped RBAC").
 #
 # Safe to re-run: exits early if the realm already exists.
 #
@@ -76,7 +76,7 @@ curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients/$CLIENT_UUID/protoco
 echo "Creating global 'admin' realm role ..."
 curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/roles" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "admin", "description": "Global superuser role -- bypasses per-project role checks (see shared_auth.require_project_role)"}' >/dev/null
+  -d '{"name": "admin", "description": "Global superuser role -- bypasses per-study role checks (see shared_auth.require_study_role)"}' >/dev/null
 
 # firstName/lastName are required here: Keycloak's default Declarative User
 # Profile silently attaches a VERIFY_PROFILE required action to accounts

@@ -10,7 +10,7 @@ import pydicom
 from sqlalchemy.orm import Session
 
 from shared_models.database import SessionLocal
-from shared_models.models import Case, Instance, Series, Study
+from shared_models.models import Case, ImagingStudy, Instance, Series
 
 from app.deidentify import apply_deidentification_profile
 from app.storage import delete_staged_file, download_staged_file, upload_pixel_data, upload_thumbnail
@@ -29,7 +29,7 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
 
     The staged file is fetched from object storage (not local disk) since
     this runs in a separate container/process from the API that staged it.
-    The target Case (and therefore its patient/project) must already
+    The target Case (and therefore its patient/study) must already
     exist -- identity resolution happens once at case-creation time in
     admin-service, not on every upload.
     """
@@ -42,7 +42,7 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
     db: Session = SessionLocal()
     try:
         case = db.get(Case, case_id)
-        dataset = apply_deidentification_profile(dataset, project_id=str(case.project_id))
+        dataset = apply_deidentification_profile(dataset, study_id=str(case.study_id))
 
         existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
         if existing is not None:
@@ -52,8 +52,8 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
         storage_key = f"{dataset.StudyInstanceUID}/{dataset.SeriesInstanceUID}/{dataset.SOPInstanceUID}.dcm"
         upload_pixel_data(storage_key, dataset)
 
-        study = _get_or_create_study(db, dataset, case)
-        series = _get_or_create_series(db, dataset, study)
+        imaging_study = _get_or_create_imaging_study(db, dataset, case)
+        series = _get_or_create_series(db, dataset, imaging_study)
 
         instance_id = uuid.uuid4()
         thumbnail_key = None
@@ -84,25 +84,25 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
         db.close()
 
 
-def _get_or_create_study(db: Session, dataset, case: Case) -> Study:
-    study = db.query(Study).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
-    if study is None:
-        study = Study(
+def _get_or_create_imaging_study(db: Session, dataset, case: Case) -> ImagingStudy:
+    imaging_study = db.query(ImagingStudy).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
+    if imaging_study is None:
+        imaging_study = ImagingStudy(
             case_id=case.id,
             study_instance_uid=dataset.StudyInstanceUID,
             modality=getattr(dataset, "Modality", None),
             description=getattr(dataset, "StudyDescription", None),
         )
-        db.add(study)
+        db.add(imaging_study)
         db.flush()
-    return study
+    return imaging_study
 
 
-def _get_or_create_series(db: Session, dataset, study: Study) -> Series:
+def _get_or_create_series(db: Session, dataset, imaging_study: ImagingStudy) -> Series:
     series = db.query(Series).filter_by(series_instance_uid=dataset.SeriesInstanceUID).first()
     if series is None:
         series = Series(
-            study_id=study.id,
+            imaging_study_id=imaging_study.id,
             series_instance_uid=dataset.SeriesInstanceUID,
             series_number=getattr(dataset, "SeriesNumber", None),
             body_part=getattr(dataset, "BodyPartExamined", None),

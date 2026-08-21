@@ -14,18 +14,18 @@ import {
   ClinicalDataItem,
   getCase,
   getPixelDataUrl,
+  ImagingStudy,
   Instance,
   listCaseSeries,
   listClinicalDataItems,
+  listImagingStudies,
   listInstances,
-  listStudies,
-  Study,
 } from "../api/dataApi";
 import { uploadDicom } from "../api/ingestionApi";
 import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
-import StudyModal from "../components/StudyModal";
+import ImagingStudyModal from "../components/ImagingStudyModal";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon } from "../components/icons";
 
@@ -49,7 +49,7 @@ export default function CaseDetailPage() {
 
       <CaseInfoCard caseInfo={caseInfo} onEdit={() => setEditModalOpen(true)} />
       <CommentBox caseId={caseId} initialComment={caseInfo.comment} onSaved={refreshCase} />
-      <StudiesSection caseId={caseId} />
+      <ImagingStudiesSection caseId={caseId} />
       <SeriesSection caseId={caseId} />
       <DocumentsSection caseId={caseId} />
 
@@ -220,14 +220,14 @@ function SectionHeader({ title, action }: { title: string; action?: ReactNode })
   );
 }
 
-function StudiesSection({ caseId }: { caseId: string }) {
-  const [studies, setStudies] = useState<Study[]>([]);
+function ImagingStudiesSection({ caseId }: { caseId: string }) {
+  const [imagingStudies, setImagingStudies] = useState<ImagingStudy[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [openStudy, setOpenStudy] = useState<Study | null>(null);
+  const [openImagingStudy, setOpenImagingStudy] = useState<ImagingStudy | null>(null);
 
   function refresh() {
-    listStudies(caseId).then(setStudies).catch((err) => setError(String(err)));
+    listImagingStudies(caseId).then(setImagingStudies).catch((err) => setError(String(err)));
   }
 
   useEffect(refresh, [caseId]);
@@ -249,7 +249,7 @@ function StudiesSection({ caseId }: { caseId: string }) {
   return (
     <div className="card">
       <SectionHeader
-        title="Studies"
+        title="Imaging"
         action={
           <div className="flex items-center gap-2">
             <label className="btn-secondary btn-sm cursor-pointer">
@@ -265,12 +265,12 @@ function StudiesSection({ caseId }: { caseId: string }) {
       {error && <p className="alert-error mt-3">{error}</p>}
       {uploadStatus && <p className="hint mt-2">{uploadStatus}</p>}
 
-      {studies.length === 0 ? (
-        <EmptyState message="No studies yet -- upload a DICOM file above." />
+      {imagingStudies.length === 0 ? (
+        <EmptyState message="No imaging yet -- upload a DICOM file above." />
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {studies.map((s) => (
-            <button key={s.id} onClick={() => setOpenStudy(s)} className="text-left" title={s.study_instance_uid}>
+          {imagingStudies.map((s) => (
+            <button key={s.id} onClick={() => setOpenImagingStudy(s)} className="text-left" title={s.study_instance_uid}>
               <Thumbnail url={s.thumbnail_url} label={s.description ?? undefined} />
               <div className="mt-1.5 flex items-center gap-1">
                 {s.modality && <span className="badge-blue">{s.modality}</span>}
@@ -281,16 +281,16 @@ function StudiesSection({ caseId }: { caseId: string }) {
         </div>
       )}
 
-      {openStudy && (
-        <StudyModal
-          study={openStudy}
-          onClose={() => setOpenStudy(null)}
+      {openImagingStudy && (
+        <ImagingStudyModal
+          imagingStudy={openImagingStudy}
+          onClose={() => setOpenImagingStudy(null)}
           onSaved={() => {
-            setOpenStudy(null);
+            setOpenImagingStudy(null);
             refresh();
           }}
           onDeleted={() => {
-            setOpenStudy(null);
+            setOpenImagingStudy(null);
             refresh();
           }}
         />
@@ -325,7 +325,7 @@ function SeriesSection({ caseId }: { caseId: string }) {
               <p className="mt-1.5 truncate text-xs font-medium text-gray-700">
                 {s.series_description ?? s.series_instance_uid}
               </p>
-              <p className="truncate text-xs text-gray-400">{s.study_description}</p>
+              <p className="truncate text-xs text-gray-400">{s.imaging_study_description}</p>
             </button>
           ))}
         </div>

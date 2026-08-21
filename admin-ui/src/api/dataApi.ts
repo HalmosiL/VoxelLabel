@@ -3,7 +3,7 @@ import { apiFetch } from "./client";
 
 export interface CaseSummary {
   id: string;
-  project_id: string;
+  study_id: string;
   patient_pseudonym_id: string;
   accession_number: string | null;
   date: string | null;
@@ -13,7 +13,7 @@ export interface CaseSummary {
   tags: string[];
 }
 
-export interface Study {
+export interface ImagingStudy {
   id: string;
   study_instance_uid: string;
   study_date: string | null;
@@ -30,8 +30,8 @@ export interface Series {
 }
 
 export interface CaseSeries extends Series {
-  study_id: string;
-  study_description: string | null;
+  imaging_study_id: string;
+  imaging_study_description: string | null;
 }
 
 export interface Instance {
@@ -57,7 +57,7 @@ export interface PatientSummary {
   case_count: number;
 }
 
-export interface PatientCaseStudy {
+export interface PatientCaseImagingStudy {
   id: string;
   study_instance_uid: string;
   modality: string | null;
@@ -67,35 +67,35 @@ export interface PatientCaseStudy {
 
 export interface PatientCase {
   id: string;
-  project_id: string;
-  project_name: string;
+  study_id: string;
+  study_name: string;
   accession_number: string | null;
   title: string | null;
-  studies: PatientCaseStudy[];
+  imaging_studies: PatientCaseImagingStudy[];
   documents: ClinicalDataItem[];
   tags: string[];
 }
 
 const base = API.data;
 
-export function listCases(projectId: string): Promise<CaseSummary[]> {
-  return apiFetch(base, `/data/projects/${projectId}/cases`);
+export function listCases(studyId: string): Promise<CaseSummary[]> {
+  return apiFetch(base, `/data/studies/${studyId}/cases`);
 }
 
 export function getCase(caseId: string): Promise<CaseSummary> {
   return apiFetch(base, `/data/cases/${caseId}`);
 }
 
-export function listStudies(caseId: string): Promise<Study[]> {
-  return apiFetch(base, `/data/cases/${caseId}/studies`);
+export function listImagingStudies(caseId: string): Promise<ImagingStudy[]> {
+  return apiFetch(base, `/data/cases/${caseId}/imaging-studies`);
 }
 
 export function listCaseSeries(caseId: string): Promise<CaseSeries[]> {
   return apiFetch(base, `/data/cases/${caseId}/series`);
 }
 
-export function listSeries(studyId: string): Promise<Series[]> {
-  return apiFetch(base, `/data/studies/${studyId}/series`);
+export function listSeries(imagingStudyId: string): Promise<Series[]> {
+  return apiFetch(base, `/data/imaging-studies/${imagingStudyId}/series`);
 }
 
 export function listInstances(seriesId: string): Promise<Instance[]> {

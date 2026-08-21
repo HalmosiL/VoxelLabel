@@ -33,8 +33,8 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
     return mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 
-class ProjectRole(str, enum.Enum):
-    """Roles a user can hold on a given project, via ProjectMembership."""
+class StudyRole(str, enum.Enum):
+    """Roles a user can hold on a given study, via StudyMembership."""
 
     ADMIN = "admin"
     DATA_MANAGER = "data_manager"
@@ -64,11 +64,15 @@ class ConsentStatus(str, enum.Enum):
     REVOKED = "revoked"
 
 
-class Project(Base):
-    """A project scopes data access: every case belongs to exactly one
-    project, and per-project roles are granted via ProjectMembership."""
+class Study(Base):
+    """A study scopes data access: every case belongs to exactly one
+    study, and per-study roles are granted via StudyMembership. This is
+    the platform's top-level, admin-created organizational/RBAC container
+    (e.g. a research study or clinical protocol) -- not to be confused
+    with `ImagingStudy`, the DICOM per-session imaging entity that hangs
+    off a Case."""
 
-    __tablename__ = "projects"
+    __tablename__ = "studies"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
@@ -76,36 +80,36 @@ class Project(Base):
     deidentification_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("deidentification_profiles.id")
     )
-    # Optional cover image for the project card grid in admin-ui. Same
+    # Optional cover image for the study card grid in admin-ui. Same
     # pointer-to-object-storage pattern as Instance.object_storage_key.
     cover_image_key: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    memberships: Mapped[list["ProjectMembership"]] = relationship(back_populates="project")
-    cases: Mapped[list["Case"]] = relationship(back_populates="project")
+    memberships: Mapped[list["StudyMembership"]] = relationship(back_populates="study")
+    cases: Mapped[list["Case"]] = relationship(back_populates="study")
 
 
-class ProjectMembership(Base):
-    """Grants a Keycloak user a role scoped to one project.
+class StudyMembership(Base):
+    """Grants a Keycloak user a role scoped to one study.
 
     A global Keycloak realm role of "admin" bypasses this table entirely
-    (see shared_auth.require_project_role) -- this table is only consulted
-    for non-global-admin, project-scoped access decisions.
+    (see shared_auth.require_study_role) -- this table is only consulted
+    for non-global-admin, study-scoped access decisions.
     """
 
-    __tablename__ = "project_memberships"
+    __tablename__ = "study_memberships"
 
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), primary_key=True)
+    study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("studies.id"), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(255), primary_key=True)  # Keycloak "sub" claim
-    role: Mapped[ProjectRole] = mapped_column(nullable=False)
+    role: Mapped[StudyRole] = mapped_column(nullable=False)
 
-    project: Mapped["Project"] = relationship(back_populates="memberships")
+    study: Mapped["Study"] = relationship(back_populates="memberships")
 
 
 class DeidentificationProfile(Base):
     """An admin-editable, named set of de-identification rules.
 
-    Assigned to a Project via Project.deidentification_profile_id. The rules
+    Assigned to a Study via Study.deidentification_profile_id. The rules
     are data, not code, so compliance decisions can change without a
     deployment -- see DeidentificationRule.
     """
@@ -164,9 +168,9 @@ class PatientIdentityMap(Base):
 
 class Case(Base):
     """The central clinical entity. A Case identifies which patient and
-    project a body of data belongs to; both imaging (Study -> Series ->
-    Instance) and non-imaging (ClinicalDataItem) data hang off a Case
-    rather than referencing Project/Patient directly, so "everything
+    study a body of data belongs to; both imaging (ImagingStudy -> Series
+    -> Instance) and non-imaging (ClinicalDataItem) data hang off a Case
+    rather than referencing Study/Patient directly, so "everything
     belonging to this patient's episode" has one place to attach to,
     regardless of kind. See ARCHITECTURE.md, "Case-centric data model".
     """
@@ -174,7 +178,7 @@ class Case(Base):
     __tablename__ = "cases"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("studies.id"), nullable=False)
     patient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
     accession_number: Mapped[str | None] = mapped_column(String(64))
     # Case-level summary fields, independent of any individual
@@ -186,9 +190,9 @@ class Case(Base):
     comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    project: Mapped["Project"] = relationship(back_populates="cases")
+    study: Mapped["Study"] = relationship(back_populates="cases")
     patient: Mapped["Patient"] = relationship(back_populates="cases")
-    studies: Mapped[list["Study"]] = relationship(back_populates="case")
+    imaging_studies: Mapped[list["ImagingStudy"]] = relationship(back_populates="case")
     clinical_data_items: Mapped[list["ClinicalDataItem"]] = relationship(back_populates="case")
 
 
@@ -249,8 +253,12 @@ class Consent(Base):
     clinical_data_item: Mapped["ClinicalDataItem"] = relationship(back_populates="consents")
 
 
-class Study(Base):
-    __tablename__ = "studies"
+class ImagingStudy(Base):
+    """One DICOM imaging study (identified by StudyInstanceUID), auto
+    created/looked-up during ingestion -- not to be confused with `Study`,
+    the top-level admin-created RBAC container a Case belongs to."""
+
+    __tablename__ = "imaging_studies"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cases.id"), nullable=False)
@@ -260,21 +268,23 @@ class Study(Base):
     description: Mapped[str | None] = mapped_column(Text)
     ingested_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    case: Mapped["Case"] = relationship(back_populates="studies")
-    series: Mapped[list["Series"]] = relationship(back_populates="study")
+    case: Mapped["Case"] = relationship(back_populates="imaging_studies")
+    series: Mapped[list["Series"]] = relationship(back_populates="imaging_study")
 
 
 class Series(Base):
     __tablename__ = "series"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("studies.id"), nullable=False)
+    imaging_study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("imaging_studies.id"), nullable=False
+    )
     series_instance_uid: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     series_number: Mapped[int | None] = mapped_column(Integer)
     body_part: Mapped[str | None] = mapped_column(String(64))
     series_description: Mapped[str | None] = mapped_column(Text)
 
-    study: Mapped["Study"] = relationship(back_populates="series")
+    imaging_study: Mapped["ImagingStudy"] = relationship(back_populates="series")
     instances: Mapped[list["Instance"]] = relationship(back_populates="series")
 
 
@@ -333,9 +343,11 @@ class Annotation(Base):
     __tablename__ = "annotations"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    # "study" here means an ImagingStudy (DICOM), not the top-level Study
+    # RBAC container -- this is a free label, never joined against a table.
     target_type: Mapped[str] = mapped_column(String(16), nullable=False)  # "instance" | "series" | "study"
     target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("studies.id"), nullable=False)
     annotator_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Keycloak "sub" claim
     type_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("annotation_types.id"), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -362,9 +374,9 @@ class AnnotationReview(Base):
 
 
 class DatasetSnapshot(Base):
-    """An immutable, named collection of (study, annotation version) pairs
-    -- e.g. "v1 dataset for model training". Snapshots reference existing
-    annotation rows; they never copy data."""
+    """An immutable, named collection of (imaging study, annotation
+    version) pairs -- e.g. "v1 dataset for model training". Snapshots
+    reference existing annotation rows; they never copy data."""
 
     __tablename__ = "dataset_snapshots"
 
@@ -382,14 +394,16 @@ class DatasetSnapshotItem(Base):
     snapshot_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("dataset_snapshots.id"), primary_key=True
     )
-    study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("studies.id"), primary_key=True)
+    imaging_study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("imaging_studies.id"), primary_key=True
+    )
     annotation_version_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("annotations.id"), primary_key=True
     )
 
 
 class AuditLog(Base):
-    """General-purpose audit trail for admin actions (user/project/profile
+    """General-purpose audit trail for admin actions (user/study/profile
     changes) that fall outside the annotation-specific history chain."""
 
     __tablename__ = "audit_log"

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { addProjectMember, KeycloakUser, listKeycloakUsers, listProjectMembers, ProjectMember } from "../api/adminApi";
+import { addStudyMember, KeycloakUser, listKeycloakUsers, listStudyMembers, StudyMember } from "../api/adminApi";
 import Avatar from "../components/Avatar";
 import CasesPanel from "../components/CasesPanel";
 import EmptyState from "../components/EmptyState";
@@ -16,15 +16,15 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "members", label: "Members" },
 ];
 
-export default function ProjectDetailPage() {
-  const { projectId } = useParams<{ projectId: string }>();
+export default function StudyDetailPage() {
+  const { studyId } = useParams<{ studyId: string }>();
   const [tab, setTab] = useState<Tab>("cases");
 
-  if (!projectId) return null;
+  if (!studyId) return null;
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Project" />
+      <PageHeader title="Study" />
 
       <div className="flex gap-1 border-b border-gray-200/70">
         {tabs.map((t) => (
@@ -42,27 +42,27 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      {tab === "cases" && <CasesPanel projectId={projectId} />}
-      {tab === "review" && <ReviewQueuePanel projectId={projectId} />}
-      {tab === "members" && <MembersPanel projectId={projectId} />}
+      {tab === "cases" && <CasesPanel studyId={studyId} />}
+      {tab === "review" && <ReviewQueuePanel studyId={studyId} />}
+      {tab === "members" && <MembersPanel studyId={studyId} />}
     </div>
   );
 }
 
-function MembersPanel({ projectId }: { projectId: string }) {
-  const [members, setMembers] = useState<ProjectMember[]>([]);
+function MembersPanel({ studyId }: { studyId: string }) {
+  const [members, setMembers] = useState<StudyMember[]>([]);
   const [users, setUsers] = useState<KeycloakUser[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [role, setRole] = useState("viewer");
 
   function refresh() {
-    listProjectMembers(projectId)
+    listStudyMembers(studyId)
       .then(setMembers)
       .catch((err) => setError(String(err)));
   }
 
-  useEffect(refresh, [projectId]);
+  useEffect(refresh, [studyId]);
   useEffect(() => {
     listKeycloakUsers()
       .then(setUsers)
@@ -80,7 +80,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
   async function handleAdd(event: FormEvent) {
     event.preventDefault();
     try {
-      await addProjectMember(projectId, selectedUserId, role);
+      await addStudyMember(studyId, selectedUserId, role);
       setSelectedUserId("");
       refresh();
     } catch (err) {
@@ -157,7 +157,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
           </button>
         </form>
         {availableUsers.length === 0 && users.length > 0 && (
-          <p className="hint mt-2">Every realm user is already a member of this project.</p>
+          <p className="hint mt-2">Every realm user is already a member of this study.</p>
         )}
       </div>
     </div>

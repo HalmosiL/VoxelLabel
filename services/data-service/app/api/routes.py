@@ -1,10 +1,11 @@
-"""HTTP API for browsing cases, studies/series/instances, and clinical data items."""
+"""HTTP API for browsing cases, imaging studies/series/instances, and
+clinical data items."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from shared_auth import CurrentUser, get_current_user, require_project_role
+from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Case, ClinicalDataItem, Instance, Patient, Series, Study
+from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance, Patient, Series
 
 from app.storage import presigned_clinical_data_url, presigned_pixel_data_url, presigned_thumbnail_url
 
@@ -21,10 +22,10 @@ def _case_or_404(db: Session, case_id: str) -> Case:
 
 
 def _require_global_admin(user: CurrentUser) -> None:
-    """A patient's cases can span multiple projects; there is no single
-    project to check a role against, so cross-project patient views
+    """A patient's cases can span multiple studies; there is no single
+    study to check a role against, so cross-study patient views
     require the global Keycloak `admin` role rather than
-    `require_project_role`."""
+    `require_study_role`."""
     if "admin" not in user.realm_roles:
         raise HTTPException(status_code=403, detail="Admin realm role required")
 
@@ -32,15 +33,15 @@ def _require_global_admin(user: CurrentUser) -> None:
 def _thumbnail_url_for_series(series: Series) -> str | None:
     """The first instance in the series that has a thumbnail, presigned --
     used as the representative preview for a whole series (and, one level
-    up, for the study it belongs to)."""
+    up, for the imaging study it belongs to)."""
     for instance in series.instances:
         if instance.thumbnail_key:
             return presigned_thumbnail_url(instance.thumbnail_key)
     return None
 
 
-def _thumbnail_url_for_study(study: Study) -> str | None:
-    for series in study.series:
+def _thumbnail_url_for_imaging_study(imaging_study: ImagingStudy) -> str | None:
+    for series in imaging_study.series:
         url = _thumbnail_url_for_series(series)
         if url:
             return url
@@ -54,7 +55,7 @@ def _case_tags(case: Case) -> list[str]:
 def _serialize_case(case: Case) -> dict:
     return {
         "id": str(case.id),
-        "project_id": str(case.project_id),
+        "study_id": str(case.study_id),
         "patient_pseudonym_id": case.patient.pseudonym_id,
         "accession_number": case.accession_number,
         "date": case.date.isoformat() if case.date else None,
@@ -65,15 +66,15 @@ def _serialize_case(case: Case) -> dict:
     }
 
 
-@router.get("/projects/{project_id}/cases")
+@router.get("/studies/{study_id}/cases")
 def list_cases(
-    project_id: str,
+    study_id: str,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    require_project_role(db, project_id, user, allowed_roles=_READ_ROLES)
+    require_study_role(db, study_id, user, allowed_roles=_READ_ROLES)
 
-    cases = db.query(Case).filter_by(project_id=project_id).all()
+    cases = db.query(Case).filter_by(study_id=study_id).all()
     return [_serialize_case(c) for c in cases]
 
 
@@ -84,20 +85,20 @@ def get_case(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     case = _case_or_404(db, case_id)
-    require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
+    require_study_role(db, str(case.study_id), user, allowed_roles=_READ_ROLES)
     return _serialize_case(case)
 
 
-@router.get("/cases/{case_id}/studies")
-def list_studies(
+@router.get("/cases/{case_id}/imaging-studies")
+def list_imaging_studies(
     case_id: str,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     case = _case_or_404(db, case_id)
-    require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
+    require_study_role(db, str(case.study_id), user, allowed_roles=_READ_ROLES)
 
-    studies = db.query(Study).filter_by(case_id=case_id).all()
+    imaging_studies = db.query(ImagingStudy).filter_by(case_id=case_id).all()
     return [
         {
             "id": str(s.id),
@@ -105,9 +106,9 @@ def list_studies(
             "study_date": s.study_date.isoformat() if s.study_date else None,
             "modality": s.modality,
             "description": s.description,
-            "thumbnail_url": _thumbnail_url_for_study(s),
+            "thumbnail_url": _thumbnail_url_for_imaging_study(s),
         }
-        for s in studies
+        for s in imaging_studies
     ]
 
 
@@ -117,36 +118,36 @@ def list_case_series(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    """Every series across every study in the case, flattened -- the
-    single-page case profile shows series directly, without a per-study
-    drill-down step."""
+    """Every series across every imaging study in the case, flattened --
+    the single-page case profile shows series directly, without a
+    per-imaging-study drill-down step."""
     case = _case_or_404(db, case_id)
-    require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
+    require_study_role(db, str(case.study_id), user, allowed_roles=_READ_ROLES)
 
     result = []
-    for study in case.studies:
-        for series in study.series:
+    for imaging_study in case.imaging_studies:
+        for series in imaging_study.series:
             result.append(
                 {
                     "id": str(series.id),
                     "series_instance_uid": series.series_instance_uid,
                     "series_description": series.series_description,
-                    "study_id": str(study.id),
-                    "study_description": study.description,
+                    "imaging_study_id": str(imaging_study.id),
+                    "imaging_study_description": imaging_study.description,
                     "thumbnail_url": _thumbnail_url_for_series(series),
                 }
             )
     return result
 
 
-@router.get("/studies/{study_id}/series")
+@router.get("/imaging-studies/{imaging_study_id}/series")
 def list_series(
-    study_id: str,
+    imaging_study_id: str,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    study = db.get(Study, study_id)
-    require_project_role(db, str(study.case.project_id), user, allowed_roles=_READ_ROLES)
+    imaging_study = db.get(ImagingStudy, imaging_study_id)
+    require_study_role(db, str(imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
     return [
         {
@@ -155,7 +156,7 @@ def list_series(
             "series_description": s.series_description,
             "thumbnail_url": _thumbnail_url_for_series(s),
         }
-        for s in study.series
+        for s in imaging_study.series
     ]
 
 
@@ -166,7 +167,7 @@ def list_instances(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     series = db.get(Series, series_id)
-    require_project_role(db, str(series.study.case.project_id), user, allowed_roles=_READ_ROLES)
+    require_study_role(db, str(series.imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
     return [
         {
@@ -188,8 +189,8 @@ def get_pixel_data_url(
     """Return a short-lived presigned URL to fetch the raw DICOM file
     directly from object storage."""
     instance = db.get(Instance, instance_id)
-    study = instance.series.study
-    require_project_role(db, str(study.case.project_id), user, allowed_roles=_READ_ROLES)
+    imaging_study = instance.series.imaging_study
+    require_study_role(db, str(imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
     return {"url": presigned_pixel_data_url(instance.object_storage_key)}
 
@@ -213,7 +214,7 @@ def list_clinical_data_items(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     case = _case_or_404(db, case_id)
-    require_project_role(db, str(case.project_id), user, allowed_roles=_READ_ROLES)
+    require_study_role(db, str(case.study_id), user, allowed_roles=_READ_ROLES)
 
     items = db.query(ClinicalDataItem).filter_by(case_id=case_id).all()
     return [_serialize_clinical_data_item(i) for i in items]
@@ -224,8 +225,8 @@ def list_patients(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    """Cross-project patient list -- see _require_global_admin for why this
-    needs the global admin role instead of a project-scoped check."""
+    """Cross-study patient list -- see _require_global_admin for why this
+    needs the global admin role instead of a study-scoped check."""
     _require_global_admin(user)
 
     patients = db.query(Patient).all()
@@ -239,9 +240,9 @@ def list_patient_cases(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     """A patient "profile" view: every case the patient has, across every
-    project, each with its studies (with preview thumbnails) and clinical
-    data items -- enough to browse, edit, and delete a patient's data
-    without navigating into each case individually."""
+    study, each with its imaging studies (with preview thumbnails) and
+    clinical data items -- enough to browse, edit, and delete a patient's
+    data without navigating into each case individually."""
     _require_global_admin(user)
 
     patient = db.get(Patient, patient_id)
@@ -253,19 +254,19 @@ def list_patient_cases(
         result.append(
             {
                 "id": str(case.id),
-                "project_id": str(case.project_id),
-                "project_name": case.project.name,
+                "study_id": str(case.study_id),
+                "study_name": case.study.name,
                 "accession_number": case.accession_number,
                 "title": case.title,
-                "studies": [
+                "imaging_studies": [
                     {
                         "id": str(s.id),
                         "study_instance_uid": s.study_instance_uid,
                         "modality": s.modality,
                         "description": s.description,
-                        "thumbnail_url": _thumbnail_url_for_study(s),
+                        "thumbnail_url": _thumbnail_url_for_imaging_study(s),
                     }
-                    for s in case.studies
+                    for s in case.imaging_studies
                 ],
                 "documents": [_serialize_clinical_data_item(i) for i in case.clinical_data_items],
                 "tags": _case_tags(case),
@@ -283,7 +284,7 @@ def get_clinical_data_file_url(
     item = db.get(ClinicalDataItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Clinical data item not found")
-    require_project_role(db, str(item.case.project_id), user, allowed_roles=_READ_ROLES)
+    require_study_role(db, str(item.case.study_id), user, allowed_roles=_READ_ROLES)
 
     if item.object_storage_key is None:
         raise HTTPException(status_code=404, detail="This item has no attached file")

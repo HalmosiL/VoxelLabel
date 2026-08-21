@@ -5,7 +5,7 @@ import { createCase } from "../api/adminApi";
 import { CaseSummary, listCases } from "../api/dataApi";
 import EmptyState from "./EmptyState";
 
-export default function CasesPanel({ projectId }: { projectId: string }) {
+export default function CasesPanel({ studyId }: { studyId: string }) {
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [externalPatientId, setExternalPatientId] = useState("");
@@ -13,17 +13,17 @@ export default function CasesPanel({ projectId }: { projectId: string }) {
   const [title, setTitle] = useState("");
 
   function refresh() {
-    listCases(projectId)
+    listCases(studyId)
       .then(setCases)
       .catch((err) => setError(String(err)));
   }
 
-  useEffect(refresh, [projectId]);
+  useEffect(refresh, [studyId]);
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
     try {
-      await createCase(projectId, externalPatientId, { accessionNumber, title });
+      await createCase(studyId, externalPatientId, { accessionNumber, title });
       setExternalPatientId("");
       setAccessionNumber("");
       setTitle("");
@@ -58,7 +58,7 @@ export default function CasesPanel({ projectId }: { projectId: string }) {
             {cases.map((c) => (
               <tr key={c.id}>
                 <td>
-                  <Link to={`/projects/${projectId}/cases/${c.id}`} className="font-medium text-brand-600 hover:text-brand-700">
+                  <Link to={`/studies/${studyId}/cases/${c.id}`} className="font-medium text-brand-600 hover:text-brand-700">
                     {c.title || `Patient ${c.patient_pseudonym_id.slice(0, 8)}…`}
                   </Link>
                 </td>
@@ -73,7 +73,7 @@ export default function CasesPanel({ projectId }: { projectId: string }) {
                   </div>
                 </td>
                 <td className="text-right text-gray-300">
-                  <Link to={`/projects/${projectId}/cases/${c.id}`}>
+                  <Link to={`/studies/${studyId}/cases/${c.id}`}>
                     <ChevronRight />
                   </Link>
                 </td>

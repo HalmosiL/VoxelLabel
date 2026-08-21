@@ -1,7 +1,7 @@
 import { API } from "../config";
 import { apiFetch } from "./client";
 
-export interface Project {
+export interface Study {
   id: string;
   name: string;
   description: string | null;
@@ -9,7 +9,7 @@ export interface Project {
   cover_image_url: string | null;
 }
 
-export interface ProjectMember {
+export interface StudyMember {
   user_id: string;
   role: string;
 }
@@ -42,41 +42,41 @@ export interface AnnotationType {
 
 const base = API.admin;
 
-export function listProjects(): Promise<Project[]> {
-  return apiFetch(base, "/admin/projects");
+export function listStudies(): Promise<Study[]> {
+  return apiFetch(base, "/admin/studies");
 }
 
-export function createProject(name: string, description: string): Promise<{ id: string; name: string }> {
+export function createStudy(name: string, description: string): Promise<{ id: string; name: string }> {
   const qs = new URLSearchParams({ name, ...(description ? { description } : {}) });
-  return apiFetch(base, `/admin/projects?${qs}`, { method: "POST" });
+  return apiFetch(base, `/admin/studies?${qs}`, { method: "POST" });
 }
 
-export function updateProject(
-  projectId: string,
+export function updateStudy(
+  studyId: string,
   name: string,
   description: string
 ): Promise<{ id: string; name: string; description: string | null }> {
   const qs = new URLSearchParams({ name, ...(description ? { description } : {}) });
-  return apiFetch(base, `/admin/projects/${projectId}?${qs}`, { method: "PATCH" });
+  return apiFetch(base, `/admin/studies/${studyId}?${qs}`, { method: "PATCH" });
 }
 
-export function deleteProject(projectId: string): Promise<void> {
-  return apiFetch(base, `/admin/projects/${projectId}`, { method: "DELETE" });
+export function deleteStudy(studyId: string): Promise<void> {
+  return apiFetch(base, `/admin/studies/${studyId}`, { method: "DELETE" });
 }
 
-export function uploadProjectCoverImage(projectId: string, file: File): Promise<{ id: string; cover_image_url: string }> {
+export function uploadStudyCoverImage(studyId: string, file: File): Promise<{ id: string; cover_image_url: string }> {
   const formData = new FormData();
   formData.append("file", file);
-  return apiFetch(base, `/admin/projects/${projectId}/cover-image`, { method: "POST", body: formData });
+  return apiFetch(base, `/admin/studies/${studyId}/cover-image`, { method: "POST", body: formData });
 }
 
-export function listProjectMembers(projectId: string): Promise<ProjectMember[]> {
-  return apiFetch(base, `/admin/projects/${projectId}/members`);
+export function listStudyMembers(studyId: string): Promise<StudyMember[]> {
+  return apiFetch(base, `/admin/studies/${studyId}/members`);
 }
 
-export function addProjectMember(projectId: string, userId: string, role: string): Promise<ProjectMember> {
+export function addStudyMember(studyId: string, userId: string, role: string): Promise<StudyMember> {
   const qs = new URLSearchParams({ user_id: userId, role });
-  return apiFetch(base, `/admin/projects/${projectId}/members?${qs}`, { method: "POST" });
+  return apiFetch(base, `/admin/studies/${studyId}/members?${qs}`, { method: "POST" });
 }
 
 export function listDeidentificationProfiles(): Promise<DeidentificationProfile[]> {
@@ -111,7 +111,7 @@ export interface CaseFormFields {
 }
 
 export function createCase(
-  projectId: string,
+  studyId: string,
   externalPatientId: string,
   fields: CaseFormFields
 ): Promise<{ id: string; patient_id: string; accession_number: string | null }> {
@@ -123,7 +123,7 @@ export function createCase(
     ...(fields.title ? { title: fields.title } : {}),
     ...(fields.comment ? { comment: fields.comment } : {}),
   });
-  return apiFetch(base, `/admin/projects/${projectId}/cases?${qs}`, { method: "POST" });
+  return apiFetch(base, `/admin/studies/${studyId}/cases?${qs}`, { method: "POST" });
 }
 
 export function updateCase(caseId: string, fields: CaseFormFields): Promise<void> {
@@ -175,24 +175,24 @@ export function deleteClinicalDataItem(itemId: string): Promise<void> {
   return apiFetch(base, `/admin/clinical-data-items/${itemId}`, { method: "DELETE" });
 }
 
-export interface StudyFormFields {
+export interface ImagingStudyFormFields {
   description?: string;
   modality?: string;
 }
 
-export function updateStudy(
-  studyId: string,
-  fields: StudyFormFields
+export function updateImagingStudy(
+  imagingStudyId: string,
+  fields: ImagingStudyFormFields
 ): Promise<{ id: string; description: string | null; modality: string | null }> {
   const qs = new URLSearchParams({
     ...(fields.description !== undefined ? { description: fields.description } : {}),
     ...(fields.modality !== undefined ? { modality: fields.modality } : {}),
   });
-  return apiFetch(base, `/admin/studies/${studyId}?${qs}`, { method: "PATCH" });
+  return apiFetch(base, `/admin/imaging-studies/${imagingStudyId}?${qs}`, { method: "PATCH" });
 }
 
-export function deleteStudy(studyId: string): Promise<void> {
-  return apiFetch(base, `/admin/studies/${studyId}`, { method: "DELETE" });
+export function deleteImagingStudy(imagingStudyId: string): Promise<void> {
+  return apiFetch(base, `/admin/imaging-studies/${imagingStudyId}`, { method: "DELETE" });
 }
 
 export interface SeriesFormFields {

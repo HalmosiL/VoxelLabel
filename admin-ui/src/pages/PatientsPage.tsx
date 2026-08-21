@@ -19,7 +19,7 @@ export default function PatientsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Patients"
-        subtitle="Every patient across all projects. Click one to see their cases, studies, and tags."
+        subtitle="Every patient across all studies. Click one to see their cases, images, and tags."
       />
       {error && <p className="alert-error">{error}</p>}
 

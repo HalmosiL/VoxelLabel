@@ -1,31 +1,34 @@
 # admin-service
 
-Platform administration: projects, project memberships (per-project
-roles), de-identification profiles/rules, cases (patient identity
-resolution), and clinical data items (generic files attached to a case,
-plus their tags/consents). Project/profile/annotation-type management
-requires the global Keycloak `admin` realm role; case and clinical-data
-writes require a project-scoped role instead (see `shared_auth`).
+Platform administration: studies (the top-level, admin-created RBAC
+container -- e.g. a research study or clinical protocol), study
+memberships (per-study roles), de-identification profiles/rules, cases
+(patient identity resolution), and clinical data items (generic files
+attached to a case, plus their tags/consents), plus editing/deleting
+imaging studies/series ingested under a case. Study/profile/
+annotation-type management requires the global Keycloak `admin` realm
+role; case, clinical-data, and imaging writes require a study-scoped
+role instead (see `shared_auth`).
 
 ## Endpoints
 
-- `GET /admin/projects` -- list projects (each with a presigned `cover_image_url` if one is set)
-- `POST /admin/projects` -- create a project
-- `PATCH /admin/projects/{project_id}` -- update a project's name/description
-- `DELETE /admin/projects/{project_id}` -- delete a project (409 if it still has cases -- remove them first)
-- `POST /admin/projects/{project_id}/cover-image` -- attach/replace a project's cover image
-- `GET /admin/projects/{project_id}/members` -- list a project's members
-- `POST /admin/projects/{project_id}/members` -- grant a user a role on a project
-- `GET /admin/keycloak-users` -- list realm users (id/username/email), for the project-member picker in admin-ui
-- `POST /admin/projects/{project_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier, with optional date/type/title/comment
+- `GET /admin/studies` -- list studies (each with a presigned `cover_image_url` if one is set)
+- `POST /admin/studies` -- create a study
+- `PATCH /admin/studies/{study_id}` -- update a study's name/description
+- `DELETE /admin/studies/{study_id}` -- delete a study (409 if it still has cases -- remove them first)
+- `POST /admin/studies/{study_id}/cover-image` -- attach/replace a study's cover image
+- `GET /admin/studies/{study_id}/members` -- list a study's members
+- `POST /admin/studies/{study_id}/members` -- grant a user a role on a study
+- `GET /admin/keycloak-users` -- list realm users (id/username/email), for the study-member picker in admin-ui
+- `POST /admin/studies/{study_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier, with optional date/type/title/comment
 - `PATCH /admin/cases/{case_id}` -- update a case's accession number, date, type, title, or comment
 - `POST /admin/cases/{case_id}/clinical-data-items` -- attach a clinical data item to a case, with an optional file
 - `PATCH /admin/clinical-data-items/{item_id}` -- update an item's type/title/date
 - `DELETE /admin/clinical-data-items/{item_id}` -- delete an item, its tags/consents, and its attached file
 - `POST /admin/clinical-data-items/{item_id}/tags` -- add a tag to an item
 - `POST /admin/clinical-data-items/{item_id}/consents` -- add a consent record to an item
-- `PATCH /admin/studies/{study_id}` -- update a study's description/modality
-- `DELETE /admin/studies/{study_id}` -- delete a study, cascading to its series/instances and their object storage files (pixel data + thumbnails)
+- `PATCH /admin/imaging-studies/{imaging_study_id}` -- update an imaging study's description/modality
+- `DELETE /admin/imaging-studies/{imaging_study_id}` -- delete an imaging study, cascading to its series/instances and their object storage files (pixel data + thumbnails)
 - `PATCH /admin/series/{series_id}` -- update a series' description/body part
 - `DELETE /admin/series/{series_id}` -- delete a series, cascading to its instances and their object storage files
 - `GET /admin/deidentification-profiles` -- list de-identification profiles (with their rules)
@@ -44,15 +47,15 @@ ARCHITECTURE.md, "Case-centric data model".
 | File | Responsibility |
 |---|---|
 | `app/main.py` | FastAPI app, route registration |
-| `app/api/projects.py` | Project + membership management |
+| `app/api/studies.py` | Study + membership management (the top-level RBAC container) |
 | `app/api/cases.py` | Case creation + patient identity resolution (pseudonymization) |
 | `app/api/clinical_data.py` | Clinical data item create/update/delete, tag/consent creation, incl. file upload |
-| `app/api/imaging.py` | Study/Series metadata edit and cascading delete (series/instances + their object storage files) |
+| `app/api/imaging.py` | ImagingStudy/Series metadata edit and cascading delete (series/instances + their object storage files) |
 | `app/api/deidentification.py` | De-identification profile/rule management |
 | `app/api/annotation_types.py` | Annotation type registration (the JSON Schema that `annotation-service` validates payloads against) |
-| `app/api/users.py` | Keycloak realm user lookup (project-member picker) |
+| `app/api/users.py` | Keycloak realm user lookup (study-member picker) |
 | `app/keycloak_admin.py` | Keycloak Admin API client (client-credentials token + user listing), using a narrowly-scoped service account -- not master-realm admin credentials |
-| `app/storage.py` | Object storage upload/delete for clinical data files, project cover images, and (via `delete_object`) pixel data/thumbnails written by ingestion-service -- all services share one bucket |
+| `app/storage.py` | Object storage upload/delete for clinical data files, study cover images, and (via `delete_object`) pixel data/thumbnails written by ingestion-service -- all services share one bucket |
 
 ## Running standalone
 

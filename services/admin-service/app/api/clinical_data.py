@@ -9,7 +9,7 @@ from datetime import date as date_type
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from shared_auth import CurrentUser, get_current_user, require_project_role
+from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, Consent, ConsentStatus, Tag
 
@@ -44,7 +44,7 @@ async def create_clinical_data_item(
 ) -> dict:
     """Attach a clinical data item to a case, with an optional file upload."""
     case = _case_or_404(db, case_id)
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     storage_key = None
     if file is not None and file.filename:
@@ -77,7 +77,7 @@ def update_clinical_data_item(
     clearing them -- only `item_date` can be cleared with an empty string."""
     item = _clinical_data_item_or_404(db, item_id)
     case = _case_or_404(db, str(item.case_id))
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     if type:
         item.type = type
@@ -103,7 +103,7 @@ def delete_clinical_data_item(
 ) -> dict:
     item = _clinical_data_item_or_404(db, item_id)
     case = _case_or_404(db, str(item.case_id))
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     if item.object_storage_key:
         delete_object(item.object_storage_key)
@@ -125,7 +125,7 @@ def add_tag(
 ) -> dict:
     item = _clinical_data_item_or_404(db, item_id)
     case = _case_or_404(db, str(item.case_id))
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin", "annotator"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin", "annotator"])
 
     tag = Tag(clinical_data_item_id=item.id, label=label)
     db.add(tag)
@@ -143,7 +143,7 @@ def add_consent(
 ) -> dict:
     item = _clinical_data_item_or_404(db, item_id)
     case = _case_or_404(db, str(item.case_id))
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     consent = Consent(clinical_data_item_id=item.id, consent_type=consent_type, status=status)
     db.add(consent)

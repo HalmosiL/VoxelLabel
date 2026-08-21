@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from shared_auth import CurrentUser, get_current_user, require_project_role
+from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case
 
@@ -29,13 +29,13 @@ async def upload_dicom(
     The file is staged in object storage, not local disk -- this API and
     the worker run in separate containers with no shared filesystem. The
     case must already exist -- see admin-service's
-    POST /admin/projects/{project_id}/cases -- patient identity resolution
+    POST /admin/studies/{study_id}/cases -- patient identity resolution
     happens once there, not on every upload.
     """
     case = db.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
-    require_project_role(db, str(case.project_id), user, allowed_roles=["data_manager", "admin"])
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     job_id = str(uuid.uuid4())
     staging_key = f"_staging/{job_id}.dcm"

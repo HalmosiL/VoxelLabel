@@ -12,23 +12,23 @@ from pydicom.datadict import keyword_for_tag
 from pydicom.tag import Tag
 
 from shared_models.database import SessionLocal
-from shared_models.models import DeidentificationAction, DeidentificationProfile, Project
+from shared_models.models import DeidentificationAction, DeidentificationProfile, Study
 
 
-def apply_deidentification_profile(dataset, project_id: str):
-    """Apply the de-identification profile assigned to `project_id`, if any.
+def apply_deidentification_profile(dataset, study_id: str):
+    """Apply the de-identification profile assigned to `study_id`, if any.
 
-    If the project has no profile assigned, the dataset is returned
+    If the study has no profile assigned, the dataset is returned
     unchanged -- an explicit profile assignment is required to de-identify,
     rather than a hardcoded default.
     """
     db = SessionLocal()
     try:
-        project = db.get(Project, project_id)
-        if project is None or project.deidentification_profile_id is None:
+        study = db.get(Study, study_id)
+        if study is None or study.deidentification_profile_id is None:
             return dataset
 
-        profile = db.get(DeidentificationProfile, project.deidentification_profile_id)
+        profile = db.get(DeidentificationProfile, study.deidentification_profile_id)
         for rule in profile.rules:
             _apply_rule(dataset, rule)
         return dataset

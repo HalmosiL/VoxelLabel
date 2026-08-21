@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { Annotation, listAnnotationsForProject, reviewAnnotation } from "../api/annotationApi";
+import { Annotation, listAnnotationsForStudy, reviewAnnotation } from "../api/annotationApi";
 import Avatar from "./Avatar";
 import EmptyState from "./EmptyState";
 
@@ -11,18 +11,18 @@ const STATUS_STYLE: Record<Annotation["status"], { badge: string; dot: string }>
   rejected: { badge: "badge-red", dot: "bg-red-500" },
 };
 
-export default function ReviewQueuePanel({ projectId }: { projectId: string }) {
+export default function ReviewQueuePanel({ studyId }: { studyId: string }) {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   function refresh() {
-    listAnnotationsForProject(projectId, statusFilter || undefined)
+    listAnnotationsForStudy(studyId, statusFilter || undefined)
       .then(setAnnotations)
       .catch((err) => setError(String(err)));
   }
 
-  useEffect(refresh, [projectId, statusFilter]);
+  useEffect(refresh, [studyId, statusFilter]);
 
   async function decide(id: string, decision: "approve" | "reject") {
     try {

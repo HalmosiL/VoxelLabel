@@ -13,9 +13,9 @@ export interface Annotation {
 
 const base = API.annotation;
 
-export function listAnnotationsForProject(projectId: string, status?: string): Promise<Annotation[]> {
+export function listAnnotationsForStudy(studyId: string, status?: string): Promise<Annotation[]> {
   const qs = status ? `?${new URLSearchParams({ status })}` : "";
-  return apiFetch(base, `/annotations/projects/${projectId}${qs}`);
+  return apiFetch(base, `/annotations/studies/${studyId}${qs}`);
 }
 
 export function reviewAnnotation(

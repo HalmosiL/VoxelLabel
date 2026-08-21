@@ -1,7 +1,7 @@
 """Data service entrypoint.
 
-Read-focused API for browsing ingested studies/series/instances and
-fetching pixel data (via presigned object storage URLs, not proxied
+Read-focused API for browsing ingested imaging studies/series/instances
+and fetching pixel data (via presigned object storage URLs, not proxied
 through this service).
 """
 from fastapi import FastAPI

@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from shared_auth import CurrentUser, get_current_user, require_project_role
+from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, AnnotationStatus, AnnotationType
 
@@ -15,9 +15,9 @@ router = APIRouter(prefix="/annotations", tags=["annotations"])
 _READ_ROLES = ["viewer", "annotator", "reviewer", "admin"]
 
 
-@router.post("/projects/{project_id}")
+@router.post("/studies/{study_id}")
 def create_annotation(
-    project_id: str,
+    study_id: str,
     target_type: str,
     target_id: uuid.UUID,
     type_name: str,
@@ -27,7 +27,7 @@ def create_annotation(
 ) -> dict:
     """Create a new draft annotation. The payload is validated against the
     registered annotation type's JSON Schema before being stored."""
-    require_project_role(db, project_id, user, allowed_roles=["annotator", "admin"])
+    require_study_role(db, study_id, user, allowed_roles=["annotator", "admin"])
 
     annotation_type = db.query(AnnotationType).filter_by(name=type_name).first()
     if annotation_type is None:
@@ -41,7 +41,7 @@ def create_annotation(
     annotation = Annotation(
         target_type=target_type,
         target_id=target_id,
-        project_id=project_id,
+        study_id=study_id,
         annotator_id=user.subject,
         type_id=annotation_type.id,
         payload=payload,
@@ -52,18 +52,18 @@ def create_annotation(
     return {"id": str(annotation.id), "status": annotation.status.value}
 
 
-@router.get("/projects/{project_id}")
-def list_annotations_for_project(
-    project_id: str,
+@router.get("/studies/{study_id}")
+def list_annotations_for_study(
+    study_id: str,
     status: AnnotationStatus | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    """List annotations in a project, optionally filtered by status --
+    """List annotations in a study, optionally filtered by status --
     e.g. `?status=submitted` for a reviewer's queue."""
-    require_project_role(db, project_id, user, allowed_roles=_READ_ROLES)
+    require_study_role(db, study_id, user, allowed_roles=_READ_ROLES)
 
-    query = db.query(Annotation).filter_by(project_id=project_id)
+    query = db.query(Annotation).filter_by(study_id=study_id)
     if status is not None:
         query = query.filter_by(status=status)
 
@@ -92,7 +92,7 @@ def list_annotations_for_target(
     by status/parent_version_id as needed)."""
     annotations = db.query(Annotation).filter_by(target_type=target_type, target_id=target_id).all()
     if annotations:
-        require_project_role(db, str(annotations[0].project_id), user, allowed_roles=_READ_ROLES)
+        require_study_role(db, str(annotations[0].study_id), user, allowed_roles=_READ_ROLES)
 
     return [
         {"id": str(a.id), "type_id": str(a.type_id), "payload": a.payload, "status": a.status.value}
@@ -113,7 +113,7 @@ def review_annotation(
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found")
 
-    require_project_role(db, str(annotation.project_id), user, allowed_roles=["reviewer", "admin"])
+    require_study_role(db, str(annotation.study_id), user, allowed_roles=["reviewer", "admin"])
 
     annotation.status = AnnotationStatus.APPROVED if decision == "approve" else AnnotationStatus.REJECTED
     db.add(AnnotationReview(annotation_id=annotation.id, reviewer_id=user.subject, decision=decision, comment=comment))

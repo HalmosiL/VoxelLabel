@@ -1,5 +1,5 @@
 """Object storage access for generic (non-DICOM) files this service owns
-the write side of: clinical data files and project cover images.
+the write side of: clinical data files and study cover images.
 
 Two clients, deliberately: `_client` (internal hostname) performs real
 uploads from inside the container; `_public_client` (browser-reachable
@@ -32,19 +32,20 @@ def upload_clinical_data_file(storage_key: str, data: bytes) -> None:
 
 
 def delete_object(storage_key: str) -> None:
-    """Delete one object from the shared bucket -- used when deleting a
-    Study/Series/Instance (pixel data + thumbnail) or a ClinicalDataItem's
-    attached file. All three services share one bucket (`ct-pixel-data`),
-    so this works regardless of which service originally wrote the key.
+    """Delete one object from the shared bucket -- used when deleting an
+    ImagingStudy/Series/Instance (pixel data + thumbnail) or a
+    ClinicalDataItem's attached file. All three services share one bucket
+    (`ct-pixel-data`), so this works regardless of which service
+    originally wrote the key.
     """
     _client.delete_object(Bucket=settings.object_storage_bucket, Key=storage_key)
 
 
-def upload_project_cover_image(storage_key: str, data: bytes) -> None:
+def upload_study_cover_image(storage_key: str, data: bytes) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data)
 
 
-def presigned_project_cover_image_url(storage_key: str, expires_in: int = 300) -> str:
+def presigned_study_cover_image_url(storage_key: str, expires_in: int = 300) -> str:
     return _public_client.generate_presigned_url(
         "get_object",
         Params={"Bucket": settings.object_storage_bucket, "Key": storage_key},

@@ -39,7 +39,7 @@ export default function DeidentificationProfilesPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="De-identification profiles"
-        subtitle="Configure how DICOM tags are handled on ingestion -- assigned to a project in the Admin API."
+        subtitle="Configure how DICOM tags are handled on ingestion -- assigned to a study in the Admin API."
       />
       {error && <p className="alert-error">{error}</p>}
 

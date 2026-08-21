@@ -7,7 +7,7 @@ const navGroups = [
   {
     label: "Workspace",
     items: [
-      { to: "/projects", label: "Projects", icon: FolderIcon },
+      { to: "/studies", label: "Studies", icon: FolderIcon },
       { to: "/patients", label: "Patients", icon: UserIcon },
     ],
   },

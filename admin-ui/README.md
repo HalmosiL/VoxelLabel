@@ -1,19 +1,20 @@
 # admin-ui
 
-The browser-based management interface for the platform: projects,
-project memberships, cases (patient + accession number), studies/series/
-instances browsing, DICOM upload, clinical data items (files, tags,
-consents), a cross-project patient profile view, annotation review,
+The browser-based management interface for the platform: studies,
+study memberships, cases (patient + accession number), imaging studies/
+series/instances browsing, DICOM upload, clinical data items (files, tags,
+consents), a cross-study patient profile view, annotation review,
 de-identification profiles, and annotation type registration. Talks
 directly to the four backend APIs from the browser (ingestion/data/
 annotation/admin) and to Keycloak for login -- there is no server-side
 component of its own beyond the static file server.
 
-Navigation: Projects -> Project detail (Cases / Annotation review /
-Members) -> Case detail (Studies / Clinical Data). Patients is a separate,
-cross-project entry point: Patients -> Patient detail lists every case for
-that patient across all projects, each with its studies and tags, with a
-link into the corresponding Case detail page.
+Navigation: Studies -> Study detail (Cases / Annotation review /
+Members) -> Case detail (Imaging / Series / Documents, single unified
+page). Patients is a separate, cross-study entry point: Patients ->
+Patient detail lists every case for that patient across all studies, each
+with its imaging and tags, with a link into the corresponding Case detail
+page.
 
 ## Stack
 
@@ -31,7 +32,7 @@ docs for scripted testing).
 | `src/api/client.ts` | Shared fetch wrapper: attaches the bearer token, normalizes errors |
 | `src/api/*Api.ts` | One thin client module per backend service |
 | `src/pages/*.tsx` | Top-level routed pages |
-| `src/components/*.tsx` | Shared/nested UI (layout, studies tree, review queue) |
+| `src/components/*.tsx` | Shared/nested UI (layout, imaging thumbnails, review queue) |
 
 ## Running standalone (dev server)
 
@@ -71,9 +72,9 @@ ports to the host.
 
 ## Known limitations
 
-- Project listing/creation, de-identification/annotation-type management,
-  and the Patients cross-project view all require the global Keycloak
+- Study listing/creation, de-identification/annotation-type management,
+  and the Patients cross-study view all require the global Keycloak
   `admin` realm role -- there is no reduced-permission admin view yet.
-- No pagination anywhere; fine at the target scale (10k-100k studies) for
-  studies, but the plain list views will need it if used against very
-  large single projects.
+- No pagination anywhere; fine at the target scale (10k-100k imaging
+  studies), but the plain list views will need it if used against very
+  large single studies.

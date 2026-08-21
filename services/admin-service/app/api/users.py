@@ -1,4 +1,4 @@
-"""HTTP API for looking up Keycloak users -- backs the project-member
+"""HTTP API for looking up Keycloak users -- backs the study-member
 picker in admin-ui, so members are added by selecting a real user instead
 of pasting a raw Keycloak subject UUID. Read-only, global admin only.
 """
