@@ -8,12 +8,15 @@ import PageHeader from "../components/PageHeader";
 export default function PatientsPage() {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     listPatients()
       .then(setPatients)
       .catch((err) => setError(String(err)));
   }, []);
+
+  const filtered = patients.filter((p) => p.pseudonym_id.toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
     <div className="flex flex-col gap-6">
@@ -22,6 +25,16 @@ export default function PatientsPage() {
         subtitle="Every patient across all studies. Click one to see their cases, images, and tags."
       />
       {error && <p className="alert-error">{error}</p>}
+
+      <label className="field w-80">
+        <span className="label">Search by patient ID</span>
+        <input
+          className="input"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Paste or type a patient pseudonym ID…"
+        />
+      </label>
 
       <div className="table-wrap">
         <table>
@@ -33,14 +46,20 @@ export default function PatientsPage() {
             </tr>
           </thead>
           <tbody>
-            {patients.length === 0 && (
+            {filtered.length === 0 && (
               <tr>
                 <td colSpan={3}>
-                  <EmptyState message="No patients yet -- create a case to add one." />
+                  <EmptyState
+                    message={
+                      patients.length === 0
+                        ? "No patients yet -- create a case to add one."
+                        : "No patients match your search."
+                    }
+                  />
                 </td>
               </tr>
             )}
-            {patients.map((p) => (
+            {filtered.map((p) => (
               <tr key={p.id}>
                 <td>
                   <Link to={`/patients/${p.id}`} className="font-medium text-brand-600 hover:text-brand-700">

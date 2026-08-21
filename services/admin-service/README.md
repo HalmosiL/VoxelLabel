@@ -13,6 +13,7 @@ role instead (see `shared_auth`).
 ## Endpoints
 
 - `GET /admin/studies` -- list studies (each with a presigned `cover_image_url` if one is set)
+- `GET /admin/studies/{study_id}` -- get one study
 - `POST /admin/studies` -- create a study
 - `PATCH /admin/studies/{study_id}` -- update a study's name/description
 - `DELETE /admin/studies/{study_id}` -- delete a study (409 if it still has cases -- remove them first)
@@ -20,7 +21,7 @@ role instead (see `shared_auth`).
 - `GET /admin/studies/{study_id}/members` -- list a study's members
 - `POST /admin/studies/{study_id}/members` -- grant a user a role on a study
 - `GET /admin/keycloak-users` -- list realm users (id/username/email), for the study-member picker in admin-ui
-- `POST /admin/studies/{study_id}/cases` -- create a case, resolving/creating its patient from a real-world identifier, with optional date/type/title/comment
+- `POST /admin/studies/{study_id}/cases` -- create a case for either a new patient (`external_patient_id`, resolved/created from a real-world identifier) or an already-known one (`patient_id`, e.g. picked from the existing patients list) -- exactly one of the two is required; with optional date/type/title/comment
 - `PATCH /admin/cases/{case_id}` -- update a case's accession number, date, type, title, or comment
 - `POST /admin/cases/{case_id}/clinical-data-items` -- attach a clinical data item to a case, with an optional file
 - `PATCH /admin/clinical-data-items/{item_id}` -- update an item's type/title/date

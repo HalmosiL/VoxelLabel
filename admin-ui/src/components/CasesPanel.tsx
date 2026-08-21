@@ -2,15 +2,15 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { createCase } from "../api/adminApi";
-import { CaseSummary, listCases } from "../api/dataApi";
+import { CaseSummary, listCases, listPatients, PatientSummary } from "../api/dataApi";
 import EmptyState from "./EmptyState";
+import Modal from "./Modal";
+import SectionHeader from "./SectionHeader";
 
 export default function CasesPanel({ studyId }: { studyId: string }) {
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [externalPatientId, setExternalPatientId] = useState("");
-  const [accessionNumber, setAccessionNumber] = useState("");
-  const [title, setTitle] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   function refresh() {
     listCases(studyId)
@@ -20,24 +20,19 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
 
   useEffect(refresh, [studyId]);
 
-  async function handleCreate(event: FormEvent) {
-    event.preventDefault();
-    try {
-      await createCase(studyId, externalPatientId, { accessionNumber, title });
-      setExternalPatientId("");
-      setAccessionNumber("");
-      setTitle("");
-      refresh();
-    } catch (err) {
-      setError(String(err));
-    }
-  }
-
   return (
-    <div className="flex flex-col gap-6">
-      {error && <p className="alert-error">{error}</p>}
+    <div className="card">
+      <SectionHeader
+        title="Cases"
+        action={
+          <button onClick={() => setCreateOpen(true)} className="btn-secondary btn-sm">
+            New case
+          </button>
+        }
+      />
+      {error && <p className="alert-error mt-3">{error}</p>}
 
-      <div className="table-wrap">
+      <div className="table-wrap mt-4">
         <table>
           <thead>
             <tr>
@@ -51,7 +46,7 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
             {cases.length === 0 && (
               <tr>
                 <td colSpan={4}>
-                  <EmptyState message="No cases yet -- create one below." />
+                  <EmptyState message="No cases yet -- create one above." />
                 </td>
               </tr>
             )}
@@ -83,36 +78,134 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
         </table>
       </div>
 
-      <div className="card">
-        <h3 className="section-title mb-4">New case</h3>
-        <p className="hint mb-4">
-          The patient identifier is hashed and never stored directly -- only a pseudonym is kept. Date, type, and
-          comment can be added afterwards from the case page.
-        </p>
-        <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-4">
-          <label className="field flex-1">
-            <span className="label">Patient identifier (e.g. MRN)</span>
-            <input
-              className="input"
-              value={externalPatientId}
-              onChange={(e) => setExternalPatientId(e.target.value)}
-              required
-            />
-          </label>
-          <label className="field w-56">
-            <span className="label">Title</span>
-            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <label className="field w-56">
-            <span className="label">Accession number</span>
-            <input className="input" value={accessionNumber} onChange={(e) => setAccessionNumber(e.target.value)} />
-          </label>
-          <button type="submit" className="btn-primary">
-            Create case
-          </button>
-        </form>
-      </div>
+      {createOpen && (
+        <NewCaseModal
+          studyId={studyId}
+          onClose={() => setCreateOpen(false)}
+          onSaved={() => {
+            setCreateOpen(false);
+            refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function NewCaseModal({ studyId, onClose, onSaved }: { studyId: string; onClose: () => void; onSaved: () => void }) {
+  const [mode, setMode] = useState<"new" | "existing">("new");
+  const [externalPatientId, setExternalPatientId] = useState("");
+  const [existingPatientId, setExistingPatientId] = useState("");
+  const [patients, setPatients] = useState<PatientSummary[]>([]);
+  const [patientPickerAvailable, setPatientPickerAvailable] = useState(false);
+  const [accessionNumber, setAccessionNumber] = useState("");
+  const [title, setTitle] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Browsing existing patients requires the global admin role (patient
+    // identity can span studies -- see data-service). Non-global-admin
+    // users just don't get this option; the "new patient" flow below
+    // always works for anyone with a study role.
+    listPatients()
+      .then((p) => {
+        setPatients(p);
+        setPatientPickerAvailable(true);
+      })
+      .catch(() => setPatientPickerAvailable(false));
+  }, []);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const patientRef = mode === "existing" ? { patientId: existingPatientId } : { externalPatientId };
+      await createCase(studyId, patientRef, { accessionNumber, title });
+      onSaved();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  return (
+    <Modal title="New case" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {error && <p className="alert-error">{error}</p>}
+
+        {patientPickerAvailable && (
+          <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+            <button
+              type="button"
+              onClick={() => setMode("new")}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === "new" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+              }`}
+            >
+              New patient
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("existing")}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === "existing" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
+              }`}
+            >
+              Existing patient
+            </button>
+          </div>
+        )}
+
+        {mode === "new" ? (
+          <div className="flex flex-col gap-1.5">
+            <label className="field">
+              <span className="label">Patient identifier (e.g. MRN)</span>
+              <input
+                className="input"
+                value={externalPatientId}
+                onChange={(e) => setExternalPatientId(e.target.value)}
+                required
+              />
+            </label>
+            <p className="hint">Hashed and never stored directly -- only a pseudonym is kept.</p>
+          </div>
+        ) : (
+          <label className="field">
+            <span className="label">Patient</span>
+            <select
+              className="input"
+              value={existingPatientId}
+              onChange={(e) => setExistingPatientId(e.target.value)}
+              required
+            >
+              <option value="" disabled>
+                Select a patient…
+              </option>
+              {patients.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.pseudonym_id.slice(0, 8)}… ({p.case_count} case{p.case_count === 1 ? "" : "s"})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <label className="field">
+          <span className="label">Title</span>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label className="field">
+          <span className="label">Accession number</span>
+          <input className="input" value={accessionNumber} onChange={(e) => setAccessionNumber(e.target.value)} />
+        </label>
+        <div className="mt-2 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-secondary">
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary">
+            Create
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -40,7 +40,8 @@ def _get_or_create_patient(db: Session, external_patient_id: str) -> Patient:
 @router.post("/studies/{study_id}/cases")
 def create_case(
     study_id: str,
-    external_patient_id: str,
+    external_patient_id: str | None = None,
+    patient_id: str | None = None,
     accession_number: str | None = None,
     case_date: str | None = None,
     type: str | None = None,
@@ -49,11 +50,22 @@ def create_case(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Create a case in a study, resolving (or creating) the patient it
-    belongs to from a real-world identifier."""
+    """Create a case in a study, for either a brand-new patient (resolved
+    from a real-world identifier via `external_patient_id`) or an already
+    -known patient (`patient_id`, e.g. picked from the existing patients
+    list to add another case to them). Exactly one of the two must be
+    given."""
     require_study_role(db, study_id, user, allowed_roles=["data_manager", "admin"])
 
-    patient = _get_or_create_patient(db, external_patient_id)
+    if patient_id:
+        patient = db.get(Patient, patient_id)
+        if patient is None:
+            raise HTTPException(status_code=404, detail="Patient not found")
+    elif external_patient_id:
+        patient = _get_or_create_patient(db, external_patient_id)
+    else:
+        raise HTTPException(status_code=422, detail="Either external_patient_id or patient_id is required")
+
     case = Case(
         study_id=study_id,
         patient_id=patient.id,

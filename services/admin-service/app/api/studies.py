@@ -43,6 +43,25 @@ def list_studies(
     ]
 
 
+@router.get("/{study_id}")
+def get_study(
+    study_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    _require_global_admin(user)
+    study = db.get(Study, study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    return {
+        "id": str(study.id),
+        "name": study.name,
+        "description": study.description,
+        "deidentification_profile_id": str(study.deidentification_profile_id) if study.deidentification_profile_id else None,
+        "cover_image_url": presigned_study_cover_image_url(study.cover_image_key) if study.cover_image_key else None,
+    }
+
+
 @router.post("")
 def create_study(
     name: str,

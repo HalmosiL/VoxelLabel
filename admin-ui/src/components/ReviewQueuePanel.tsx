@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Annotation, listAnnotationsForStudy, reviewAnnotation } from "../api/annotationApi";
 import Avatar from "./Avatar";
 import EmptyState from "./EmptyState";
+import SectionHeader from "./SectionHeader";
 
 const STATUS_STYLE: Record<Annotation["status"], { badge: string; dot: string }> = {
   draft: { badge: "badge-gray", dot: "bg-gray-400" },
@@ -34,10 +35,11 @@ export default function ReviewQueuePanel({ studyId }: { studyId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      {error && <p className="alert-error">{error}</p>}
+    <div className="card">
+      <SectionHeader title="Annotation review" />
+      {error && <p className="alert-error mt-3">{error}</p>}
 
-      <label className="field w-48">
+      <label className="field mt-4 w-48">
         <span className="label">Filter by status</span>
         <select className="input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All</option>
@@ -48,7 +50,7 @@ export default function ReviewQueuePanel({ studyId }: { studyId: string }) {
         </select>
       </label>
 
-      <div className="table-wrap">
+      <div className="table-wrap mt-4">
         <table>
           <thead>
             <tr>

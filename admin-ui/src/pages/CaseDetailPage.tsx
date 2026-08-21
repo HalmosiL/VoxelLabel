@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, ReactNode, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import {
@@ -24,8 +24,9 @@ import {
 import { uploadDicom } from "../api/ingestionApi";
 import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
-import Modal from "../components/Modal";
 import ImagingStudyModal from "../components/ImagingStudyModal";
+import Modal from "../components/Modal";
+import SectionHeader from "../components/SectionHeader";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon } from "../components/icons";
 
@@ -207,15 +208,6 @@ function CommentBox({ caseId, initialComment, onSaved }: { caseId: string; initi
       <button onClick={handleSave} disabled={saving} className="btn-secondary btn-sm mt-3">
         {saving ? "Saving…" : "Save comment"}
       </button>
-    </div>
-  );
-}
-
-function SectionHeader({ title, action }: { title: string; action?: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between">
-      <h2 className="section-title">{title}</h2>
-      {action}
     </div>
   );
 }

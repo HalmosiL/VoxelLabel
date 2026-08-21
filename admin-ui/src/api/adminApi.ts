@@ -46,6 +46,10 @@ export function listStudies(): Promise<Study[]> {
   return apiFetch(base, "/admin/studies");
 }
 
+export function getStudy(studyId: string): Promise<Study> {
+  return apiFetch(base, `/admin/studies/${studyId}`);
+}
+
 export function createStudy(name: string, description: string): Promise<{ id: string; name: string }> {
   const qs = new URLSearchParams({ name, ...(description ? { description } : {}) });
   return apiFetch(base, `/admin/studies?${qs}`, { method: "POST" });
@@ -110,13 +114,17 @@ export interface CaseFormFields {
   comment?: string;
 }
 
+export type PatientRef = { externalPatientId: string } | { patientId: string };
+
 export function createCase(
   studyId: string,
-  externalPatientId: string,
+  patientRef: PatientRef,
   fields: CaseFormFields
 ): Promise<{ id: string; patient_id: string; accession_number: string | null }> {
   const qs = new URLSearchParams({
-    external_patient_id: externalPatientId,
+    ...("externalPatientId" in patientRef
+      ? { external_patient_id: patientRef.externalPatientId }
+      : { patient_id: patientRef.patientId }),
     ...(fields.accessionNumber ? { accession_number: fields.accessionNumber } : {}),
     ...(fields.date ? { case_date: fields.date } : {}),
     ...(fields.type ? { type: fields.type } : {}),
