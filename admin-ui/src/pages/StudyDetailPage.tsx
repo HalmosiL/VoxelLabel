@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { getStudy, Study, updateStudy } from "../api/adminApi";
 import CasesPanel from "../components/CasesPanel";
@@ -31,9 +31,14 @@ export default function StudyDetailPage() {
         title={study?.name ?? "Study"}
         subtitle={study?.description ?? undefined}
         action={
-          <button onClick={() => setEditOpen(true)} className="btn-secondary btn-sm">
-            Edit
-          </button>
+          <div className="flex items-center gap-2">
+            <Link to={`/studies/${studyId}/workflow`} className="btn-secondary btn-sm">
+              Workflow board
+            </Link>
+            <button onClick={() => setEditOpen(true)} className="btn-secondary btn-sm">
+              Edit
+            </button>
+          </div>
         }
       />
       {error && <p className="alert-error">{error}</p>}

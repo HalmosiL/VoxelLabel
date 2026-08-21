@@ -1,0 +1,387 @@
+import {
+  applyEdgeChanges,
+  applyNodeChanges,
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  type Connection,
+  type Edge,
+  type EdgeChange,
+  type NodeChange,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+
+import { getStudy, KeycloakUser, listKeycloakUsers, Study } from "../api/adminApi";
+import { CaseSummary, listCases } from "../api/dataApi";
+import {
+  createWorkflowCard,
+  createWorkflowEdge,
+  deleteWorkflowCard,
+  deleteWorkflowEdge,
+  getWorkflowBoard,
+  runWorkflowCard,
+  updateWorkflowCard,
+  WorkflowCard,
+  WorkflowCardPatchInput,
+  WorkflowEdge,
+} from "../api/workflowApi";
+import { CARD_TEMPLATES, DRAG_DATA_FORMAT } from "../components/workflow/CardLibrarySidebar";
+import CardLibrarySidebar from "../components/workflow/CardLibrarySidebar";
+import { isValidConnection } from "../components/workflow/handleRules";
+import AnnotationNode from "../components/workflow/nodes/AnnotationNode";
+import DatasetNode from "../components/workflow/nodes/DatasetNode";
+import FilterNode from "../components/workflow/nodes/FilterNode";
+import MilestoneNode from "../components/workflow/nodes/MilestoneNode";
+import NoteNode from "../components/workflow/nodes/NoteNode";
+import ReviewNode from "../components/workflow/nodes/ReviewNode";
+import SplitNode from "../components/workflow/nodes/SplitNode";
+import UnionNode from "../components/workflow/nodes/UnionNode";
+import { CardNode } from "../components/workflow/types";
+import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
+import WorkflowPropertiesPanel from "../components/workflow/WorkflowPropertiesPanel";
+
+const NODE_TYPES = {
+  dataset: DatasetNode,
+  split: SplitNode,
+  filter: FilterNode,
+  annotation: AnnotationNode,
+  review: ReviewNode,
+  union: UnionNode,
+  note: NoteNode,
+  milestone: MilestoneNode,
+};
+
+function cardToNode(card: WorkflowCard): CardNode {
+  return {
+    id: card.id,
+    type: card.type,
+    position: { x: card.position_x, y: card.position_y },
+    width: card.width ?? undefined,
+    height: card.height ?? undefined,
+    data: { card },
+  };
+}
+
+function edgeToRFEdge(edge: WorkflowEdge): Edge {
+  return {
+    id: edge.id,
+    source: edge.source_card_id,
+    sourceHandle: edge.source_handle,
+    target: edge.target_card_id,
+    targetHandle: edge.target_handle,
+  };
+}
+
+function isEditableTarget(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+}
+
+export default function WorkflowBoardPage() {
+  const { studyId } = useParams<{ studyId: string }>();
+  if (!studyId) return null;
+  return (
+    <ReactFlowProvider>
+      <WorkflowBoardInner studyId={studyId} />
+    </ReactFlowProvider>
+  );
+}
+
+function WorkflowBoardInner({ studyId }: { studyId: string }) {
+  const [study, setStudy] = useState<Study | null>(null);
+  const [cases, setCases] = useState<CaseSummary[]>([]);
+  const [keycloakUsers, setKeycloakUsers] = useState<KeycloakUser[]>([]);
+  const [nodes, setNodes] = useState<CardNode[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [runningCardId, setRunningCardId] = useState<string | null>(null);
+  const clipboardRef = useRef<{ nodes: CardNode[]; edges: Edge[] } | null>(null);
+
+  const { screenToFlowPosition } = useReactFlow();
+  const history = useWorkflowHistory(studyId);
+
+  function refreshBoard() {
+    getWorkflowBoard(studyId)
+      .then((board) => {
+        setNodes(board.cards.map(cardToNode));
+        setEdges(board.edges.map(edgeToRFEdge));
+      })
+      .catch((err) => setError(String(err)));
+  }
+
+  useEffect(() => {
+    getStudy(studyId).then(setStudy).catch((err) => setError(String(err)));
+    listCases(studyId).then(setCases).catch((err) => setError(String(err)));
+    listKeycloakUsers()
+      .then(setKeycloakUsers)
+      .catch(() => setKeycloakUsers([]));
+    refreshBoard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studyId]);
+
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((nds) => applyNodeChanges(changes.filter((c) => c.type !== "remove"), nds) as CardNode[]);
+  }, []);
+
+  const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
+    setEdges((eds) => applyEdgeChanges(changes.filter((c) => c.type !== "remove"), eds));
+  }, []);
+
+  function applySnapshot(snapshot: Snapshot) {
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+  }
+
+  function handleNodeDragStart() {
+    history.record(nodes, edges);
+  }
+
+  function handleNodeDragStop(_event: unknown, node: CardNode) {
+    updateWorkflowCard(node.id, { position_x: node.position.x, position_y: node.position.y }).catch((err) =>
+      setError(String(err))
+    );
+  }
+
+  function handleConnect(connection: Connection) {
+    const sourceNode = nodes.find((n) => n.id === connection.source);
+    const targetNode = nodes.find((n) => n.id === connection.target);
+    if (!sourceNode || !targetNode) return;
+    if (!isValidConnection(sourceNode.data.card.type, connection.sourceHandle, targetNode.data.card.type)) {
+      setError("That connection isn't allowed between these card types.");
+      return;
+    }
+    history.record(nodes, edges);
+    createWorkflowEdge(studyId, {
+      source_card_id: connection.source,
+      source_handle: connection.sourceHandle ?? "output",
+      target_card_id: connection.target,
+      target_handle: connection.targetHandle ?? "input",
+    })
+      .then((edge) => setEdges((eds) => [...eds, edgeToRFEdge(edge)]))
+      .catch((err) => setError(String(err)));
+  }
+
+  function handleNodesDelete(deleted: CardNode[]) {
+    if (deleted.length === 0) return;
+    const deletedIds = new Set(deleted.map((n) => n.id));
+    history.record(nodes, edges);
+    const affectedEdgeIds = edges.filter((e) => deletedIds.has(e.source) || deletedIds.has(e.target)).map((e) => e.id);
+
+    setNodes((nds) => nds.filter((n) => !deletedIds.has(n.id)));
+    setEdges((eds) => eds.filter((e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)));
+
+    Promise.all([
+      ...Array.from(deletedIds).map((id) => deleteWorkflowCard(id).catch(() => undefined)),
+      ...affectedEdgeIds.map((id) => deleteWorkflowEdge(id).catch(() => undefined)),
+    ]).catch((err) => setError(String(err)));
+  }
+
+  function handleEdgesDelete(deleted: Edge[]) {
+    if (deleted.length === 0) return;
+    history.record(nodes, edges);
+    const deletedIds = new Set(deleted.map((e) => e.id));
+    setEdges((eds) => eds.filter((e) => !deletedIds.has(e.id)));
+    Promise.all(Array.from(deletedIds).map((id) => deleteWorkflowEdge(id).catch(() => undefined))).catch((err) =>
+      setError(String(err))
+    );
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const type = event.dataTransfer.getData(DRAG_DATA_FORMAT);
+    const template = CARD_TEMPLATES.find((t) => t.type === type);
+    if (!template) return;
+
+    const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    history.record(nodes, edges);
+    createWorkflowCard(studyId, {
+      type: template.type,
+      title: template.defaultTitle,
+      position_x: position.x,
+      position_y: position.y,
+      config: template.defaultConfig,
+    })
+      .then((card) => setNodes((nds) => [...nds, cardToNode(card)]))
+      .catch((err) => setError(String(err)));
+  }
+
+  function handlePatch(cardId: string, patch: WorkflowCardPatchInput) {
+    updateWorkflowCard(cardId, patch)
+      .then((updated) => setNodes((nds) => nds.map((n) => (n.id === cardId ? { ...n, data: { card: updated } } : n))))
+      .catch((err) => setError(String(err)));
+  }
+
+  function handleDeleteCard(cardId: string) {
+    handleNodesDelete(nodes.filter((n) => n.id === cardId));
+  }
+
+  function handleBulkDelete() {
+    handleNodesDelete(nodes.filter((n) => n.selected));
+  }
+
+  function handleRun(cardId: string) {
+    setRunningCardId(cardId);
+    runWorkflowCard(cardId)
+      .then(() => refreshBoard())
+      .catch((err) => setError(String(err)))
+      .finally(() => setRunningCardId(null));
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isEditableTarget()) return;
+      const meta = event.metaKey || event.ctrlKey;
+      if (!meta) return;
+
+      if (event.key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        history.undo(nodes, edges, applySnapshot);
+      } else if (event.key === "y" || (event.key === "z" && event.shiftKey)) {
+        event.preventDefault();
+        history.redo(nodes, edges, applySnapshot);
+      } else if (event.key === "c") {
+        const selected = nodes.filter((n) => n.selected);
+        if (selected.length === 0) return;
+        const selectedIds = new Set(selected.map((n) => n.id));
+        const innerEdges = edges.filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target));
+        clipboardRef.current = { nodes: selected, edges: innerEdges };
+      } else if (event.key === "v") {
+        const clip = clipboardRef.current;
+        if (!clip) return;
+        history.record(nodes, edges);
+        const idMap = new Map<string, string>();
+        Promise.all(
+          clip.nodes.map((n) =>
+            createWorkflowCard(studyId, {
+              type: n.data.card.type,
+              title: n.data.card.title,
+              position_x: n.position.x + 40,
+              position_y: n.position.y + 40,
+              width: n.width ?? undefined,
+              height: n.height ?? undefined,
+              config: n.data.card.config,
+            }).then((created) => {
+              idMap.set(n.id, created.id);
+              return created;
+            })
+          )
+        )
+          .then((createdCards) => {
+            setNodes((nds) => [...nds, ...createdCards.map(cardToNode)]);
+            return Promise.all(
+              clip.edges.map((edge) => {
+                const source = idMap.get(edge.source);
+                const target = idMap.get(edge.target);
+                if (!source || !target) return Promise.resolve(null);
+                return createWorkflowEdge(studyId, {
+                  source_card_id: source,
+                  source_handle: edge.sourceHandle ?? "output",
+                  target_card_id: target,
+                  target_handle: edge.targetHandle ?? "input",
+                });
+              })
+            );
+          })
+          .then((createdEdges) => {
+            const valid = createdEdges.filter((e): e is WorkflowEdge => e !== null);
+            if (valid.length > 0) setEdges((eds) => [...eds, ...valid.map(edgeToRFEdge)]);
+          })
+          .catch((err) => setError(String(err)));
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges, studyId]);
+
+  const selectedNodes = nodes.filter((n) => n.selected);
+  const selectedCard = selectedNodes.length === 1 ? selectedNodes[0].data.card : null;
+
+  return (
+    <div className="flex h-screen flex-col">
+      <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200/70 bg-white px-5 py-3">
+        <div className="flex items-center gap-3">
+          <Link to={`/studies/${studyId}`} className="btn-secondary btn-sm">
+            ← Back
+          </Link>
+          <div>
+            <h1 className="text-sm font-semibold text-gray-900">{study?.name ?? "Study"}</h1>
+            <p className="text-xs text-gray-400">Workflow board</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => history.undo(nodes, edges, applySnapshot)}
+            disabled={!history.canUndo}
+            className="btn-secondary btn-sm"
+          >
+            Undo
+          </button>
+          <button
+            onClick={() => history.redo(nodes, edges, applySnapshot)}
+            disabled={!history.canRedo}
+            className="btn-secondary btn-sm"
+          >
+            Redo
+          </button>
+        </div>
+      </header>
+      {error && (
+        <div className="flex-shrink-0 border-b border-red-100 bg-red-50 px-5 py-2">
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1">
+        <CardLibrarySidebar />
+
+        <div className="relative flex-1" onDragOver={handleDragOver} onDrop={handleDrop}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={NODE_TYPES}
+            onNodesChange={handleNodesChange}
+            onEdgesChange={handleEdgesChange}
+            onNodeDragStart={handleNodeDragStart}
+            onNodeDragStop={handleNodeDragStop}
+            onConnect={handleConnect}
+            onNodesDelete={handleNodesDelete}
+            onEdgesDelete={handleEdgesDelete}
+            deleteKeyCode={["Backspace", "Delete"]}
+            fitView
+          >
+            <Background variant={BackgroundVariant.Dots} gap={16} />
+            <Controls />
+            <MiniMap pannable zoomable />
+          </ReactFlow>
+        </div>
+
+        <WorkflowPropertiesPanel
+          card={selectedCard}
+          selectedCount={selectedNodes.length}
+          cases={cases}
+          keycloakUsers={keycloakUsers}
+          studyId={studyId}
+          onClose={() => setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))}
+          onPatch={handlePatch}
+          onDelete={handleDeleteCard}
+          onBulkDelete={handleBulkDelete}
+          onRun={handleRun}
+          running={runningCardId !== null}
+        />
+      </div>
+    </div>
+  );
+}

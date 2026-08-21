@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance, Patient, Series
+from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance, Patient, Series, case_tags
 
 from app.storage import presigned_clinical_data_url, presigned_pixel_data_url, presigned_thumbnail_url
 
@@ -48,10 +48,6 @@ def _thumbnail_url_for_imaging_study(imaging_study: ImagingStudy) -> str | None:
     return None
 
 
-def _case_tags(case: Case) -> list[str]:
-    return sorted({tag.label for item in case.clinical_data_items for tag in item.tags})
-
-
 def _serialize_case(case: Case) -> dict:
     return {
         "id": str(case.id),
@@ -62,7 +58,7 @@ def _serialize_case(case: Case) -> dict:
         "type": case.type,
         "title": case.title,
         "comment": case.comment,
-        "tags": _case_tags(case),
+        "tags": case_tags(case),
     }
 
 
@@ -269,7 +265,7 @@ def list_patient_cases(
                     for s in case.imaging_studies
                 ],
                 "documents": [_serialize_clinical_data_item(i) for i in case.clinical_data_items],
-                "tags": _case_tags(case),
+                "tags": case_tags(case),
             }
         )
     return result

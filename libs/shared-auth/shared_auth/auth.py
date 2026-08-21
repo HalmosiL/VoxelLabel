@@ -94,5 +94,10 @@ def require_study_role(db: Session, study_id: str, user: CurrentUser, allowed_ro
         {"sid": study_id, "uid": user.subject},
     ).first()
 
-    if row is None or row[0] not in allowed_roles:
+    # The Postgres enum backing this column stores StudyRole's member
+    # NAMES ("ADMIN", "DATA_MANAGER", ...), not its lowercase .value
+    # ("admin", "data_manager", ...) that `allowed_roles` lists always use
+    # -- a plain raw-SQL string read gets the former, so it's compared
+    # case-insensitively here rather than assuming either casing.
+    if row is None or row[0].lower() not in allowed_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient study role")

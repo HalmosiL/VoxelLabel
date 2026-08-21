@@ -37,6 +37,13 @@ role instead (see `shared_auth`).
 - `POST /admin/deidentification-profiles/{profile_id}/rules` -- add a per-tag rule (keep/remove/replace_fixed/hash)
 - `POST /admin/annotation-types` -- register a new annotation type with its JSON Schema
 - `GET /admin/annotation-types` -- list registered annotation types
+- `GET /admin/studies/{study_id}/workflow` -- get a study's workflow board (cards + edges), each card with a computed `output_count`/`stale` flag, and annotation/review cards additionally with a live `annotation_progress` cross-check against the real `Annotation` table
+- `POST /admin/studies/{study_id}/workflow/cards` -- add a card (dataset/split/filter/annotation/review/union/note/milestone) to the board
+- `PATCH /admin/workflow-cards/{card_id}` -- update a card's title/position/size/config; a plain annotator/reviewer (not data_manager/admin) may only flip the `status` of their own assigned annotation/review card, nothing else
+- `DELETE /admin/workflow-cards/{card_id}` -- delete a card, cascading to any edge touching it (board scratch space, no "still has data" guard like Study/case deletes)
+- `POST /admin/studies/{study_id}/workflow/edges` -- connect two cards (validates same-study, no self-loop, source/target handle compatibility per card type)
+- `DELETE /admin/workflow-edges/{edge_id}` -- remove a connection
+- `POST /admin/workflow-cards/{card_id}/run` -- execute a split/filter/union/annotation/review card: Split partitions its input deterministically by a per-case-id hash (stable across re-runs as the input set grows); Filter keeps cases matching a tag; Union dedupes N inputs; Annotation/Review pass their input through unchanged (the real "work" is the assignee/status in `config`, edited via PATCH)
 - `GET /health` -- liveness/readiness probe
 
 Reading/listing cases and clinical data items lives in `data-service`, not
@@ -55,6 +62,7 @@ ARCHITECTURE.md, "Case-centric data model".
 | `app/api/deidentification.py` | De-identification profile/rule management |
 | `app/api/annotation_types.py` | Annotation type registration (the JSON Schema that `annotation-service` validates payloads against) |
 | `app/api/users.py` | Keycloak realm user lookup (study-member picker) |
+| `app/api/workflow.py` | Per-study workflow board: card/edge CRUD and the Run execution logic (Split/Filter/Union/Annotation/Review) |
 | `app/keycloak_admin.py` | Keycloak Admin API client (client-credentials token + user listing), using a narrowly-scoped service account -- not master-realm admin credentials |
 | `app/storage.py` | Object storage upload/delete for clinical data files, study cover images, and (via `delete_object`) pixel data/thumbnails written by ingestion-service -- all services share one bucket |
 
@@ -77,4 +85,8 @@ local environment.
 pytest
 ```
 
-`tests/test_health.py` needs no live DB or Keycloak.
+`tests/test_health.py` and `tests/test_workflow.py` need no live DB or
+Keycloak -- the latter covers the workflow board's pure logic (split
+hashing, filter matching, union dedup, staleness); the Run/edge-validation/
+cascade-delete behavior itself is exercised via curl against a live stack
+instead.

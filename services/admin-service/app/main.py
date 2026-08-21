@@ -15,6 +15,7 @@ from app.api.deidentification import router as deidentification_router
 from app.api.imaging import router as imaging_router
 from app.api.studies import router as studies_router
 from app.api.users import router as users_router
+from app.api.workflow import router as workflow_router
 from app.core.config import settings
 
 app = FastAPI(title="CT Platform - Admin Service")
@@ -32,6 +33,7 @@ app.include_router(cases_router)
 app.include_router(clinical_data_router)
 app.include_router(imaging_router)
 app.include_router(users_router)
+app.include_router(workflow_router)
 
 
 @app.get("/health")

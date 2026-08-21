@@ -14,6 +14,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -62,6 +63,20 @@ class DeidentificationAction(str, enum.Enum):
 class ConsentStatus(str, enum.Enum):
     GRANTED = "granted"
     REVOKED = "revoked"
+
+
+class WorkflowCardType(str, enum.Enum):
+    """The fixed set of card types a Study's workflow board can contain.
+    See WorkflowCard."""
+
+    DATASET = "dataset"
+    SPLIT = "split"
+    FILTER = "filter"
+    ANNOTATION = "annotation"
+    REVIEW = "review"
+    UNION = "union"
+    NOTE = "note"
+    MILESTONE = "milestone"
 
 
 class Study(Base):
@@ -196,6 +211,67 @@ class Case(Base):
     clinical_data_items: Mapped[list["ClinicalDataItem"]] = relationship(back_populates="case")
 
 
+class WorkflowCard(Base):
+    """One node on a Study's workflow board -- a freeform, drag/connect
+    canvas for organizing project work (dataset prep -> annotation ->
+    review -> merge) that a user builds manually, card by card. There is
+    exactly one board per Study, so the Study itself is the board's scope
+    -- no separate "board" entity to join through.
+
+    `config` holds only user-editable settings (shape depends on `type`);
+    `output_case_ids` holds the result of the last Run and is never
+    hand-edited -- see app/api/workflow.py in admin-service for the exact
+    per-type shapes and the Run algorithms. Dataset/Note/Milestone cards
+    are never Run: a Dataset's case set is computed live (or is a static
+    manually-picked list) and Note/Milestone are pure annotations on the
+    board with no data behind them.
+    """
+
+    __tablename__ = "workflow_cards"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("studies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[WorkflowCardType] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    position_x: Mapped[float] = mapped_column(Float, nullable=False)
+    position_y: Mapped[float] = mapped_column(Float, nullable=False)
+    width: Mapped[float | None] = mapped_column(Float)
+    height: Mapped[float | None] = mapped_column(Float)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    output_case_ids: Mapped[dict | list | None] = mapped_column(JSONB)
+    last_run_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("width IS NULL OR width > 0", name="ck_workflow_card_width_positive"),
+        CheckConstraint("height IS NULL OR height > 0", name="ck_workflow_card_height_positive"),
+    )
+
+
+class WorkflowEdge(Base):
+    """One directed connection between two WorkflowCards on the same
+    Study's board. `study_id` is denormalized (also derivable via either
+    card) purely so board-scoped queries don't need a join."""
+
+    __tablename__ = "workflow_edges"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("studies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_card_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="CASCADE"), nullable=False
+    )
+    source_handle: Mapped[str] = mapped_column(String(64), nullable=False, default="output")
+    target_card_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="CASCADE"), nullable=False
+    )
+    target_handle: Mapped[str] = mapped_column(String(64), nullable=False, default="input")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ClinicalDataItem(Base):
     """A generic, non-imaging piece of data attached to a Case -- a report,
     referral letter, or any other file/document. `type` is a free-form
@@ -234,6 +310,15 @@ class Tag(Base):
     label: Mapped[str] = mapped_column(String(64), nullable=False)
 
     clinical_data_item: Mapped["ClinicalDataItem"] = relationship(back_populates="tags")
+
+
+def case_tags(case: "Case") -> list[str]:
+    """Rolled-up union of tag labels across a Case's ClinicalDataItems --
+    a Case has no tags of its own, only what its attached documents carry.
+    Shared by data-service (case browsing) and admin-service (workflow
+    board Filter cards) so both stay in lockstep with one implementation.
+    """
+    return sorted({tag.label for item in case.clinical_data_items for tag in item.tags})
 
 
 class Consent(Base):

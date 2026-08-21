@@ -8,10 +8,12 @@ import PatientDetailPage from "./pages/PatientDetailPage";
 import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
 import StudyDetailPage from "./pages/StudyDetailPage";
+import WorkflowBoardPage from "./pages/WorkflowBoardPage";
 
 export default function App() {
   return (
     <Routes>
+      <Route path="/studies/:studyId/workflow" element={<WorkflowBoardPage />} />
       <Route element={<Layout />}>
         <Route path="/" element={<Navigate to="/studies" replace />} />
         <Route path="/studies" element={<StudiesPage />} />
