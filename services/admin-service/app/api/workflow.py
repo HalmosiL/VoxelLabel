@@ -143,6 +143,25 @@ def _annotation_progress(db: Session, case_ids: list[str], review: bool) -> dict
     return {"annotated": query.scalar() or 0, "total": len(case_ids)}
 
 
+def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
+    """The subset of `case_ids` that actually have a real Annotation record
+    (or, for Review, one already approved/rejected) -- the same real-data
+    cross-check `_annotation_progress` counts, but returning which cases
+    those are rather than just how many. Used to materialize an "annotated
+    dataset" containing only genuinely annotated cases, not every case the
+    Annotation/Review card happens to be assigned."""
+    if not case_ids:
+        return []
+    query = (
+        db.query(func.distinct(ImagingStudy.case_id))
+        .join(Annotation, Annotation.target_id == ImagingStudy.id)
+        .filter(Annotation.target_type == "study", ImagingStudy.case_id.in_(case_ids))
+    )
+    if review:
+        query = query.filter(Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]))
+    return sorted(str(row[0]) for row in query.all())
+
+
 def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by_target: dict) -> dict:
     output_case_ids = card.output_case_ids
     if card.type == WorkflowCardType.DATASET:
@@ -542,7 +561,11 @@ def run_workflow_card(
         card.output_case_ids = _resolve_output(db, source, set())
 
         if card.config.get("materialize_dataset"):
-            case_ids = sorted(card.output_case_ids)
+            # Only the subset with a real Annotation record (or, for
+            # Review, one already approved/rejected) -- not every case the
+            # card happens to be assigned, which would include ones no one
+            # has actually annotated yet.
+            case_ids = _annotated_case_ids(db, card.output_case_ids, review=card.type == WorkflowCardType.REVIEW)
             children = _materialized_children(db, card.id)
             title = f"{card.title} (annotated)"
             if not children:

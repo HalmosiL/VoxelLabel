@@ -497,7 +497,7 @@ function TaskFields({
           checked={materializeDataset}
           onChange={(e) => onPatch(card.id, { config: { ...card.config, materialize_dataset: e.target.checked } })}
         />
-        Also create/update an Annotated Dataset card on Run
+        Also create/update a Dataset card of just the annotated cases
       </label>
       <RunButton card={card} onRun={onRun} running={running} label="Refresh from upstream" />
       <LastRun card={card} />
