@@ -13,8 +13,11 @@ function SplitNode({ data, selected }: NodeProps<CardNode>) {
 
   return (
     <WorkflowNodeShell selected={selected} icon={<ForkIcon className="h-4 w-4" />} title={card.title} stale={card.stale}>
-      {/* Split has no output handle: its result is N materialized Dataset
-          cards (created/updated on Run), not a graph edge -- see handleRules.ts. */}
+      {/* Split has no user-connectable output handle: its result is N
+          materialized Dataset cards (created/updated on Run), not an
+          edge the user draws -- see handleRules.ts. The "materialize"
+          handle below is a non-interactive anchor purely so the board can
+          draw a (non-deletable) connector line to those Dataset cards. */}
       <ul className="mt-2 flex flex-col gap-0.5 text-xs text-gray-600">
         {parts.map((part, index) => (
           <li key={index} className="flex items-center justify-between gap-2">
@@ -26,6 +29,7 @@ function SplitNode({ data, selected }: NodeProps<CardNode>) {
         ))}
       </ul>
       <Handle type="target" position={Position.Left} id="input" />
+      <Handle type="source" position={Position.Right} id="materialize" isConnectable={false} className="!bg-gray-300" />
     </WorkflowNodeShell>
   );
 }

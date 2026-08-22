@@ -78,6 +78,48 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
   };
 }
 
+/** Derived, non-interactive connector lines from a Split/Annotation/Review
+ * card to whichever Dataset card(s) it materialized -- not a real
+ * WorkflowEdge (materialized Dataset cards have no real input), so these
+ * are recomputed client-side from each card's materialized_card_id(s)
+ * rather than fetched, and marked non-deletable/non-selectable so they
+ * can't be mistaken for a user-drawn connection. */
+function materializationEdges(cards: WorkflowCard[]): Edge[] {
+  const edges: Edge[] = [];
+  for (const card of cards) {
+    if (card.type === "split" && card.materialized_card_ids) {
+      for (const childId of Object.values(card.materialized_card_ids)) {
+        edges.push({
+          id: `materialize-${card.id}-${childId}`,
+          source: card.id,
+          sourceHandle: "materialize",
+          target: childId,
+          targetHandle: "materialize",
+          type: "smoothstep",
+          style: { strokeDasharray: "4 3", stroke: "#c7c7c7" },
+          deletable: false,
+          selectable: false,
+          focusable: false,
+        });
+      }
+    } else if ((card.type === "annotation" || card.type === "review") && card.materialized_card_id) {
+      edges.push({
+        id: `materialize-${card.id}-${card.materialized_card_id}`,
+        source: card.id,
+        sourceHandle: "output",
+        target: card.materialized_card_id,
+        targetHandle: "materialize",
+        type: "smoothstep",
+        style: { strokeDasharray: "4 3", stroke: "#c7c7c7" },
+        deletable: false,
+        selectable: false,
+        focusable: false,
+      });
+    }
+  }
+  return edges;
+}
+
 function isEditableTarget(): boolean {
   const active = document.activeElement;
   return active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
@@ -105,12 +147,16 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   const { screenToFlowPosition, fitView } = useReactFlow();
   const history = useWorkflowHistory(studyId);
+  // Materialization connector lines are derived, not user-authored -- they
+  // must never enter undo/redo history or the backend-sync logic that
+  // treats history edges as real WorkflowEdge rows.
+  const realEdges = edges.filter((e) => e.deletable !== false);
 
   function refreshBoard() {
     getWorkflowBoard(studyId)
       .then((board) => {
         setNodes(board.cards.map(cardToNode));
-        setEdges(board.edges.map(edgeToRFEdge));
+        setEdges([...board.edges.map(edgeToRFEdge), ...materializationEdges(board.cards)]);
       })
       .catch((err) => setError(String(err)));
   }
@@ -135,11 +181,11 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   function applySnapshot(snapshot: Snapshot) {
     setNodes(snapshot.nodes);
-    setEdges(snapshot.edges);
+    setEdges([...snapshot.edges, ...materializationEdges(snapshot.nodes.map((n) => n.data.card))]);
   }
 
   function handleNodeDragStart() {
-    history.record(nodes, edges);
+    history.record(nodes, realEdges);
   }
 
   function handleNodeDragStop(_event: unknown, node: CardNode) {
@@ -156,7 +202,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       setError("That connection isn't allowed between these card types.");
       return;
     }
-    history.record(nodes, edges);
+    history.record(nodes, realEdges);
     createWorkflowEdge(studyId, {
       source_card_id: connection.source,
       source_handle: connection.sourceHandle ?? "output",
@@ -170,8 +216,10 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   function handleNodesDelete(deleted: CardNode[]) {
     if (deleted.length === 0) return;
     const deletedIds = new Set(deleted.map((n) => n.id));
-    history.record(nodes, edges);
-    const affectedEdgeIds = edges.filter((e) => deletedIds.has(e.source) || deletedIds.has(e.target)).map((e) => e.id);
+    history.record(nodes, realEdges);
+    const affectedEdgeIds = realEdges
+      .filter((e) => deletedIds.has(e.source) || deletedIds.has(e.target))
+      .map((e) => e.id);
 
     setNodes((nds) => nds.filter((n) => !deletedIds.has(n.id)));
     setEdges((eds) => eds.filter((e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)));
@@ -183,9 +231,13 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   }
 
   function handleEdgesDelete(deleted: Edge[]) {
-    if (deleted.length === 0) return;
-    history.record(nodes, edges);
-    const deletedIds = new Set(deleted.map((e) => e.id));
+    // deletable:false on materialization edges should already keep them out
+    // of react-flow's delete cascade, but filter defensively anyway --
+    // they don't correspond to a real WorkflowEdge to delete.
+    const real = deleted.filter((e) => e.deletable !== false);
+    if (real.length === 0) return;
+    history.record(nodes, realEdges);
+    const deletedIds = new Set(real.map((e) => e.id));
     setEdges((eds) => eds.filter((e) => !deletedIds.has(e.id)));
     Promise.all(Array.from(deletedIds).map((id) => deleteWorkflowEdge(id).catch(() => undefined))).catch((err) =>
       setError(String(err))
@@ -204,7 +256,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     if (!template) return;
 
     const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    history.record(nodes, edges);
+    history.record(nodes, realEdges);
     createWorkflowCard(studyId, {
       type: template.type,
       title: template.defaultTitle,
@@ -253,20 +305,20 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
       if (event.key === "z" && !event.shiftKey) {
         event.preventDefault();
-        history.undo(nodes, edges, applySnapshot);
+        history.undo(nodes, realEdges, applySnapshot);
       } else if (event.key === "y" || (event.key === "z" && event.shiftKey)) {
         event.preventDefault();
-        history.redo(nodes, edges, applySnapshot);
+        history.redo(nodes, realEdges, applySnapshot);
       } else if (event.key === "c") {
         const selected = nodes.filter((n) => n.selected);
         if (selected.length === 0) return;
         const selectedIds = new Set(selected.map((n) => n.id));
-        const innerEdges = edges.filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target));
+        const innerEdges = realEdges.filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target));
         clipboardRef.current = { nodes: selected, edges: innerEdges };
       } else if (event.key === "v") {
         const clip = clipboardRef.current;
         if (!clip) return;
-        history.record(nodes, edges);
+        history.record(nodes, realEdges);
         const idMap = new Map<string, string>();
         Promise.all(
           clip.nodes.map((n) =>
@@ -330,14 +382,14 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => history.undo(nodes, edges, applySnapshot)}
+            onClick={() => history.undo(nodes, realEdges, applySnapshot)}
             disabled={!history.canUndo}
             className="btn-secondary btn-sm"
           >
             Undo
           </button>
           <button
-            onClick={() => history.redo(nodes, edges, applySnapshot)}
+            onClick={() => history.redo(nodes, realEdges, applySnapshot)}
             disabled={!history.canRedo}
             className="btn-secondary btn-sm"
           >

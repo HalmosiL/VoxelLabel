@@ -56,12 +56,12 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         label: "Split",
         icon: <ForkIcon className="h-4 w-4" />,
         defaultTitle: "Split",
-        // Train/Val is the common default for a 2-way split, but parts are
-        // freely renameable/addable -- not a fixed train/val shape anymore.
+        // Generic by default -- not a fixed train/val shape. Freely
+        // renameable/addable, e.g. to Train/Val or any other N parts.
         defaultConfig: {
           parts: [
-            { name: "Train", ratio: 0.8 },
-            { name: "Val", ratio: 0.2 },
+            { name: "Part 1", ratio: 0.5 },
+            { name: "Part 2", ratio: 0.5 },
           ],
         },
         defaultWidth: 220,

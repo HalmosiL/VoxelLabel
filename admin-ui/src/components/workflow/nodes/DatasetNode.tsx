@@ -18,6 +18,12 @@ function DatasetNode({ data, selected }: NodeProps<CardNode>) {
         <p className="mt-1 truncate text-xs text-brand-500">from: {card.materialized_from.title}</p>
       )}
       <Handle type="source" position={Position.Right} id="output" />
+      {/* Non-interactive anchor for the (non-deletable) connector line
+          from whichever card materialized this Dataset -- a materialized
+          Dataset still has no real, user-connectable input. */}
+      {card.materialized_from && (
+        <Handle type="target" position={Position.Left} id="materialize" isConnectable={false} className="!bg-gray-300" />
+      )}
     </WorkflowNodeShell>
   );
 }
