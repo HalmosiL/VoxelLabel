@@ -259,8 +259,8 @@ function DatasetFields({
 }
 
 const DEFAULT_SPLIT_PARTS: SplitPart[] = [
-  { name: "Part 1", ratio: 0.5 },
-  { name: "Part 2", ratio: 0.5 },
+  { name: "Train", ratio: 0.8 },
+  { name: "Val", ratio: 0.2 },
 ];
 
 function SplitFields({
