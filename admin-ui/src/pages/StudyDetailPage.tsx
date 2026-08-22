@@ -3,10 +3,12 @@ import { Link, useParams } from "react-router-dom";
 
 import { getStudy, Study, updateStudy } from "../api/adminApi";
 import CasesPanel from "../components/CasesPanel";
+import DatasetsPanel from "../components/DatasetsPanel";
 import MembersPanel from "../components/MembersPanel";
 import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
 import ReviewQueuePanel from "../components/ReviewQueuePanel";
+import WorkflowSummaryPanel from "../components/WorkflowSummaryPanel";
 
 export default function StudyDetailPage() {
   const { studyId } = useParams<{ studyId: string }>();
@@ -46,6 +48,8 @@ export default function StudyDetailPage() {
       <MembersPanel studyId={studyId} />
       <CasesPanel studyId={studyId} />
       <ReviewQueuePanel studyId={studyId} />
+      <WorkflowSummaryPanel studyId={studyId} />
+      <DatasetsPanel studyId={studyId} />
 
       {editOpen && study && (
         <EditStudyModal
