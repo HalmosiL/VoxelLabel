@@ -413,7 +413,12 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       <div className="flex min-h-0 flex-1">
         <CardLibrarySidebar />
 
-        <div className="relative flex-1" onDragOver={handleDragOver} onDrop={handleDrop}>
+        <div
+          className="relative flex-1"
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onContextMenu={(e) => e.preventDefault()}
+        >
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -427,10 +432,15 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onEdgesDelete={handleEdgesDelete}
             deleteKeyCode={["Backspace", "Delete"]}
             // Miro/Figma-style: plain left-drag on empty canvas draws a
-            // selection box (multi-select); panning moves to middle/right-
-            // click-drag instead of the default left-drag-to-pan.
+            // selection box (multi-select) instead of panning. Panning is
+            // scroll/trackpad-two-finger-drag (panOnScroll) or middle-
+            // click-drag (panOnDrag=[1]) -- right-click-drag (button 2)
+            // was tried too but isn't reliably supported by React Flow's
+            // underlying zoom/pan handling, so it's deliberately left out
+            // rather than offered as a broken affordance.
             selectionOnDrag
-            panOnDrag={[1, 2]}
+            panOnDrag={[1]}
+            panOnScroll
             fitView
           >
             <Background variant={BackgroundVariant.Dots} gap={16} />
