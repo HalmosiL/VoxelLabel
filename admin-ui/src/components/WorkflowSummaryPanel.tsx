@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 
 import { getWorkflowBoard, SplitPart, WorkflowCard, WorkflowCardType } from "../api/workflowApi";
 import { TASK_STATUS_STYLE } from "./workflow/statusStyle";
-import EmptyState from "./EmptyState";
 import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, PencilIcon } from "./icons";
 import SectionHeader from "./SectionHeader";
 
@@ -57,13 +56,56 @@ function describeCard(card: WorkflowCard): string {
     case "note":
       return (card.config.text as string | undefined) || "(empty)";
     case "milestone": {
-      const text = (card.config.text as string | undefined) || card.title;
       const date = card.config.date as string | null | undefined;
-      return date ? `${text} · ${date}` : text;
+      return date ? date : "";
     }
     default:
       return "";
   }
+}
+
+function MiniCard({ card, studyId }: { card: WorkflowCard; studyId: string }) {
+  const body = describeCard(card);
+
+  if (card.type === "note") {
+    return (
+      <Link
+        to={`/studies/${studyId}/workflow`}
+        className="block rounded-lg border border-amber-200 bg-amber-50 p-3 shadow-sm transition-shadow hover:shadow-md"
+      >
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600">Note</p>
+        <p className="line-clamp-4 text-sm text-amber-900">{body}</p>
+      </Link>
+    );
+  }
+
+  if (card.type === "milestone") {
+    return (
+      <Link
+        to={`/studies/${studyId}/workflow`}
+        className="flex items-start gap-2 rounded-2xl border border-brand-200 bg-brand-50 p-3 shadow-sm transition-shadow hover:shadow-md"
+      >
+        <FlagIcon className="mt-0.5 h-4 w-4 flex-shrink-0 text-brand-500" />
+        <div className="min-w-0">
+          <p className="break-words text-sm font-semibold text-brand-800">{card.title}</p>
+          {body && <p className="text-xs text-brand-500">{body}</p>}
+        </div>
+      </Link>
+    );
+  }
+
+  return (
+    <Link to={`/studies/${studyId}/workflow`} className="card block !p-3 transition-shadow hover:shadow-md">
+      <div className="flex items-start gap-2">
+        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
+          {TYPE_ICON[card.type]}
+        </span>
+        <p className="min-w-0 flex-1 break-words text-sm font-semibold text-gray-900">{card.title}</p>
+        {card.stale && <span className="badge-gray flex-shrink-0 text-[10px]">stale</span>}
+      </div>
+      {body && <p className="mt-2 text-xs text-gray-600">{body}</p>}
+    </Link>
+  );
 }
 
 export default function WorkflowSummaryPanel({ studyId }: { studyId: string }) {
@@ -88,39 +130,15 @@ export default function WorkflowSummaryPanel({ studyId }: { studyId: string }) {
       />
       {error && <p className="alert-error mt-3">{error}</p>}
 
-      <div className="table-wrap mt-4">
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Title</th>
-              <th>Summary</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {cards.length === 0 && (
-              <tr>
-                <td colSpan={4}>
-                  <EmptyState message="No cards on this study's workflow board yet." />
-                </td>
-              </tr>
-            )}
-            {cards.map((card) => (
-              <tr key={card.id}>
-                <td>
-                  <span className="flex h-7 w-7 items-center justify-center rounded-md bg-gray-100 text-gray-500">
-                    {TYPE_ICON[card.type]}
-                  </span>
-                </td>
-                <td className="text-sm font-medium text-gray-900">{card.title}</td>
-                <td className="text-xs text-gray-500">{describeCard(card)}</td>
-                <td>{card.stale && <span className="badge-gray text-[10px]">needs re-run</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {cards.length === 0 ? (
+        <p className="hint mt-3">No cards on this study's workflow board yet.</p>
+      ) : (
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {cards.map((card) => (
+            <MiniCard key={card.id} card={card} studyId={studyId} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
