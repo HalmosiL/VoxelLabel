@@ -43,7 +43,7 @@ role instead (see `shared_auth`).
 - `DELETE /admin/workflow-cards/{card_id}` -- delete a card, cascading to any edge touching it (board scratch space, no "still has data" guard like Study/case deletes)
 - `POST /admin/studies/{study_id}/workflow/edges` -- connect two cards (validates same-study, no self-loop, source/target handle compatibility per card type)
 - `DELETE /admin/workflow-edges/{edge_id}` -- remove a connection
-- `POST /admin/workflow-cards/{card_id}/run` -- execute a split/filter/union/annotation/review card: Split partitions its input deterministically by a per-case-id hash (stable across re-runs as the input set grows); Filter keeps cases matching a tag; Union dedupes N inputs; Annotation/Review pass their input through unchanged (the real "work" is the assignee/status in `config`, edited via PATCH)
+- `POST /admin/workflow-cards/{card_id}/run` -- execute a split/filter/union/annotation/review card: Split partitions its input into N named parts, deterministically by a per-case-id hash (stable across re-runs as the input set grows), and materializes each part as a real Dataset card (created on first Run, updated in place -- keyed by `materialized_source_card_id`/`materialized_source_handle` -- on every re-run, never duplicated); Filter keeps cases matching a tag; Union dedupes N inputs; Annotation/Review pass their input through unchanged (the real "work" is the assignee/status in `config`, edited via PATCH) and, when `config.materialize_dataset` is set, also materialize their current output as a single "annotated dataset" card the same way
 - `GET /health` -- liveness/readiness probe
 
 Reading/listing cases and clinical data items lives in `data-service`, not

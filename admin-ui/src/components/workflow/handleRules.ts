@@ -12,7 +12,9 @@ export interface HandleRule {
 
 export const HANDLE_RULES: Record<WorkflowCardType, HandleRule> = {
   dataset: { hasInput: false, outputHandles: ["output"] },
-  split: { hasInput: true, outputHandles: ["train", "val"] },
+  // Split has no graph output of its own: its result is expressed as
+  // materialized Dataset cards (auto-created/updated on Run), not an edge.
+  split: { hasInput: true, outputHandles: [] },
   filter: { hasInput: true, outputHandles: ["output"] },
   union: { hasInput: true, outputHandles: ["output"] },
   annotation: { hasInput: true, outputHandles: ["output"] },

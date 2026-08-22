@@ -22,13 +22,13 @@ export default function WorkflowNodeShell({
 }) {
   return (
     <>
-      <NodeResizer isVisible={selected} minWidth={180} minHeight={70} />
+      <NodeResizer isVisible={selected} minWidth={200} minHeight={70} />
       <div className={`card relative h-full w-full !p-3 ${selected ? "ring-2 ring-brand-500" : ""}`}>
-        <div className="flex items-center gap-2">
+        <div className="flex items-start gap-2">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
             {icon}
           </span>
-          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{title}</p>
+          <p className="min-w-0 flex-1 break-words text-sm font-semibold text-gray-900">{title}</p>
           {stale && <span className="badge-gray flex-shrink-0 text-[10px]">stale</span>}
         </div>
         {children}

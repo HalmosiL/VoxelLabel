@@ -14,6 +14,9 @@ function DatasetNode({ data, selected }: NodeProps<CardNode>) {
       <p className="mt-2 text-xs text-gray-600">
         {count} case{count === 1 ? "" : "s"}
       </p>
+      {card.materialized_from && (
+        <p className="mt-1 truncate text-xs text-brand-500">from: {card.materialized_from.title}</p>
+      )}
       <Handle type="source" position={Position.Right} id="output" />
     </WorkflowNodeShell>
   );

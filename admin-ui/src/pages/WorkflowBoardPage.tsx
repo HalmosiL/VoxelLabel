@@ -103,7 +103,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const [runningCardId, setRunningCardId] = useState<string | null>(null);
   const clipboardRef = useRef<{ nodes: CardNode[]; edges: Edge[] } | null>(null);
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const history = useWorkflowHistory(studyId);
 
   function refreshBoard() {
@@ -210,10 +210,17 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       title: template.defaultTitle,
       position_x: position.x,
       position_y: position.y,
+      width: template.defaultWidth,
+      height: template.defaultHeight,
       config: template.defaultConfig,
     })
       .then((card) => setNodes((nds) => [...nds, cardToNode(card)]))
       .catch((err) => setError(String(err)));
+  }
+
+  function handleSelectCard(cardId: string) {
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === cardId })));
+    fitView({ nodes: [{ id: cardId }], duration: 300, maxZoom: 1 }).catch(() => undefined);
   }
 
   function handlePatch(cardId: string, patch: WorkflowCardPatchInput) {
@@ -379,6 +386,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           onDelete={handleDeleteCard}
           onBulkDelete={handleBulkDelete}
           onRun={handleRun}
+          onSelectCard={handleSelectCard}
           running={runningCardId !== null}
         />
       </div>

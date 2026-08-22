@@ -44,9 +44,13 @@ router = APIRouter(prefix="/admin", tags=["admin:workflow"])
 
 _READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 _WRITE_ROLES = ["data_manager", "admin"]
-_NO_OUTPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
+# Split has no output handle of its own: its result is expressed entirely
+# as materialized Dataset cards (see run_workflow_card), not a graph edge.
+_NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
 _NO_INPUT_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
 _NO_RUN_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
+_MATERIALIZED_DEFAULT_WIDTH = 200.0
+_MATERIALIZED_DEFAULT_HEIGHT = 90.0
 
 
 class WorkflowCardIn(BaseModel):
@@ -116,8 +120,14 @@ def _output_count(card: WorkflowCard, output_case_ids):
     if output_case_ids is None:
         return None
     if card.type == WorkflowCardType.SPLIT:
-        return {"train": len(output_case_ids.get("train", [])), "val": len(output_case_ids.get("val", []))}
+        return {handle: len(ids) for handle, ids in output_case_ids.items()}
     return len(output_case_ids)
+
+
+def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard]:
+    """Dataset cards a Split/Annotation/Review card has auto-created (or is
+    keeping in sync) via `materialized_source_card_id`."""
+    return db.query(WorkflowCard).filter_by(materialized_source_card_id=card_id).all()
 
 
 def _annotation_progress(db: Session, case_ids: list[str], review: bool) -> dict:
@@ -162,6 +172,21 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         result["annotation_progress"] = _annotation_progress(
             db, output_case_ids, review=card.type == WorkflowCardType.REVIEW
         )
+
+    if card.type == WorkflowCardType.SPLIT:
+        result["materialized_card_ids"] = {
+            c.materialized_source_handle: str(c.id) for c in _materialized_children(db, card.id)
+        }
+    elif card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+        children = _materialized_children(db, card.id)
+        result["materialized_card_id"] = str(children[0].id) if children else None
+
+    if card.type == WorkflowCardType.DATASET and card.materialized_source_card_id:
+        source = cards_by_id.get(card.materialized_source_card_id) or db.get(
+            WorkflowCard, card.materialized_source_card_id
+        )
+        result["materialized_from"] = {"card_id": str(source.id), "title": source.title} if source else None
+
     return result
 
 
@@ -312,8 +337,7 @@ def create_workflow_edge(
     if target.type in _NO_INPUT_TYPES:
         raise HTTPException(status_code=422, detail=f"A {target.type.value} card has no input")
 
-    valid_source_handles = {"train", "val"} if source.type == WorkflowCardType.SPLIT else {"output"}
-    if body.source_handle not in valid_source_handles:
+    if body.source_handle != "output":
         raise HTTPException(
             status_code=422, detail=f"Invalid source handle '{body.source_handle}' for a {source.type.value} card"
         )
@@ -352,7 +376,13 @@ def delete_workflow_edge(
     db.commit()
 
 
-def _resolve_output(db: Session, card: WorkflowCard, handle: str, visiting: set) -> list[str]:
+def _resolve_output(db: Session, card: WorkflowCard, visiting: set) -> list[str]:
+    """Every remaining edge-source type (Dataset/Filter/Union/Annotation/
+    Review) exposes exactly one "output" handle, so there is no handle
+    parameter to disambiguate -- Split, the one type that used to need
+    one (train/val), can no longer be an edge source at all (see
+    _NO_OUTPUT_TYPES); its result is only ever reached via a materialized
+    Dataset child, which resolves through the plain DATASET branch below."""
     if card.id in visiting:
         raise HTTPException(status_code=409, detail="Cycle detected in workflow graph")
     visiting = visiting | {card.id}
@@ -362,9 +392,6 @@ def _resolve_output(db: Session, card: WorkflowCard, handle: str, visiting: set)
 
     if card.output_case_ids is None:
         raise HTTPException(status_code=409, detail=f"Upstream card '{card.title}' has not been run yet")
-
-    if card.type == WorkflowCardType.SPLIT:
-        return list(card.output_case_ids.get(handle, []))
     return list(card.output_case_ids)
 
 
@@ -377,14 +404,41 @@ def _single_incoming_edge(db: Session, card: WorkflowCard) -> WorkflowEdge:
     return edges[0]
 
 
-def _split_bucket(case_id: str, seed: str, ratio: float) -> str:
+def _split_parts(config: dict) -> list[dict]:
+    parts = config.get("parts")
+    if not isinstance(parts, list) or len(parts) < 2:
+        raise HTTPException(status_code=422, detail="Split needs at least 2 parts")
+    return parts
+
+
+def _cumulative_ratios(parts: list[dict]) -> list[float]:
+    """Turns each part's (possibly unnormalized) ratio into an upper bound
+    on a cumulative [0, 1) scale, e.g. ratios 0.5/0.3/0.2 -> [0.5, 0.8, 1.0].
+    The last boundary is pinned to exactly 1.0 so float drift can never
+    leave a case unbucketed."""
+    total = sum(float(p.get("ratio", 0)) for p in parts) or 1.0
+    cumulative = []
+    running = 0.0
+    for part in parts:
+        running += float(part.get("ratio", 0)) / total
+        cumulative.append(running)
+    cumulative[-1] = 1.0
+    return cumulative
+
+
+def _split_bucket_index(case_id: str, seed: str, cumulative_ratios: list[float]) -> int:
     """Deterministic per-case-id hash assignment, not shuffle-and-cut: a
-    given case always lands in the same branch for a given seed regardless
+    given case always lands in the same part for a given seed regardless
     of what else is in the input set, so re-running Split after new cases
-    are added upstream never reshuffles already-split cases."""
+    are added upstream never reshuffles already-split cases. Generalizes
+    the old binary train/val threshold to N parts via cumulative ratio
+    boundaries."""
     digest = hashlib.sha256(f"{seed}:{case_id}".encode()).hexdigest()
     fraction = int(digest, 16) / (2**256 - 1)
-    return "train" if fraction < ratio else "val"
+    for index, boundary in enumerate(cumulative_ratios):
+        if fraction < boundary:
+            return index
+    return len(cumulative_ratios) - 1
 
 
 def _dedupe_sorted(ids) -> list[str]:
@@ -415,23 +469,55 @@ def run_workflow_card(
     if card.type == WorkflowCardType.SPLIT:
         edge = _single_incoming_edge(db, card)
         source = _card_or_404(db, edge.source_card_id)
-        input_ids = _resolve_output(db, source, edge.source_handle, set())
+        input_ids = _resolve_output(db, source, set())
 
-        seed = card.config.get("seed")
-        if not seed:
-            seed = uuid.uuid4().hex
-            card.config = {**card.config, "seed": seed}
-        ratio = card.config.get("ratio", 0.8)
+        parts = _split_parts(card.config)
+        seed = card.config.get("seed") or uuid.uuid4().hex
+        cumulative = _cumulative_ratios(parts)
 
-        train, val = [], []
+        buckets: list[list[str]] = [[] for _ in parts]
         for case_id in input_ids:
-            (train if _split_bucket(case_id, seed, ratio) == "train" else val).append(case_id)
-        card.output_case_ids = {"train": sorted(train), "val": sorted(val)}
+            buckets[_split_bucket_index(case_id, seed, cumulative)].append(case_id)
+
+        existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
+        output: dict[str, list[str]] = {}
+        for index, part in enumerate(parts):
+            handle = f"part_{index}"
+            case_ids = sorted(buckets[index])
+            output[handle] = case_ids
+            name = str(part.get("name") or f"Part {index + 1}")
+            child = existing_children.get(handle)
+            if child is None:
+                db.add(
+                    WorkflowCard(
+                        study_id=card.study_id,
+                        type=WorkflowCardType.DATASET,
+                        title=name,
+                        position_x=card.position_x + 260,
+                        position_y=card.position_y + index * 140,
+                        width=_MATERIALIZED_DEFAULT_WIDTH,
+                        height=_MATERIALIZED_DEFAULT_HEIGHT,
+                        config={"mode": "manual", "case_ids": case_ids},
+                        materialized_source_card_id=card.id,
+                        materialized_source_handle=handle,
+                    )
+                )
+            else:
+                # A part removed since the last Run leaves its old
+                # materialized Dataset card in place, un-updated, rather
+                # than deleting it -- board scratch space isn't
+                # aggressively garbage-collected (same policy as
+                # delete_workflow_card having no "still has data" guard).
+                child.title = name
+                child.config = {**child.config, "mode": "manual", "case_ids": case_ids}
+
+        card.config = {**card.config, "seed": seed}
+        card.output_case_ids = output
 
     elif card.type == WorkflowCardType.FILTER:
         edge = _single_incoming_edge(db, card)
         source = _card_or_404(db, edge.source_card_id)
-        input_ids = _resolve_output(db, source, edge.source_handle, set())
+        input_ids = _resolve_output(db, source, set())
 
         cases = db.query(Case).filter(Case.id.in_(input_ids)).all()
         card.output_case_ids = sorted(str(c.id) for c in cases if _matches_filter(case_tags(c), card.config))
@@ -443,7 +529,7 @@ def run_workflow_card(
         all_ids = []
         for edge in incoming:
             source = _card_or_404(db, edge.source_card_id)
-            all_ids.extend(_resolve_output(db, source, edge.source_handle, set()))
+            all_ids.extend(_resolve_output(db, source, set()))
         card.output_case_ids = _dedupe_sorted(all_ids)
 
     elif card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
@@ -453,7 +539,30 @@ def run_workflow_card(
         # `config`, edited via PATCH, not Run.
         edge = _single_incoming_edge(db, card)
         source = _card_or_404(db, edge.source_card_id)
-        card.output_case_ids = _resolve_output(db, source, edge.source_handle, set())
+        card.output_case_ids = _resolve_output(db, source, set())
+
+        if card.config.get("materialize_dataset"):
+            case_ids = sorted(card.output_case_ids)
+            children = _materialized_children(db, card.id)
+            title = f"{card.title} (annotated)"
+            if not children:
+                db.add(
+                    WorkflowCard(
+                        study_id=card.study_id,
+                        type=WorkflowCardType.DATASET,
+                        title=title,
+                        position_x=card.position_x + 260,
+                        position_y=card.position_y,
+                        width=_MATERIALIZED_DEFAULT_WIDTH,
+                        height=_MATERIALIZED_DEFAULT_HEIGHT,
+                        config={"mode": "manual", "case_ids": case_ids},
+                        materialized_source_card_id=card.id,
+                        materialized_source_handle="output",
+                    )
+                )
+            else:
+                children[0].title = title
+                children[0].config = {**children[0].config, "mode": "manual", "case_ids": case_ids}
 
     card.last_run_at = datetime.now(timezone.utc)
     db.commit()

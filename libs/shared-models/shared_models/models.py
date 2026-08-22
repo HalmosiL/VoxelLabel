@@ -225,6 +225,15 @@ class WorkflowCard(Base):
     are never Run: a Dataset's case set is computed live (or is a static
     manually-picked list) and Note/Milestone are pure annotations on the
     board with no data behind them.
+
+    `materialized_source_card_id`/`materialized_source_handle` are set only
+    on a Dataset card that was auto-created by another card's Run (a Split
+    part, or an Annotation/Review's opt-in "also create a dataset" toggle)
+    -- they let a re-Run find and update that same Dataset card in place
+    instead of spawning a duplicate each time. `ondelete=SET NULL` because
+    a materialized Dataset is a real, independently useful snapshot: if its
+    source card is later deleted, the Dataset should survive as a plain
+    manual-mode Dataset, not vanish with it.
     """
 
     __tablename__ = "workflow_cards"
@@ -243,6 +252,10 @@ class WorkflowCard(Base):
     output_case_ids: Mapped[dict | list | None] = mapped_column(JSONB)
     last_run_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    materialized_source_card_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="SET NULL")
+    )
+    materialized_source_handle: Mapped[str | None] = mapped_column(String(64))
 
     __table_args__ = (
         CheckConstraint("width IS NULL OR width > 0", name="ck_workflow_card_width_positive"),

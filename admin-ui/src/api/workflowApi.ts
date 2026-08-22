@@ -22,11 +22,24 @@ export interface WorkflowCard {
   width: number | null;
   height: number | null;
   config: WorkflowCardConfig;
-  output_case_ids: string[] | { train: string[]; val: string[] } | null;
-  output_count: number | { train: number; val: number } | null;
+  // Split's parts are keyed by a stable positional handle ("part_0",
+  // "part_1", ...), not a fixed train/val shape.
+  output_case_ids: string[] | Record<string, string[]> | null;
+  output_count: number | Record<string, number> | null;
   last_run_at: string | null;
   stale: boolean;
   annotation_progress?: { annotated: number; total: number };
+  // Split only: handle -> id of the Dataset card materialized for that part.
+  materialized_card_ids?: Record<string, string>;
+  // Annotation/Review only: id of the "materialize as dataset" child, if enabled.
+  materialized_card_id?: string | null;
+  // Dataset only: set when this card was auto-created by a Split/Annotation/Review Run.
+  materialized_from?: { card_id: string; title: string } | null;
+}
+
+export interface SplitPart {
+  name: string;
+  ratio: number;
 }
 
 export interface WorkflowEdge {

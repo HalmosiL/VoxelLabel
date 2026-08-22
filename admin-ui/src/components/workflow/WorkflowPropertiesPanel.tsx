@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { KeycloakUser } from "../../api/adminApi";
 import { CaseSummary } from "../../api/dataApi";
-import { WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
+import { SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
 import { RUNNABLE_TYPES } from "./handleRules";
 import { TASK_STATUS_STYLE } from "./statusStyle";
 
@@ -18,6 +18,7 @@ interface PanelProps {
   onDelete: (cardId: string) => void;
   onBulkDelete: () => void;
   onRun: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
   running: boolean;
 }
 
@@ -32,6 +33,7 @@ export default function WorkflowPropertiesPanel({
   onDelete,
   onBulkDelete,
   onRun,
+  onSelectCard,
   running,
 }: PanelProps) {
   if (selectedCount > 1) {
@@ -54,35 +56,53 @@ export default function WorkflowPropertiesPanel({
 
   return (
     <aside className="flex w-80 flex-shrink-0 flex-col gap-4 overflow-y-auto border-l border-gray-200/70 bg-white/90 p-4">
-      <Header card={card} onClose={onClose} onPatch={onPatch} onDelete={onDelete} />
+      {/* Keyed by card.id so every field component below fully remounts
+          (resetting its local useState buffer) when the selection moves
+          to a different card of the same type -- otherwise React reuses
+          the same instance and text fields would keep showing the
+          previously-selected card's stale value. */}
+      <div key={card.id} className="contents">
+        <Header card={card} onClose={onClose} onPatch={onPatch} onDelete={onDelete} />
 
-      {card.type === "dataset" && <DatasetFields card={card} cases={cases} onPatch={onPatch} />}
+        {card.type === "dataset" && <DatasetFields card={card} cases={cases} onPatch={onPatch} />}
 
-      {card.type === "split" && (
-        <SplitFields card={card} studyId={studyId} cases={cases} onPatch={onPatch} onRun={onRun} running={running} />
-      )}
+        {card.type === "split" && (
+          <SplitFields
+            card={card}
+            studyId={studyId}
+            cases={cases}
+            onPatch={onPatch}
+            onRun={onRun}
+            onSelectCard={onSelectCard}
+            running={running}
+          />
+        )}
 
-      {card.type === "filter" && (
-        <FilterFields card={card} studyId={studyId} cases={cases} onPatch={onPatch} onRun={onRun} running={running} />
-      )}
+        {card.type === "filter" && (
+          <FilterFields card={card} studyId={studyId} cases={cases} onPatch={onPatch} onRun={onRun} running={running} />
+        )}
 
-      {card.type === "union" && <UnionFields card={card} studyId={studyId} cases={cases} onRun={onRun} running={running} />}
+        {card.type === "union" && (
+          <UnionFields card={card} studyId={studyId} cases={cases} onRun={onRun} running={running} />
+        )}
 
-      {(card.type === "annotation" || card.type === "review") && (
-        <TaskFields
-          card={card}
-          studyId={studyId}
-          cases={cases}
-          keycloakUsers={keycloakUsers}
-          onPatch={onPatch}
-          onRun={onRun}
-          running={running}
-        />
-      )}
+        {(card.type === "annotation" || card.type === "review") && (
+          <TaskFields
+            card={card}
+            studyId={studyId}
+            cases={cases}
+            keycloakUsers={keycloakUsers}
+            onPatch={onPatch}
+            onRun={onRun}
+            onSelectCard={onSelectCard}
+            running={running}
+          />
+        )}
 
-      {card.type === "note" && <NoteFields card={card} onPatch={onPatch} />}
+        {card.type === "note" && <NoteFields card={card} onPatch={onPatch} />}
 
-      {card.type === "milestone" && <MilestoneFields card={card} onPatch={onPatch} />}
+        {card.type === "milestone" && <MilestoneFields card={card} onPatch={onPatch} />}
+      </div>
     </aside>
   );
 }
@@ -238,12 +258,18 @@ function DatasetFields({
   );
 }
 
+const DEFAULT_SPLIT_PARTS: SplitPart[] = [
+  { name: "Part 1", ratio: 0.5 },
+  { name: "Part 2", ratio: 0.5 },
+];
+
 function SplitFields({
   card,
   studyId,
   cases,
   onPatch,
   onRun,
+  onSelectCard,
   running,
 }: {
   card: WorkflowCard;
@@ -251,37 +277,93 @@ function SplitFields({
   cases: CaseSummary[];
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
   onRun: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
   running: boolean;
 }) {
-  const [ratio, setRatio] = useState(String((card.config.ratio as number) ?? 0.8));
-  const counts = card.output_count as { train: number; val: number } | null;
+  const [parts, setParts] = useState<SplitPart[]>((card.config.parts as SplitPart[] | undefined) ?? DEFAULT_SPLIT_PARTS);
+  const counts = card.output_count as Record<string, number> | null;
+  const outputIds = card.output_case_ids as Record<string, string[]> | null;
+  const materializedIds = card.materialized_card_ids ?? {};
 
-  function handleBlur() {
-    const parsed = Number(ratio);
-    if (!Number.isNaN(parsed) && parsed > 0 && parsed < 1) {
-      onPatch(card.id, { config: { ...card.config, ratio: parsed } });
-    }
+  function commit(next: SplitPart[]) {
+    setParts(next);
+    onPatch(card.id, { config: { ...card.config, parts: next } });
+  }
+
+  function updatePart(index: number, patch: Partial<SplitPart>) {
+    setParts((prev) => prev.map((p, i) => (i === index ? { ...p, ...patch } : p)));
+  }
+
+  function addPart() {
+    commit([...parts, { name: `Part ${parts.length + 1}`, ratio: 0 }]);
+  }
+
+  function removePart(index: number) {
+    if (parts.length <= 2) return;
+    commit(parts.filter((_, i) => i !== index));
   }
 
   return (
     <div className="flex flex-col gap-3">
-      <label className="field">
-        <span className="label">Train ratio</span>
-        <input className="input" type="number" min="0.01" max="0.99" step="0.05" value={ratio} onChange={(e) => setRatio(e.target.value)} onBlur={handleBlur} />
-      </label>
+      <div className="flex flex-col gap-2">
+        <span className="label">Parts</span>
+        {parts.map((part, index) => (
+          <div key={index} className="flex items-center gap-1.5">
+            <input
+              className="input min-w-0 flex-1"
+              value={part.name}
+              onChange={(e) => updatePart(index, { name: e.target.value })}
+              onBlur={() => commit(parts)}
+            />
+            <input
+              className="input w-16 flex-shrink-0"
+              type="number"
+              min="0"
+              step="0.05"
+              value={part.ratio}
+              onChange={(e) => updatePart(index, { ratio: Number(e.target.value) })}
+              onBlur={() => commit(parts)}
+            />
+            <button
+              onClick={() => removePart(index)}
+              disabled={parts.length <= 2}
+              className="flex-shrink-0 text-gray-400 hover:text-red-600 disabled:opacity-30"
+              title="Remove part"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <button onClick={addPart} className="btn-secondary btn-sm self-start">
+          + Add part
+        </button>
+        <p className="hint">Ratios don't need to sum to 1 -- they're normalized automatically.</p>
+      </div>
       <RunButton card={card} onRun={onRun} running={running} label="Run split" />
       <LastRun card={card} />
       <StaleBadge card={card} />
-      {counts && (
+      {counts && outputIds && (
         <div className="flex flex-col gap-2">
-          <div>
-            <p className="text-xs font-medium text-gray-700">Train -- {counts.train}</p>
-            <CaseLinks ids={(card.output_case_ids as { train: string[] })?.train ?? []} studyId={studyId} cases={cases} />
-          </div>
-          <div>
-            <p className="text-xs font-medium text-gray-700">Val -- {counts.val}</p>
-            <CaseLinks ids={(card.output_case_ids as { val: string[] })?.val ?? []} studyId={studyId} cases={cases} />
-          </div>
+          {parts.map((part, index) => {
+            const handle = `part_${index}`;
+            const materializedId = materializedIds[handle];
+            return (
+              <div key={handle}>
+                <p className="text-xs font-medium text-gray-700">
+                  {part.name || `Part ${index + 1}`} -- {counts[handle] ?? 0}
+                </p>
+                <CaseLinks ids={outputIds[handle] ?? []} studyId={studyId} cases={cases} />
+                {materializedId && (
+                  <button
+                    onClick={() => onSelectCard(materializedId)}
+                    className="mt-0.5 text-xs font-medium text-brand-600 hover:text-brand-700"
+                  >
+                    → Open dataset card
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -364,6 +446,7 @@ function TaskFields({
   keycloakUsers,
   onPatch,
   onRun,
+  onSelectCard,
   running,
 }: {
   card: WorkflowCard;
@@ -372,10 +455,12 @@ function TaskFields({
   keycloakUsers: KeycloakUser[];
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
   onRun: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
   running: boolean;
 }) {
   const assignedUserId = (card.config.assigned_user_id as string | null) ?? "";
   const status = (card.config.status as string) ?? "todo";
+  const materializeDataset = Boolean(card.config.materialize_dataset);
   const ids = (card.output_case_ids as string[] | null) ?? [];
   const progress = card.annotation_progress;
 
@@ -406,6 +491,14 @@ function TaskFields({
           ))}
         </select>
       </label>
+      <label className="flex items-center gap-2 text-xs text-gray-700">
+        <input
+          type="checkbox"
+          checked={materializeDataset}
+          onChange={(e) => onPatch(card.id, { config: { ...card.config, materialize_dataset: e.target.checked } })}
+        />
+        Also create/update an Annotated Dataset card on Run
+      </label>
       <RunButton card={card} onRun={onRun} running={running} label="Refresh from upstream" />
       <LastRun card={card} />
       <StaleBadge card={card} />
@@ -415,6 +508,14 @@ function TaskFields({
         </p>
       )}
       {card.output_case_ids && <CaseLinks ids={ids} studyId={studyId} cases={cases} />}
+      {card.materialized_card_id && (
+        <button
+          onClick={() => onSelectCard(card.materialized_card_id!)}
+          className="self-start text-xs font-medium text-brand-600 hover:text-brand-700"
+        >
+          → Open annotated dataset card
+        </button>
+      )}
     </div>
   );
 }
