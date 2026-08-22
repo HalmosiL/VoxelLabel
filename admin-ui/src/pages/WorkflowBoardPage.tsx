@@ -188,10 +188,16 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     history.record(nodes, realEdges);
   }
 
-  function handleNodeDragStop(_event: unknown, node: CardNode) {
-    updateWorkflowCard(node.id, { position_x: node.position.x, position_y: node.position.y }).catch((err) =>
-      setError(String(err))
-    );
+  function handleNodeDragStop(_event: unknown, _node: CardNode, draggedNodes: CardNode[]) {
+    // draggedNodes is every node that moved -- when several cards are
+    // multi-selected, dragging any one of them (Miro-style) moves the
+    // whole group, so every member's new position needs persisting, not
+    // just the one the pointer happened to grab.
+    Promise.all(
+      draggedNodes.map((node) =>
+        updateWorkflowCard(node.id, { position_x: node.position.x, position_y: node.position.y })
+      )
+    ).catch((err) => setError(String(err)));
   }
 
   function handleConnect(connection: Connection) {
@@ -419,6 +425,11 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
             deleteKeyCode={["Backspace", "Delete"]}
+            // Miro/Figma-style: plain left-drag on empty canvas draws a
+            // selection box (multi-select); panning moves to middle/right-
+            // click-drag instead of the default left-drag-to-pan.
+            selectionOnDrag
+            panOnDrag={[1, 2]}
             fitView
           >
             <Background variant={BackgroundVariant.Dots} gap={16} />
