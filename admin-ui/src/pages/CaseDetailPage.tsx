@@ -22,6 +22,7 @@ import {
   listInstances,
 } from "../api/dataApi";
 import { uploadDicom } from "../api/ingestionApi";
+import { ANNOTATOR_UI_URL } from "../config";
 import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
 import ImagingStudyModal from "../components/ImagingStudyModal";
@@ -51,7 +52,7 @@ export default function CaseDetailPage() {
       <CaseInfoCard caseInfo={caseInfo} onEdit={() => setEditModalOpen(true)} />
       <CommentBox caseId={caseId} initialComment={caseInfo.comment} onSaved={refreshCase} />
       <ImagingStudiesSection caseId={caseId} />
-      <SeriesSection caseId={caseId} />
+      <SeriesSection caseId={caseId} studyId={caseInfo.study_id} />
       <DocumentsSection caseId={caseId} />
 
       {editModalOpen && (
@@ -291,7 +292,7 @@ function ImagingStudiesSection({ caseId }: { caseId: string }) {
   );
 }
 
-function SeriesSection({ caseId }: { caseId: string }) {
+function SeriesSection({ caseId, studyId }: { caseId: string; studyId: string }) {
   const [series, setSeries] = useState<CaseSeries[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [openSeriesId, setOpenSeriesId] = useState<string | null>(null);
@@ -312,13 +313,23 @@ function SeriesSection({ caseId }: { caseId: string }) {
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {series.map((s) => (
-            <button key={s.id} onClick={() => setOpenSeriesId(s.id)} className="text-left">
-              <Thumbnail url={s.thumbnail_url} label={s.series_description ?? undefined} />
-              <p className="mt-1.5 truncate text-xs font-medium text-gray-700">
-                {s.series_description ?? s.series_instance_uid}
-              </p>
-              <p className="truncate text-xs text-gray-400">{s.imaging_study_description}</p>
-            </button>
+            <div key={s.id}>
+              <button onClick={() => setOpenSeriesId(s.id)} className="w-full text-left">
+                <Thumbnail url={s.thumbnail_url} label={s.series_description ?? undefined} />
+                <p className="mt-1.5 truncate text-xs font-medium text-gray-700">
+                  {s.series_description ?? s.series_instance_uid}
+                </p>
+                <p className="truncate text-xs text-gray-400">{s.imaging_study_description}</p>
+              </button>
+              <a
+                href={`${ANNOTATOR_UI_URL}/viewer/series/${s.id}?studyId=${studyId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-secondary btn-sm mt-1.5 block w-full text-center"
+              >
+                Open in Viewer
+              </a>
+            </div>
           ))}
         </div>
       )}
@@ -327,6 +338,7 @@ function SeriesSection({ caseId }: { caseId: string }) {
         <SeriesInstancesModal
           seriesId={openSeriesId}
           series={series.find((s) => s.id === openSeriesId) ?? null}
+          studyId={studyId}
           onClose={() => setOpenSeriesId(null)}
           onChanged={() => {
             setOpenSeriesId(null);
@@ -341,11 +353,13 @@ function SeriesSection({ caseId }: { caseId: string }) {
 function SeriesInstancesModal({
   seriesId,
   series,
+  studyId,
   onClose,
   onChanged,
 }: {
   seriesId: string;
   series: CaseSeries | null;
+  studyId: string;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -414,7 +428,15 @@ function SeriesInstancesModal({
           ))}
         </div>
 
-        <div className="flex justify-end border-t border-gray-100 pt-4">
+        <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
+          <a
+            href={`${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-secondary btn-sm"
+          >
+            Open in Viewer
+          </a>
           <button onClick={handleDelete} className="btn-danger btn-sm">
             Delete series
           </button>
