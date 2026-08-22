@@ -11,7 +11,11 @@ export interface HandleRule {
 }
 
 export const HANDLE_RULES: Record<WorkflowCardType, HandleRule> = {
-  dataset: { hasInput: false, outputHandles: ["output"] },
+  // A Dataset can optionally take one incoming edge: connecting something
+  // into it and running it snapshots that upstream result as this card's
+  // own manual case list (a user-placed, general version of Split/
+  // Annotation/Review's automatic materialize).
+  dataset: { hasInput: true, outputHandles: ["output"] },
   // Split has no graph output of its own: its result is expressed as
   // materialized Dataset cards (auto-created/updated on Run), not an edge.
   split: { hasInput: true, outputHandles: [] },
@@ -35,4 +39,4 @@ export function isValidConnection(
   return true;
 }
 
-export const RUNNABLE_TYPES: WorkflowCardType[] = ["split", "filter", "union", "annotation", "review"];
+export const RUNNABLE_TYPES: WorkflowCardType[] = ["dataset", "split", "filter", "union", "annotation", "review"];

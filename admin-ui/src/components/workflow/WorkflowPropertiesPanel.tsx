@@ -13,6 +13,7 @@ interface PanelProps {
   cases: CaseSummary[];
   keycloakUsers: KeycloakUser[];
   studyId: string;
+  hasIncomingEdge: boolean;
   onClose: () => void;
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
   onDelete: (cardId: string) => void;
@@ -28,6 +29,7 @@ export default function WorkflowPropertiesPanel({
   cases,
   keycloakUsers,
   studyId,
+  hasIncomingEdge,
   onClose,
   onPatch,
   onDelete,
@@ -64,7 +66,16 @@ export default function WorkflowPropertiesPanel({
       <div key={card.id} className="contents">
         <Header card={card} onClose={onClose} onPatch={onPatch} onDelete={onDelete} />
 
-        {card.type === "dataset" && <DatasetFields card={card} cases={cases} onPatch={onPatch} />}
+        {card.type === "dataset" && (
+          <DatasetFields
+            card={card}
+            cases={cases}
+            onPatch={onPatch}
+            onRun={onRun}
+            running={running}
+            hasIncomingEdge={hasIncomingEdge}
+          />
+        )}
 
         {card.type === "split" && (
           <SplitFields
@@ -198,10 +209,16 @@ function DatasetFields({
   card,
   cases,
   onPatch,
+  onRun,
+  running,
+  hasIncomingEdge,
 }: {
   card: WorkflowCard;
   cases: CaseSummary[];
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+  onRun: (cardId: string) => void;
+  running: boolean;
+  hasIncomingEdge: boolean;
 }) {
   const mode = (card.config.mode as string) ?? "all_cases";
   const manualIds = new Set((card.config.case_ids as string[] | undefined) ?? []);
@@ -225,6 +242,16 @@ function DatasetFields({
 
   return (
     <div className="flex flex-col gap-3">
+      {hasIncomingEdge && (
+        <>
+          <p className="hint">
+            Something is connected into this card -- Run saves its current result as this dataset's case list.
+          </p>
+          <RunButton card={card} onRun={onRun} running={running} label="Save from connection" />
+          <LastRun card={card} />
+          <StaleBadge card={card} />
+        </>
+      )}
       <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
         <button
           onClick={() => setMode("all_cases")}

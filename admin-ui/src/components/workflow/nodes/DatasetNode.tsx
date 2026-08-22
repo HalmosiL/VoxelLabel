@@ -18,11 +18,22 @@ function DatasetNode({ data, selected }: NodeProps<CardNode>) {
         <p className="mt-1 truncate text-xs text-brand-500">from: {card.materialized_from.title}</p>
       )}
       <Handle type="source" position={Position.Right} id="output" />
+      {/* Real, user-connectable input: connect anything into a Dataset
+          card and Run it to snapshot that upstream result as this card's
+          own manual case list. */}
+      <Handle type="target" position={Position.Left} id="input" />
       {/* Non-interactive anchor for the (non-deletable) connector line
-          from whichever card materialized this Dataset -- a materialized
-          Dataset still has no real, user-connectable input. */}
+          from whichever card auto-materialized this Dataset -- separate
+          from the real "input" handle above so both can coexist. */}
       {card.materialized_from && (
-        <Handle type="target" position={Position.Left} id="materialize" isConnectable={false} className="!bg-gray-300" />
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="materialize"
+          isConnectable={false}
+          className="!bg-gray-300"
+          style={{ top: "70%" }}
+        />
       )}
     </WorkflowNodeShell>
   );

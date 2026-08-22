@@ -47,8 +47,12 @@ _WRITE_ROLES = ["data_manager", "admin"]
 # Split has no output handle of its own: its result is expressed entirely
 # as materialized Dataset cards (see run_workflow_card), not a graph edge.
 _NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
-_NO_INPUT_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
-_NO_RUN_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
+# Dataset CAN take an incoming edge -- connecting something into it and
+# running it snapshots that upstream result as this Dataset's manual case
+# list (a user-placed, general version of Split/Annotation/Review's
+# automatic "materialize" -- see the DATASET branch in run_workflow_card).
+_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
+_NO_RUN_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
 _MATERIALIZED_DEFAULT_WIDTH = 200.0
 _MATERIALIZED_DEFAULT_HEIGHT = 90.0
 
@@ -485,7 +489,17 @@ def run_workflow_card(
     if card.type in _NO_RUN_TYPES:
         raise HTTPException(status_code=422, detail=f"Nothing to run for a {card.type.value} card")
 
-    if card.type == WorkflowCardType.SPLIT:
+    if card.type == WorkflowCardType.DATASET:
+        # A user-placed, general version of Split/Annotation/Review's
+        # automatic "materialize": connect anything into a Dataset card
+        # and Run snapshots that upstream result as this card's own
+        # manual case list.
+        edge = _single_incoming_edge(db, card)
+        source = _card_or_404(db, edge.source_card_id)
+        case_ids = sorted(_resolve_output(db, source, set()))
+        card.config = {**card.config, "mode": "manual", "case_ids": case_ids}
+
+    elif card.type == WorkflowCardType.SPLIT:
         edge = _single_incoming_edge(db, card)
         source = _card_or_404(db, edge.source_card_id)
         input_ids = _resolve_output(db, source, set())

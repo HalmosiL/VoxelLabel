@@ -373,6 +373,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   const selectedNodes = nodes.filter((n) => n.selected);
   const selectedCard = selectedNodes.length === 1 ? selectedNodes[0].data.card : null;
+  const hasIncomingEdge = selectedCard ? realEdges.some((e) => e.target === selectedCard.id) : false;
 
   return (
     <div className="flex h-screen flex-col">
@@ -444,6 +445,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           cases={cases}
           keycloakUsers={keycloakUsers}
           studyId={studyId}
+          hasIncomingEdge={hasIncomingEdge}
           onClose={() => setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))}
           onPatch={handlePatch}
           onDelete={handleDeleteCard}
