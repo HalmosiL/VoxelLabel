@@ -77,6 +77,12 @@ class WorkflowCardType(str, enum.Enum):
     UNION = "union"
     NOTE = "note"
     MILESTONE = "milestone"
+    # Pure configuration, never part of the case-flow graph: connects to
+    # one Annotation/Review card (via the "surface_config" edge handle,
+    # not the ordinary data "input") to mandatorily restrict which
+    # ct-annotator tools/panes/3D are available while working that job.
+    # See app/api/workflow.py's get_surface_config.
+    SURFACE = "surface"
 
 
 class Study(Base):

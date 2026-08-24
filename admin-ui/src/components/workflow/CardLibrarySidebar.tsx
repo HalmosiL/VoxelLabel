@@ -1,7 +1,7 @@
 import { DragEvent, ReactNode } from "react";
 
 import { WorkflowCardConfig, WorkflowCardType } from "../../api/workflowApi";
-import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, PencilIcon } from "../icons";
+import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, MonitorIcon, PencilIcon } from "../icons";
 
 export interface CardTemplate {
   type: WorkflowCardType;
@@ -82,6 +82,22 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         icon: <FunnelIcon className="h-4 w-4" />,
         defaultTitle: "Filter",
         defaultConfig: { criterion_type: "tag", tag: "" },
+        defaultWidth: 200,
+        defaultHeight: 90,
+      },
+      {
+        type: "surface",
+        label: "Surface",
+        icon: <MonitorIcon className="h-4 w-4" />,
+        defaultTitle: "Surface",
+        // Permissive by default -- connect it to an Annotation/Review card
+        // and uncheck things to restrict; an unconnected Annotation/Review
+        // card behaves as if every tool/pane/3D were enabled regardless.
+        defaultConfig: {
+          tools: ["paint", "erase", "fill", "polygon", "auto", "histogram"],
+          panes: ["sagittal", "coronal", "axial"],
+          show_3d: true,
+        },
         defaultWidth: 200,
         defaultHeight: 90,
       },

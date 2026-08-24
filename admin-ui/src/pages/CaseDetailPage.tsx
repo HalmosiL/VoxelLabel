@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 import {
   CaseFormFields,
@@ -31,8 +31,18 @@ import SectionHeader from "../components/SectionHeader";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon } from "../components/icons";
 
+/** Appends `&jobId=<id>` when this Case page was reached via a My Jobs
+ * link -- lets ct-annotator fetch and enforce that job's Surface-card
+ * restriction. Absent (a plain visit) means an unrestricted viewer. */
+function viewerUrl(seriesId: string, studyId: string, jobId: string | null): string {
+  const url = `${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}`;
+  return jobId ? `${url}&jobId=${jobId}` : url;
+}
+
 export default function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
+  const [searchParams] = useSearchParams();
+  const jobId = searchParams.get("jobId");
   const [caseInfo, setCaseInfo] = useState<CaseSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -52,7 +62,7 @@ export default function CaseDetailPage() {
       <CaseInfoCard caseInfo={caseInfo} onEdit={() => setEditModalOpen(true)} />
       <CommentBox caseId={caseId} initialComment={caseInfo.comment} onSaved={refreshCase} />
       <ImagingStudiesSection caseId={caseId} />
-      <SeriesSection caseId={caseId} studyId={caseInfo.study_id} />
+      <SeriesSection caseId={caseId} studyId={caseInfo.study_id} jobId={jobId} />
       <DocumentsSection caseId={caseId} />
 
       {editModalOpen && (
@@ -292,7 +302,7 @@ function ImagingStudiesSection({ caseId }: { caseId: string }) {
   );
 }
 
-function SeriesSection({ caseId, studyId }: { caseId: string; studyId: string }) {
+function SeriesSection({ caseId, studyId, jobId }: { caseId: string; studyId: string; jobId: string | null }) {
   const [series, setSeries] = useState<CaseSeries[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [openSeriesId, setOpenSeriesId] = useState<string | null>(null);
@@ -322,7 +332,7 @@ function SeriesSection({ caseId, studyId }: { caseId: string; studyId: string })
                 <p className="truncate text-xs text-gray-400">{s.imaging_study_description}</p>
               </button>
               <a
-                href={`${ANNOTATOR_UI_URL}/viewer/series/${s.id}?studyId=${studyId}`}
+                href={viewerUrl(s.id, studyId, jobId)}
                 target="_blank"
                 rel="noreferrer"
                 className="btn-secondary btn-sm mt-1.5 block w-full text-center"
@@ -339,6 +349,7 @@ function SeriesSection({ caseId, studyId }: { caseId: string; studyId: string })
           seriesId={openSeriesId}
           series={series.find((s) => s.id === openSeriesId) ?? null}
           studyId={studyId}
+          jobId={jobId}
           onClose={() => setOpenSeriesId(null)}
           onChanged={() => {
             setOpenSeriesId(null);
@@ -354,12 +365,14 @@ function SeriesInstancesModal({
   seriesId,
   series,
   studyId,
+  jobId,
   onClose,
   onChanged,
 }: {
   seriesId: string;
   series: CaseSeries | null;
   studyId: string;
+  jobId: string | null;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -429,12 +442,7 @@ function SeriesInstancesModal({
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
-          <a
-            href={`${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}`}
-            target="_blank"
-            rel="noreferrer"
-            className="btn-secondary btn-sm"
-          >
+          <a href={viewerUrl(seriesId, studyId, jobId)} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
             Open in Viewer
           </a>
           <button onClick={handleDelete} className="btn-danger btn-sm">

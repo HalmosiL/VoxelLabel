@@ -6,7 +6,7 @@ import { WorkflowCardType } from "../../api/workflowApi";
  * apart. Mirrors the validation admin-service's create_workflow_edge
  * enforces server-side. */
 export interface HandleRule {
-  hasInput: boolean;
+  inputHandles: string[];
   outputHandles: string[];
 }
 
@@ -15,27 +15,43 @@ export const HANDLE_RULES: Record<WorkflowCardType, HandleRule> = {
   // into it and running it snapshots that upstream result as this card's
   // own manual case list (a user-placed, general version of Split/
   // Annotation/Review's automatic materialize).
-  dataset: { hasInput: true, outputHandles: ["output"] },
+  dataset: { inputHandles: ["input"], outputHandles: ["output"] },
   // Split has no graph output of its own: its result is expressed as
   // materialized Dataset cards (auto-created/updated on Run), not an edge.
-  split: { hasInput: true, outputHandles: [] },
-  filter: { hasInput: true, outputHandles: ["output"] },
-  union: { hasInput: true, outputHandles: ["output"] },
-  annotation: { hasInput: true, outputHandles: ["output"] },
-  review: { hasInput: true, outputHandles: ["output"] },
-  note: { hasInput: false, outputHandles: [] },
-  milestone: { hasInput: false, outputHandles: [] },
+  split: { inputHandles: ["input"], outputHandles: [] },
+  filter: { inputHandles: ["input"], outputHandles: ["output"] },
+  union: { inputHandles: ["input"], outputHandles: ["output"] },
+  // "surface_config" is a second, independent input -- a Surface card's
+  // mandatory tool/pane/3D restriction for this job. It's unrelated to
+  // the ordinary data "input" handle (source flowing in) and the two
+  // never mix: a "surface_config" edge can only pair with another
+  // "surface_config" handle, never with "output"/"input".
+  annotation: { inputHandles: ["input", "surface_config"], outputHandles: ["output"] },
+  review: { inputHandles: ["input", "surface_config"], outputHandles: ["output"] },
+  note: { inputHandles: [], outputHandles: [] },
+  milestone: { inputHandles: [], outputHandles: [] },
+  // Pure configuration, never part of the case-flow graph -- no data
+  // input of its own, and its only output is the "surface_config"
+  // channel into an Annotation/Review card.
+  surface: { inputHandles: [], outputHandles: ["surface_config"] },
 };
 
 export function isValidConnection(
   sourceType: WorkflowCardType,
   sourceHandle: string | null | undefined,
-  targetType: WorkflowCardType
+  targetType: WorkflowCardType,
+  targetHandle: string | null | undefined
 ): boolean {
   const sourceRule = HANDLE_RULES[sourceType];
   const targetRule = HANDLE_RULES[targetType];
-  if (!targetRule.hasInput) return false;
-  if (!sourceHandle || !sourceRule.outputHandles.includes(sourceHandle)) return false;
+  const resolvedSourceHandle = sourceHandle ?? "output";
+  const resolvedTargetHandle = targetHandle ?? "input";
+  // A handle only ever pairs with a same-named handle on the other end
+  // ("output" <-> "input", "surface_config" <-> "surface_config") --
+  // there's no cross-channel connection today.
+  if (resolvedSourceHandle !== resolvedTargetHandle) return false;
+  if (!sourceRule.outputHandles.includes(resolvedSourceHandle)) return false;
+  if (!targetRule.inputHandles.includes(resolvedTargetHandle)) return false;
   return true;
 }
 

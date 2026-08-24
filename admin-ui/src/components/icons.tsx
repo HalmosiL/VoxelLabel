@@ -100,3 +100,15 @@ export function FlagIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export function MonitorIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M2 5a2 2 0 012-2h12a2 2 0 012 2v7a2 2 0 01-2 2h-4.5l.5 2h1.5a1 1 0 110 2h-7a1 1 0 110-2h1.5l.5-2H4a2 2 0 01-2-2V5zm2 0h12v7H4V5z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}

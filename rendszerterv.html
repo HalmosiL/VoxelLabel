@@ -1,0 +1,589 @@
+<title>CT-Platform Rendszerterv</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Literata:ital,opsz,wght@0,18..36,400;0,18..36,500;0,18..36,600;1,18..36,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #eef1ef;
+    --surface: #ffffff;
+    --surface-2: #e6ebe8;
+    --text: #16211f;
+    --text-muted: #4d5d59;
+    --text-faint: #7c8b87;
+    --border: #d2dad6;
+    --border-soft: #e0e6e3;
+    --accent: #1f6f6b;
+    --accent-strong: #144e4b;
+    --accent-tint: #dceeec;
+    --warm: #c07620;
+    --warm-tint: #f7e7d2;
+    --code-bg: #e7ece9;
+    --shadow: 0 1px 2px rgba(20, 40, 38, 0.06), 0 8px 24px rgba(20, 40, 38, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101513;
+      --surface: #161c1a;
+      --surface-2: #1d2422;
+      --text: #e6ece9;
+      --text-muted: #a3b3ae;
+      --text-faint: #7d8d88;
+      --border: #2b3532;
+      --border-soft: #232b28;
+      --accent: #57bdb2;
+      --accent-strong: #8bd4cb;
+      --accent-tint: #16302d;
+      --warm: #e2a352;
+      --warm-tint: #332a19;
+      --code-bg: #1c2422;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101513;
+    --surface: #161c1a;
+    --surface-2: #1d2422;
+    --text: #e6ece9;
+    --text-muted: #a3b3ae;
+    --text-faint: #7d8d88;
+    --border: #2b3532;
+    --border-soft: #232b28;
+    --accent: #57bdb2;
+    --accent-strong: #8bd4cb;
+    --accent-tint: #16302d;
+    --warm: #e2a352;
+    --warm-tint: #332a19;
+    --code-bg: #1c2422;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Literata", Georgia, "Noto Serif", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-tint); color: var(--accent-strong); }
+
+  h1, h2, h3, .eyebrow, .toc-title, .logo {
+    font-family: "Archivo", "Segoe UI", sans-serif;
+    text-wrap: balance;
+  }
+  code, .chip, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+
+  a { color: var(--accent-strong); }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  @media (max-width: 880px) {
+    .shell { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- Header / hero ---------- */
+  .hero {
+    grid-column: 1 / -1;
+    padding: 56px 32px 40px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .eyebrow {
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .hero h1 {
+    margin: 0;
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .hero p {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--text-muted);
+    font-size: 18px;
+  }
+  .hero .repos {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+  .repo-pill {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+  }
+  .repo-pill b { color: var(--text); font-weight: 600; }
+
+  /* ---------- TOC ---------- */
+  nav.toc {
+    padding: 32px 24px;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+  @media (max-width: 880px) {
+    nav.toc { position: static; max-height: none; border-right: none; border-bottom: 1px solid var(--border); }
+  }
+  .toc-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 14px;
+  }
+  nav.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    counter-reset: toc;
+  }
+  nav.toc li { counter-increment: toc; }
+  nav.toc a {
+    display: block;
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-family: "Archivo", sans-serif;
+  }
+  nav.toc a:hover { background: var(--surface-2); color: var(--text); }
+  nav.toc .sub { padding-left: 15px; font-size: 13.5px; }
+
+  /* ---------- Main content ---------- */
+  main { padding: 8px 32px 100px; min-width: 0; }
+  section.block { max-width: 68ch; margin: 0 auto; padding-top: 54px; }
+  section.block + section.block { border-top: 1px solid var(--border-soft); }
+
+  .section-kicker {
+    font-family: "Archivo", sans-serif;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 8px;
+  }
+  h2 {
+    font-size: 27px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    color: var(--text);
+  }
+  h2 .repo-tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent-strong);
+    background: var(--accent-tint);
+    padding: 2px 8px;
+    border-radius: 5px;
+    vertical-align: middle;
+    margin-left: 10px;
+  }
+  .deck {
+    color: var(--text-muted);
+    font-size: 16.5px;
+    margin: 0 0 28px;
+    max-width: 58ch;
+  }
+  h3 {
+    font-size: 18.5px;
+    font-weight: 600;
+    margin: 32px 0 10px;
+    color: var(--text);
+  }
+  p { margin: 0 0 16px; }
+  p.tight { margin-bottom: 8px; }
+  ul, ol.plain { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  strong { font-weight: 600; color: var(--text); }
+  em { font-style: italic; }
+
+  .chip {
+    display: inline-block;
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 0.87em;
+    color: var(--accent-strong);
+    white-space: nowrap;
+  }
+
+  .callout {
+    border-left: 3px solid var(--warm);
+    background: var(--warm-tint);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 20px 0;
+    font-size: 15.5px;
+  }
+  .callout .callout-label {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--warm);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .fieldgrid {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 18px 0 24px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .fieldgrid .row {
+    display: grid;
+    grid-template-columns: minmax(120px, 34%) 1fr;
+    gap: 12px;
+    padding: 10px 16px;
+    font-size: 14.5px;
+  }
+  .fieldgrid .row + .row { border-top: 1px solid var(--border-soft); }
+  .fieldgrid .row dt { font-family: "IBM Plex Mono", monospace; color: var(--accent-strong); font-size: 13.5px; }
+  .fieldgrid .row dd { margin: 0; color: var(--text-muted); }
+  .fieldgrid .head {
+    background: var(--surface-2);
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 9px 16px;
+  }
+
+  .cardtype-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 10px;
+    margin: 20px 0 28px;
+  }
+  .cardtype {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 13px 14px;
+    box-shadow: var(--shadow);
+  }
+  .cardtype .name {
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 600;
+    font-size: 13.5px;
+    color: var(--accent-strong);
+    display: block;
+    margin-bottom: 5px;
+  }
+  .cardtype .desc { font-size: 13.5px; color: var(--text-muted); line-height: 1.5; }
+  .cardtype.warm .name { color: var(--warm); }
+
+  .diagram-wrap {
+    margin: 24px 0 32px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 18px;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .diagram-wrap .cap {
+    font-family: "Archivo", sans-serif;
+    font-size: 12.5px;
+    color: var(--text-faint);
+    margin-top: 12px;
+    text-align: center;
+  }
+
+  table.compact { width: 100%; border-collapse: collapse; font-size: 14.5px; margin: 16px 0 24px; }
+  table.compact th, table.compact td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); }
+  table.compact th { font-family: "Archivo", sans-serif; font-weight: 700; font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+  table.compact td.mono { font-family: "IBM Plex Mono", monospace; color: var(--accent-strong); font-size: 13px; }
+
+  footer {
+    max-width: 68ch;
+    margin: 60px auto 0;
+    padding: 24px 32px 0;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 13.5px;
+  }
+
+  @media (max-width: 600px) {
+    .hero { padding: 40px 20px 28px; }
+    main { padding: 8px 20px 80px; }
+    .fieldgrid .row { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="shell">
+  <header class="hero">
+    <span class="eyebrow">Rendszerdokumentáció · belső architektúra</span>
+    <h1>CT-Platform &amp; ct-annotator</h1>
+    <p>
+      Két, egymást kiegészítő rendszer logikai felépítése: a <strong>CT-Platform</strong>
+      (adatkezelés, hozzáférés-szabályozás és munkafolyamat) és a hozzá kapcsolódó
+      <strong>ct-annotator</strong> (a tényleges rajzoló/megjelenítő eszköz). Ez a leírás nem a
+      technológiai rétegről szól — hanem arról, hogyan épül fel a fogalmi modell, mi történik
+      egy-egy művelet mögött, és miért úgy döntött a rendszer, ahogy.
+    </p>
+    <div class="repos">
+      <span class="repo-pill"><b>Annotator-Pipline</b> — a fő platform, 4 backend szolgáltatás + admin felület</span>
+      <span class="repo-pill"><b>ct-annotator</b> — önálló repó, a képek tényleges megnézésére/rajzolására</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <p class="toc-title">Tartalom</p>
+    <ol>
+      <li><a href="#szerepkorok">1. Study és a szerepkör-rendszer</a></li>
+      <li><a href="#case">2. A Case: a modell középpontja</a></li>
+      <li><a href="#alnevesites">3. Páciens-azonosítás és álnevesítés</a></li>
+      <li><a href="#kepalkotas">4. Képalkotási adatok befogadása</a></li>
+      <li><a href="#annotaciok">5. Annotációk, verziózás, review</a></li>
+      <li><a href="#workflow">6. Munkafolyamat tábla (Workflow board)</a>
+        <ol><li class="sub"><a href="#kartyatipusok">Kártyatípusok és futtatási logika</a></li></ol>
+      </li>
+      <li><a href="#adminui">7. Admin-ui — mit lehet csinálni</a></li>
+      <li><a href="#ctannotator">8. A ct-annotator nézegető</a>
+        <ol>
+          <li class="sub"><a href="#objektummodell">Objektum-modell: Label / Object / voxel</a></li>
+          <li class="sub"><a href="#sikok">MPR síkok, navigáció, zoom</a></li>
+          <li class="sub"><a href="#3d">3D nézet és HU-lekérdezés</a></li>
+        </ol>
+      </li>
+      <li><a href="#kapcsolat">9. A két rendszer kapcsolata</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section class="block" id="szerepkorok">
+      <p class="section-kicker">01 · Szervezeti keret</p>
+      <h2>Study és a szerepkör-rendszer <span class="repo-tag">Annotator-Pipline</span></h2>
+      <p class="deck">Minden adat pontosan egy <span class="chip">Study</span>-hoz tartozik, és a hozzáférés is study-szinten dől el — ez a rendszer legfelső szervezési egysége.</p>
+
+      <p>A <span class="chip">Study</span> egy adminisztrátor által létrehozott konténer — például egy kutatási protokoll vagy klinikai vizsgálat —, aminek van neve, opcionális leírása, borítóképe, és hozzá van rendelve egy álnevesítési profil is. <strong>Nem</strong> keverendő a DICOM-értelemben vett "imaging study"-val (lásd lentebb) — ez utóbbi a rendszerben tudatosan <span class="chip">ImagingStudy</span> néven fut, pont azért, hogy a két fogalom soha ne csússzon össze egy végpontnévben vagy egy változónévben sem.</p>
+
+      <p>A jogosultság a <span class="chip">StudyMembership</span> táblán dől el: egy adott felhasználó egy adott Study-n belül kap egy szerepkört (<span class="chip">admin</span>, <span class="chip">data_manager</span>, <span class="chip">annotator</span>, <span class="chip">reviewer</span>, <span class="chip">viewer</span>). Ez egy sor-szintű, many-to-many jellegű reláció — ugyanaz a felhasználó két különböző Study-ban két különböző szerepet tölthet be. Emellett létezik egy <em>globális</em> Keycloak realm-szerepkör (<span class="chip">admin</span>) is, ami minden study-szintű ellenőrzést megkerül — ez különbözteti meg "ez a rendszer üzemeltetője" és "ez a study egyik tagja" szerepét.</p>
+
+      <div class="callout">
+        <span class="callout-label">Logikai csapda, amit már megtaláltunk</span>
+        <p>A study-szerepkör ellenőrzése egy ideig hibásan mindig elutasított minden nem-globális-admin felhasználót, mert az adatbázisban tárolt enum-érték nagybetűs (<span class="chip">"ADMIN"</span>), az ellenőrző kód viszont kisbetűs literálokkal hasonlított össze. Mivel minden korábbi teszt a globális admin fiókkal futott, ez hónapokig észrevétlen maradt — tanulság: egy jogosultsági szabály csak annyit ér, amennyire tesztelve van a <em>nem</em>-privilegizált út is.</p>
+      </div>
+
+      <h3>Álnevesítés, konfigurálhatóan</h3>
+      <p>Egy Study-hoz opcionálisan hozzárendelhető egy <span class="chip">DeidentificationProfile</span> — ez nem egy kódba égetett DICOM-szabvány (PS3.15) profil, hanem adatbázis-sor: <span class="chip">DeidentificationRule</span> gyerek-sorok mondják meg DICOM-tagenként, hogy egy mező maradjon (<span class="chip">keep</span>), tűnjön el (<span class="chip">remove</span>), cserélődjön fix értékre (<span class="chip">replace_fixed</span>), vagy hash-elődjön (<span class="chip">hash</span>). Ez azt jelenti, hogy a megfelelőségi/adatvédelmi döntések admin felületen módosíthatók, új verzió kiadása nélkül.</p>
+    </section>
+
+    <section class="block" id="case">
+      <p class="section-kicker">02 · Adatmodell</p>
+      <h2>A Case: a modell középpontja</h2>
+      <p class="deck">Nem a Patient és nem a Study a központi egység, amihez minden adat kapcsolódik — hanem a <span class="chip">Case</span>.</p>
+
+      <p>Egy <span class="chip">Case</span> azonosítja, hogy egy adathalmaz melyik pácienshez és melyik Study-hoz tartozik (<span class="chip">study_id</span> + <span class="chip">patient_id</span> + <span class="chip">accession_number</span>), és <strong>mindkét fajta adat</strong> — a képalkotási (DICOM) és a nem-képalkotási (leletek, dokumentumok) — ehhez az egy ponthoz kapcsolódik, nem közvetlenül a Patient-hez vagy a Study-hoz. Ennek az a gyakorlati következménye, hogy "minden, ami ehhez a beteg-epizódhoz tartozik" mindig egyetlen helyen érhető el, függetlenül attól, hogy kép, dokumentum vagy annotáció-e.</p>
+
+      <p>A Case-nek saját, a rajta lógó adatoktól független összefoglaló mezői is vannak (<span class="chip">date</span>, <span class="chip">type</span>, <span class="chip">title</span>, <span class="chip">comment</span>) — ez teszi lehetővé, hogy egy Case-t meg lehessen érteni anélkül, hogy bármelyik konkrét vizsgálatot vagy dokumentumot meg kellene nyitni.</p>
+
+      <div class="fieldgrid">
+        <div class="head">Mi lóg egy Case-en</div>
+        <div class="row"><dt>ImagingStudy → Series → Instance</dt><dd>A DICOM képalkotási hierarchia — egy vizsgálat, több sorozat, minden sorozatban több szelet. Az <span class="chip">Instance</span> a legkisebb egység: egy DICOM-fájl, a pixeladat egy pointerrel mutat rá az object storage-ban (sosem kerül be a Postgres-be).</dd></div>
+        <div class="row"><dt>ClinicalDataItem</dt><dd>Bármilyen nem-képalkotási adat — lelet, beutaló, egyéb dokumentum. Szabad szöveges <span class="chip">type</span> mezővel (nem enum), mert a lehetséges fajták köre nyitott és bővülő.</dd></div>
+        <div class="row"><dt>ClinicalDataItem → Tag</dt><dd>Szabad szöveges címke, kifejezetten <em>dokumentum-specifikus</em>, nem egy megosztott, újrafelhasználható szótár — tudatos döntés. A Case-nek nincs saját címkéje, csak a rajta lógó dokumentumok címkéinek uniója (<span class="chip">case_tags()</span> függvény — ugyanaz a logika szolgálja ki a Case böngészést és a Workflow board Filter kártyáját is).</dd></div>
+        <div class="row"><dt>ClinicalDataItem → Consent</dt><dd>Hozzájárulás típus + granted/revoked állapot — szándékosan egyszerű, nincs dokumentum- vagy lejárati mező (felülvizsgálható döntés, ha a jövőben szükség lenne rá).</dd></div>
+      </div>
+
+      <p>Az írás/olvasás felelőssége is a Case köré szerveződik: az <span class="chip">admin-service</span> hozza létre a Case-eket, dokumentumokat, címkéket, hozzájárulásokat; a <span class="chip">data-service</span> csak listáz/böngész — ez a szétválasztás következetesen végigvonul a teljes API-n.</p>
+    </section>
+
+    <section class="block" id="alnevesites">
+      <p class="section-kicker">03 · Azonosítás</p>
+      <h2>Páciens-azonosítás és álnevesítés</h2>
+      <p class="deck">A valós, azonosító adat és a rendszeren belül használt páciens-identitás tudatosan két külön táblában él.</p>
+
+      <p><span class="chip">Patient</span> csak egy álnevet (<span class="chip">pseudonym_id</span>) tárol — semmilyen közvetlenül azonosító adatot. A visszafejtés lehetősége egyetlen táblára van korlátozva: <span class="chip">PatientIdentityMap</span>, ami a valós külső azonosító (pl. egy kórházi MRN) hash-elt változatát köti össze a Patient-tel, és saját <span class="chip">access_restricted</span> jelzővel is figyelmeztet arra, hogy ehhez a táblához külön, szűkebb adatbázis-jogosultság kell, mint a többi szolgáltatáshoz.</p>
+
+      <p>Az azonosítás-feloldás <strong>egyszeri esemény</strong>: a Case létrehozásakor történik meg (nem minden DICOM-feltöltésnél újra), az admin-service-ben. Ez azt jelenti, hogy amikor a képalkotási adatok ténylegesen bekerülnek a rendszerbe, már csak a Case-hez (és rajta keresztül a Patient-hez) kell kapcsolódniuk — nincs ismételt névfeloldási lépés útközben.</p>
+
+      <p>Egy Case létrehozásakor a felhasználó választhat: teljesen új páciens (<span class="chip">external_patient_id</span> — hash-elve, feloldva), vagy egy már ismert, meglévő Patient újrahasználata (<span class="chip">patient_id</span> közvetlenül) — pontosan az egyik szükséges. A meglévő páciensek böngészése (<span class="chip">GET /data/patients</span>) globális admin-szerepkört igényel, mivel egy páciens több Study-ban is megjelenhet — ez már túlmutat az egy-Study-ra korlátozott jogosultsági modellen.</p>
+    </section>
+
+    <section class="block" id="kepalkotas">
+      <p class="section-kicker">04 · Befogadás</p>
+      <h2>Képalkotási adatok befogadása</h2>
+      <p class="deck">Egy DICOM-fájl feltöltésekor a rendszer automatikusan felismeri, hova tartozik — nem kell előre bejelenteni egy sorozatot.</p>
+
+      <p>A feltöltés a már létező Case-hez kötődik (<span class="chip">POST /ingestion/cases/{case_id}/upload</span>). Onnantól a hierarchia <strong>get-or-create</strong> logikával épül fel a DICOM saját azonosítói alapján: a <span class="chip">StudyInstanceUID</span> alapján megkeresi vagy létrehozza az <span class="chip">ImagingStudy</span>-t, a <span class="chip">SeriesInstanceUID</span> alapján a <span class="chip">Series</span>-t, és minden fájlhoz létrejön egy <span class="chip">Instance</span> sor a <span class="chip">SOPInstanceUID</span>-val. Ez teszi lehetővé, hogy egy sorozat szeletei tetszőleges sorrendben, akár külön kérésekben érkezzenek be, mégis egy koherens fába rendeződjenek.</p>
+
+      <p>Feldolgozás közben (aszinkron worker) minden szelethez generálódik egy kis, normalizált PNG-előnézet (<span class="chip">thumbnail_key</span>) is — ez teszi lehetővé, hogy a böngésző felületek valós képet mutassanak a teljes DICOM-fájl letöltése nélkül.</p>
+
+      <div class="callout">
+        <span class="callout-label">Ismert, valós versenyhelyzet</span>
+        <p>Ha ugyanahhoz az <em>új</em> sorozathoz sok fájl érkezik gyors egymásutánban, több worker egyszerre próbálhatja meg létrehozni ugyanazt az <span class="chip">ImagingStudy</span>/<span class="chip">Series</span> sort (SELECT-majd-INSERT mintázat, egyediségi kezelés nélkül) — ez feltöltéseket dobhat el csendben. Szekvenciális, kis késleltetéssel történő feltöltés elkerüli; párhuzamos tömeges feltöltés esetén ez még javításra vár.</p>
+      </div>
+    </section>
+
+    <section class="block" id="annotaciok">
+      <p class="section-kicker">05 · Annotáció</p>
+      <h2>Annotációk, verziózás, review</h2>
+      <p class="deck">Egy annotáció sosem módosul a helyén — minden szerkesztés egy új sor, egy lánc egy korábbi elemére mutatva.</p>
+
+      <p>Az <span class="chip">AnnotationType</span> tábla nyitottá teszi, hogy milyen fajta annotáció létezhet: minden típus saját JSON Schema-val rendelkezik, így új annotáció-fajta bevezetése egyetlen új sor beszúrása, nem kódmódosítás. Egy konkrét <span class="chip">Annotation</span> egy <span class="chip">target_type</span> (<span class="chip">instance</span> / <span class="chip">series</span> / <span class="chip">study</span> — utóbbi itt is az <em>imaging</em>-study-ra utal) + <span class="chip">target_id</span> párra mutat, tehát ugyanaz az annotáció-mechanizmus szolgál ki egy egyetlen szeletre vonatkozó dobozt és egy egész sorozatra vonatkozó 3D szegmentációt is.</p>
+
+      <p>A kis, szöveges geometria közvetlenül a <span class="chip">payload</span> JSONB mezőben él; a nagy bináris adat (pl. egy szegmentációs maszk) az object storage-ban van, a payload csak egy kulcsot tartalmaz rá — ez a minta ismétlődik a rendszer minden bináris-adat-tárolási pontján (DICOM pixeladat, thumbnail, maszk).</p>
+
+      <p><strong>Verziózás két rétegben:</strong> egyrészt annotáció-szinten, a <span class="chip">parent_version_id</span> önhivatkozó lánccal (egy szerkesztés új sort hoz létre, a régire mutatva — ez az audit-előzmény); másrészt adathalmaz-szinten, a <span class="chip">DatasetSnapshot</span> + <span class="chip">DatasetSnapshotItem</span> párossal, ami egy <em>elnevezett, változtathatatlan</em> pillanatképet rögzít — konkrét (imaging study, annotáció-verzió) párok listájaként. Ez git-commit-szerű: a snapshot sosem másolja az adatot, csak hivatkozik egy adott verzióra.</p>
+
+      <p>A review-folyamat (<span class="chip">AnnotationReview</span>) egy elbírálótól származó döntés (<span class="chip">approve</span>/<span class="chip">reject</span>) egy beküldött annotációra — ez különálló táblában van az annotációtól magától, hogy egy annotáción több felülvizsgálati kör is végigfusson anélkül, hogy az eredeti sort módosítani kellene.</p>
+    </section>
+
+    <section class="block" id="workflow">
+      <p class="section-kicker">06 · Munkaszervezés</p>
+      <h2>Munkafolyamat tábla (Workflow board)</h2>
+      <p class="deck">Egy szabad elrendezésű, kártyás-vászon nézet Study-nként — de a kártyák nem díszlet, hanem valódi, futtatható logikát hordozó objektumok.</p>
+
+      <p>Minden Study-nak pontosan egy tábla jár, tehát maga a Study a tábla hatóköre — nincs külön "board" entitás, amin keresztül kellene navigálni. A tábla két táblából épül fel: <span class="chip">WorkflowCard</span> (egy csomópont) és <span class="chip">WorkflowEdge</span> (egy irányított kapcsolat két kártya között). A kártyát törölve a rá mutató élek is automatikusan törlődnek (<span class="chip">ondelete="CASCADE"</span>) — a tábla firka-jellegű munkaterület, nincs "még van rajta adat" védelem, mint a Case vagy Study törlésénél.</p>
+
+      <h3 id="kartyatipusok">Nyolc kártyatípus, két csoportban</h3>
+      <p>A <span class="chip">Dataset</span>/<span class="chip">Split</span>/<span class="chip">Filter</span>/<span class="chip">Union</span> az adatfolyam-oldal, mindegyiknek van tényleges <em>Run</em> logikája. Az <span class="chip">Annotation</span>/<span class="chip">Review</span> is futtatható, de más értelemben — egy hozzárendelt személyt és kézzel állított státuszt hordoz, amit valós <span class="chip">Annotation</span>/<span class="chip">AnnotationReview</span> sorokkal vetnek össze. A <span class="chip">Note</span>/<span class="chip">Milestone</span> tiszta tábla-jegyzet, nincs bemenete/kimenete, sosem futtatható.</p>
+
+      <div class="cardtype-grid">
+        <div class="cardtype"><span class="name">Dataset</span><div class="desc">Egy konkrét case-lista. Vagy kézzel összeállított, vagy egy bejövő kapcsolatból "Run"-nal befagyasztott pillanatkép — ugyanez a mechanizmus hozza létre automatikusan a Split részeit és az Annotation/Review "materializált" gyerekét is.</div></div>
+        <div class="cardtype"><span class="name">Split</span><div class="desc">N tetszőleges nevű/arányú részre bont egy bemenetet, és minden részt saját, valódi Dataset kártyaként hoz létre a táblán — nem csak egy élt rajzol. Nincs saját kimeneti csatlakozója, csak a materializált gyerekein keresztül érhető el az eredmény.</div></div>
+        <div class="cardtype"><span class="name">Filter</span><div class="desc">Egy bemeneti case-halmazt szűr címke szerint (<span class="chip">criterion_type:"tag"</span> — nyitva hagyva későbbi szűrő-fajtáknak).</div></div>
+        <div class="cardtype"><span class="name">Union</span><div class="desc">Több bejövő kapcsolat case-eit egyesíti, duplikátum-mentesen, rendezve.</div></div>
+        <div class="cardtype warm"><span class="name">Annotation</span><div class="desc">Egy bemeneti case-halmazhoz rendel felelőst + státuszt; a Run csak frissíti, mely case-ek tartoznak ide egy upstream változás után — a tényleges munka a PATCH-eken keresztüli kézi státuszváltás.</div></div>
+        <div class="cardtype warm"><span class="name">Review</span><div class="desc">Ugyanaz, mint az Annotation, felülvizsgálói szerepkörben; opcionálisan csak azokat a case-eket "materializálja" Dataset-té, amelyeknek már valóban van approve/reject <span class="chip">AnnotationReview</span> sora.</div></div>
+        <div class="cardtype"><span class="name">Note</span><div class="desc">Szabad szöveges jegyzet a táblán. Nincs bemenet/kimenet, sosem futtatható.</div></div>
+        <div class="cardtype"><span class="name">Milestone</span><div class="desc">Dátumhoz köthető mérföldkő-jelölő. Szintén tiszta jegyzet, adat nélkül.</div></div>
+      </div>
+
+      <div class="diagram-wrap">
+        <pre class="mermaid">
+flowchart LR
+    DS[Dataset] -->|Run| SP[Split]
+    SP -.materializál.-> P1[Dataset: Part 1]
+    SP -.materializál.-> P2[Dataset: Part 2]
+    P1 --> FI[Filter]
+    FI --> UN[Union]
+    P2 --> UN
+    UN --> AN[Annotation]
+    AN -."materialize_dataset"-.-> MD[Dataset: annotated]
+    AN --> RV[Review]
+    RV -."materialize_dataset"-.-> MD2[Dataset: reviewed]
+        </pre>
+        <p class="cap">Folytonos nyíl = valódi WorkflowEdge · szaggatott = automatikusan létrehozott/frissített Dataset-gyerek</p>
+      </div>
+
+      <h3>Determinisztikus szétosztás, nem véletlenszerű keverés</h3>
+      <p>A Split nem shuffle-and-cut módszerrel dolgozik, hanem <strong>case-azonosítónkénti hash-eléssel</strong> (<span class="chip">sha256(seed:case_id)</span>): minden case a hash-értéke alapján, kumulatív arány-határok szerint kerül be egy részbe. Ennek a gyakorlati következménye, hogy ha az upstream bemenet később bővül új case-ekkel, egy újra-futtatás <em>sosem</em> kavarja össze a már beosztott case-eket — csak az újak kerülnek besorolásra. A seed egyszer, az első futtatáskor generálódik és a kártya konfigurációjában megmarad.</p>
+
+      <p>Minden kártya-interakció (mozgatás, összekötés, törlés) azonnali, önálló API-hívás — a tábla sosem mentődik el egyben, késleltetve. Ennek oka: ha egy Run éppen egy ilyen csoportos mentés közben futna le, csendben felülírhatná a saját, épp kiszámított eredményét.</p>
+
+      <h3>Megjelenés a Study oldalon</h3>
+      <p>A Study részletező oldala két, csak-olvasható panelt is mutat a tábla tartalmából, kizárólag a már létező tábla-lekérdezésre építve: egy összefoglaló (kártyatípusonként egy sor — pl. a Split rész-bontása, az Annotation felelőse+haladása) és egy Dataset-panel (csak a Dataset-típusú kártyák: case-szám, "honnan származik" eredet a materializáltaknak, kattintható case-lista).</p>
+    </section>
+
+    <section class="block" id="adminui">
+      <p class="section-kicker">07 · Felület</p>
+      <h2>Admin-ui — mit lehet csinálni <span class="repo-tag">Annotator-Pipline</span></h2>
+      <p class="deck">A fenti logikai modell egy sidebar-navigációs, kártyarácsos felületen keresztül érhető el.</p>
+
+      <table class="compact">
+        <tr><th>Oldal</th><th>Mit mutat / mit lehet rajta</th></tr>
+        <tr><td class="mono">/studies</td><td>Study-k kép-kártyás rácsa, létrehozás/szerkesztés/borítókép, törlés csak ha nincs rajta Case.</td></tr>
+        <tr><td class="mono">/studies/:id</td><td>Egy Study egységesített, tab nélküli oldala: tagok, Case-ek, review-sor, plusz a workflow-összefoglaló és a Dataset-panel.</td></tr>
+        <tr><td class="mono">/studies/:id/workflow</td><td>A tényleges kártyás munkafolyamat-vászon — teljes képernyős, kilóg a sidebar-navigációból.</td></tr>
+        <tr><td class="mono">/studies/:id/cases/:id</td><td>Egy Case egységesített oldala: fejléc-adatok, megjegyzés, Imaging-rács, Dokumentum-rács (címke+hozzájárulás-kezeléssel).</td></tr>
+        <tr><td class="mono">/patients</td><td>Study-független páciens-lista, kereshető álnév szerint — csak globális adminnak.</td></tr>
+        <tr><td class="mono">/patients/:id</td><td>Egy páciens minden Case-e, minden Study-ból összesítve.</td></tr>
+        <tr><td class="mono">/annotation-types</td><td>Regisztrált annotáció-típusok + JSON Schema-juk.</td></tr>
+        <tr><td class="mono">/deidentification-profiles</td><td>Álnevesítési profilok és a bennük lévő tag-szintű szabályok szerkesztése.</td></tr>
+      </table>
+    </section>
+
+    <section class="block" id="ctannotator">
+      <p class="section-kicker">08 · A rajzoló eszköz</p>
+      <h2>A ct-annotator nézegető <span class="repo-tag">ct-annotator</span></h2>
+      <p class="deck">Külön repó, külön frontend, saját (vékony) backenddel — de ugyanabba a Keycloak-realmba és object storage-ba lóg bele.</p>
+
+      <p>A ct-annotator backendje szándékosan minimális: csak azt a két képességet adja hozzá, ami a fő platformban nincs meg — valós ablak/szint (window/level) szerinti DICOM→PNG renderelést, és a maszk-annotációk tárolását. Minden mást (képalkotási metaadat, annotáció CRUD, jogosultság, sőt még a saját böngésző-választó Study→Case→ImagingStudy→Series→Instance listázása is) egyszerűen továbbküld a fő platform már létező szolgáltatásainak, a hívó saját Keycloak-tokenjével — nincs duplikált adatbázis, nincs duplikált jogosultsági logika.</p>
+
+      <h3 id="objektummodell">CVAT-stílusú objektum-modell</h3>
+      <p>A szegmentáció nem egy egyszerű "van maszk / nincs maszk" bitmap, hanem egy <strong>objektum-azonosítót</strong> tároló 3D voxel-tömb (0 = háttér, 1-255 = egy konkrét objektum). Ezen a tömbön két fogalmi réteg ül:</p>
+      <ul>
+        <li><strong>Label</strong> (<span class="chip">{id, name, color}</span>) — újrafelhasználható kategória, pl. "Nodule".</li>
+        <li><strong>Object</strong> (<span class="chip">{id, label_id, instance_number, locked, hidden}</span>) — egy konkrét, számozott előfordulás egy Labelen belül, pl. "Nodule 2". A színét a Label-jétől örökli.</li>
+      </ul>
+      <p>A <span class="chip">locked</span> megvédi egy objektum voxeleit <em>bármely másik</em> objektum ecsetelésétől/törlésétől/kitöltésétől — de nem magától az aktívan kiválasztott objektumtól, ha az épp nem zárolt. A <span class="chip">hidden</span> tisztán megjelenítési kapcsoló, a voxeladatot nem érinti. Visszavonás/mégis (undo/redo) tudatosan megkerüli a zárolást — egy korábbi állapot visszaállítása nem "szerkesztés", hanem a múltbeli igazság helyreállítása.</p>
+
+      <div class="callout">
+        <span class="callout-label">Kliens-oldali igazságforrás</span>
+        <p>A teljes voxel-tömb a böngészőben él (egy lapos <span class="chip">Uint8Array</span>), minden ecsetelés/törlés/kitöltés azonnal, helyben, kliens-oldalon számolódik — a szerver csak egy tömörített (gzip) bináris blob-ként menti/tölti vissza (<span class="chip">segmentation_volume</span> annotáció-típus, <span class="chip">target_type="series"</span>). Ez egy tudatos döntés: egy szerver-oldali, "élő" volument minden ecsetvonás után frissíteni pont azt a lassulást hozná vissza, amit korábban egy másik (csúszka-) problémánál már ki kellett küszöbölni.</p>
+      </div>
+
+      <h3 id="sikok">Három sík, egy közös koordinátarendszer</h3>
+      <p>A kép egyszerre jelenik meg axiális, sagittalis és coronalis síkban (MPR — multi-planar reconstruction), egy közös HU-kalibrált 3D volumenből szeletelve. A három sík <em>ugyanazt</em> a voxel-tömböt olvassa/írja, csak más tengely mentén — egy adott (sík, aktuális szelet, 2D pont) hármas mindig ugyanarra a valós (x, y, z) voxelre fordítódik le, függetlenül attól, melyik síkon rajzoltál. Ennek köszönhető, hogy egy ecsetvonás az axiális képen azonnal, helyesen látszik a sagittalis és coronalis képen is, és fordítva.</p>
+      <p>Minden panel önállóan görgethető, nagyítható (kurzor köré horgonyzott zoom), és eltolható; bármelyik panel elrejthető, teljes területre nagyítható, vagy a böngésző teljes képernyős módjába kapcsolható. Ctrl/Cmd+kattintás mindhárom síkot egyszerre ugyanarra az anatómiai pontra ugratja — ez ugyanazt a koordináta-feloldást használja, mint az Alt+kattintásos HU-lekérdezés (lásd lent).</p>
+
+      <h3 id="3d">3D nézet és HU-lekérdezés</h3>
+      <p>A negyedik, alapból elrejtett panel egy valódi 3D nézet, két váltható renderelési móddal: <strong>voxel-kockák</strong> (minden objektum-voxelhez egy kocka, egy rajzolási hívással objektumonként) és <strong>marching cubes felület</strong> (sima, háromszögelt felszín ugyanabból az adatból). A 3D jelenet szándékosan <em>nem</em> frissül minden ecsetvonás után — csak amikor a panel láthatóvá válik, vagy a felhasználó kifejezetten rákér egy Frissítés gombbal.</p>
+
+      <p>Bármelyik síkon <strong>Alt+kattintással</strong> lekérdezhető az adott voxel Hounsfield-értéke (HU) — egy kis, a kattintott ponthoz rögzített felugró címke jelzi ki, majd magától eltűnik. Ez működik mind nézegetés, mind rajzolás közben, és nem indít rajzolást.</p>
+    </section>
+
+    <section class="block" id="kapcsolat">
+      <p class="section-kicker">09 · Összekapcsolás</p>
+      <h2>A két rendszer kapcsolata</h2>
+      <p class="deck">Két külön kódbázis, egy közös személyazonosság- és tárolási réteg.</p>
+
+      <ul>
+        <li>Ugyanaz a Keycloak realm, ugyanaz a <span class="chip">ct-platform</span> kliens szolgálja ki mindkét frontendet — a ct-annotator saját eredete csak hozzá lett adva a kliens engedélyezett origin-listájához, a fő platform semmilyen konfigurációja nem változott emiatt.</li>
+        <li>A maszk-PNG-k és a maszk-volumenek ugyanabba a megosztott MinIO bucket-be íródnak, csak külön prefix alatt — nincs második tárolási infrastruktúra.</li>
+        <li>A ct-annotator regisztrált egy új <span class="chip">AnnotationType</span> sort (<span class="chip">segmentation_volume</span>) a fő platform saját annotáció-típus-táblájában — ugyanaz a nyitott, séma-vezérelt mechanizmus szolgálja ki, mint bármelyik más annotáció-típust.</li>
+        <li>A Case oldal Series-kártyáin egy "Megnyitás nézegetőben" hivatkozás nyit egy új fület a ct-annotator megfelelő nézegető-oldalára — ez az egyetlen pont, ahol a két felület ténylegesen, kattinthatóan össze van kötve egymással.</li>
+      </ul>
+    </section>
+
+    <footer>
+      A dokumentum a rendszer aktuális, kódból visszaolvasott logikáját írja le (adatmodell, jogosultsági szabályok, workflow-futtatási logika, ct-annotator objektum-modellje) — nem történeti változásnapló, és nem technológiai kirakat.
+    </footer>
+
+  </main>
+</div>

@@ -37,6 +37,10 @@ function AnnotationNode({ data, selected }: NodeProps<CardNode>) {
       )}
       <Handle type="target" position={Position.Left} id="input" />
       <Handle type="source" position={Position.Right} id="output" />
+      {/* Separate handle for a Surface card's job restriction -- unrelated
+          to the ordinary data-flow input above, so it's placed on a
+          different side to stay visually distinct. */}
+      <Handle type="target" position={Position.Top} id="surface_config" />
     </WorkflowNodeShell>
   );
 }

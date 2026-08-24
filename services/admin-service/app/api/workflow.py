@@ -34,6 +34,9 @@ from shared_models.models import (
     AnnotationStatus,
     Case,
     ImagingStudy,
+    Instance,
+    Series,
+    Study,
     WorkflowCard,
     WorkflowCardType,
     WorkflowEdge,
@@ -46,15 +49,32 @@ _READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 _WRITE_ROLES = ["data_manager", "admin"]
 # Split has no output handle of its own: its result is expressed entirely
 # as materialized Dataset cards (see run_workflow_card), not a graph edge.
-_NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
+# Surface is pure configuration -- it never sits in the case-flow graph,
+# so for the ordinary "input"/"output" data-flow handles it behaves like
+# Note/Milestone (no data output, no data input, never Run). It still
+# connects to an Annotation/Review card, but only via the separate
+# "surface_config" handle pair, validated on its own in
+# create_workflow_edge below -- that check runs before these sets are
+# ever consulted for a surface_config edge.
+_NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.SURFACE}
 # Dataset CAN take an incoming edge -- connecting something into it and
 # running it snapshots that upstream result as this Dataset's manual case
 # list (a user-placed, general version of Split/Annotation/Review's
 # automatic "materialize" -- see the DATASET branch in run_workflow_card).
-_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
-_NO_RUN_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE}
+_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.SURFACE}
+_NO_RUN_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.SURFACE}
 _MATERIALIZED_DEFAULT_WIDTH = 200.0
 _MATERIALIZED_DEFAULT_HEIGHT = 90.0
+
+# The permissive default returned by get_surface_config when an
+# Annotation/Review card has no Surface card connected -- keeps
+# unrestricted jobs (the common case today) behaving exactly as before
+# this feature existed.
+_UNRESTRICTED_SURFACE_CONFIG = {
+    "tools": ["paint", "erase", "fill", "polygon", "auto", "histogram"],
+    "panes": ["sagittal", "coronal", "axial"],
+    "show_3d": True,
+}
 
 
 class WorkflowCardIn(BaseModel):
@@ -134,36 +154,48 @@ def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard
     return db.query(WorkflowCard).filter_by(materialized_source_card_id=card_id).all()
 
 
+def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
+    """The subset of `case_ids` that actually have a real Annotation record
+    (or, for Review, one already approved/rejected).
+
+    No Annotation is ever created with `target_type == "study"` anywhere
+    in this codebase -- ct-annotator's real save path (the segmentation
+    volume workflow every other part of this session is built around)
+    posts with `target_type == "series"`, and its older bbox/freehand
+    path posts with `target_type == "instance"`; a `"study"`-only check
+    here could never match either, so this always undercounted to zero.
+    Checks both real paths via their own join chain up to Case, and
+    unions the results."""
+    if not case_ids:
+        return []
+
+    series_query = (
+        db.query(func.distinct(ImagingStudy.case_id))
+        .join(Series, Series.imaging_study_id == ImagingStudy.id)
+        .join(Annotation, Annotation.target_id == Series.id)
+        .filter(Annotation.target_type == "series", ImagingStudy.case_id.in_(case_ids))
+    )
+    instance_query = (
+        db.query(func.distinct(ImagingStudy.case_id))
+        .join(Series, Series.imaging_study_id == ImagingStudy.id)
+        .join(Instance, Instance.series_id == Series.id)
+        .join(Annotation, Annotation.target_id == Instance.id)
+        .filter(Annotation.target_type == "instance", ImagingStudy.case_id.in_(case_ids))
+    )
+    if review:
+        series_query = series_query.filter(Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]))
+        instance_query = instance_query.filter(
+            Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED])
+        )
+
+    case_ids_found = {row[0] for row in series_query.all()} | {row[0] for row in instance_query.all()}
+    return sorted(str(cid) for cid in case_ids_found)
+
+
 def _annotation_progress(db: Session, case_ids: list[str], review: bool) -> dict:
     if not case_ids:
         return {"annotated": 0, "total": 0}
-    query = (
-        db.query(func.count(func.distinct(ImagingStudy.case_id)))
-        .join(Annotation, Annotation.target_id == ImagingStudy.id)
-        .filter(Annotation.target_type == "study", ImagingStudy.case_id.in_(case_ids))
-    )
-    if review:
-        query = query.filter(Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]))
-    return {"annotated": query.scalar() or 0, "total": len(case_ids)}
-
-
-def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
-    """The subset of `case_ids` that actually have a real Annotation record
-    (or, for Review, one already approved/rejected) -- the same real-data
-    cross-check `_annotation_progress` counts, but returning which cases
-    those are rather than just how many. Used to materialize an "annotated
-    dataset" containing only genuinely annotated cases, not every case the
-    Annotation/Review card happens to be assigned."""
-    if not case_ids:
-        return []
-    query = (
-        db.query(func.distinct(ImagingStudy.case_id))
-        .join(Annotation, Annotation.target_id == ImagingStudy.id)
-        .filter(Annotation.target_type == "study", ImagingStudy.case_id.in_(case_ids))
-    )
-    if review:
-        query = query.filter(Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]))
-    return sorted(str(row[0]) for row in query.all())
+    return {"annotated": len(_annotated_case_ids(db, case_ids, review)), "total": len(case_ids)}
 
 
 def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by_target: dict) -> dict:
@@ -338,6 +370,77 @@ def delete_workflow_card(
     db.commit()
 
 
+@router.get("/workflow-cards/{card_id}/surface-config")
+def get_surface_config(
+    card_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """What ct-annotator should show while working this Annotation/Review
+    card's job: the config of the Surface card connected to it via a
+    "surface_config" edge, or the permissive default (everything
+    enabled) if none is connected -- an unrestricted job behaves exactly
+    like the viewer did before this feature existed.
+
+    `card_type` (the underlying job's own type, "annotation" or
+    "review") rides along in every response so ct-annotator can tell a
+    Review job apart from an Annotation one and switch to its
+    simplified, view-and-decide-only surface -- there's no other cheap
+    way for it to learn this without a second round trip."""
+    card = _card_or_404(db, card_id)
+    require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
+
+    edge = db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="surface_config").first()
+    surface = db.get(WorkflowCard, edge.source_card_id) if edge else None
+    if surface is None:
+        return {**_UNRESTRICTED_SURFACE_CONFIG, "card_type": card.type.value}
+
+    return {
+        "tools": surface.config.get("tools", _UNRESTRICTED_SURFACE_CONFIG["tools"]),
+        "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
+        "show_3d": surface.config.get("show_3d", True),
+        "card_type": card.type.value,
+    }
+
+
+@router.get("/my-jobs")
+def list_my_jobs(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Every Annotation/Review card assigned to the calling user, across
+    every Study -- being the assignee is itself the access grant here,
+    the same carve-out update_workflow_card's self-service status PATCH
+    already relies on, so no separate per-study membership check."""
+    cards = (
+        db.query(WorkflowCard)
+        .filter(WorkflowCard.type.in_([WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW]))
+        .all()
+    )
+    my_cards = [c for c in cards if c.config.get("assigned_user_id") == user.subject]
+
+    studies_by_id = {s.id: s for s in db.query(Study).filter(Study.id.in_({c.study_id for c in my_cards})).all()}
+
+    result = []
+    for card in my_cards:
+        case_ids = card.output_case_ids or []
+        cases = db.query(Case).filter(Case.id.in_(case_ids)).all() if case_ids else []
+        study = studies_by_id.get(card.study_id)
+        annotated_ids = set(_annotated_case_ids(db, case_ids, review=card.type == WorkflowCardType.REVIEW))
+        result.append(
+            {
+                "study_id": str(card.study_id),
+                "study_name": study.name if study else None,
+                "card_id": str(card.id),
+                "card_title": card.title,
+                "card_type": card.type.value,
+                "status": card.config.get("status", "todo"),
+                "cases": [{"id": str(c.id), "title": c.title, "annotated": str(c.id) in annotated_ids} for c in cases],
+            }
+        )
+    return result
+
+
 @router.post("/studies/{study_id}/workflow/edges", status_code=201)
 def create_workflow_edge(
     study_id: uuid.UUID,
@@ -354,6 +457,49 @@ def create_workflow_edge(
     target = _card_or_404(db, body.target_card_id)
     if str(source.study_id) != str(study_id) or str(target.study_id) != str(study_id):
         raise HTTPException(status_code=422, detail="Both cards must belong to this study")
+
+    if body.target_handle == "surface_config":
+        # A Surface card's connection to the Annotation/Review card it
+        # restricts -- a completely separate handle pair from the
+        # ordinary data "input"/"output" flow, so it's validated here
+        # instead of falling into the generic checks below (which would
+        # otherwise reject Surface as a source via _NO_OUTPUT_TYPES).
+        if source.type != WorkflowCardType.SURFACE:
+            raise HTTPException(status_code=422, detail="Only a Surface card can connect to a surface_config handle")
+        if target.type not in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+            raise HTTPException(
+                status_code=422, detail="A surface_config connection must target an Annotation or Review card"
+            )
+        if body.source_handle != "surface_config":
+            raise HTTPException(
+                status_code=422, detail=f"Invalid source handle '{body.source_handle}' for a Surface card"
+            )
+        existing = (
+            db.query(WorkflowEdge)
+            .filter_by(target_card_id=target.id, target_handle="surface_config")
+            .first()
+        )
+        if existing is not None:
+            raise HTTPException(status_code=422, detail="This card already has a Surface connection")
+
+        edge = WorkflowEdge(
+            id=body.id or uuid.uuid4(),
+            study_id=study_id,
+            source_card_id=body.source_card_id,
+            source_handle=body.source_handle,
+            target_card_id=body.target_card_id,
+            target_handle=body.target_handle,
+        )
+        db.add(edge)
+        db.commit()
+        db.refresh(edge)
+        return {
+            "id": str(edge.id),
+            "source_card_id": str(edge.source_card_id),
+            "source_handle": edge.source_handle,
+            "target_card_id": str(edge.target_card_id),
+            "target_handle": edge.target_handle,
+        }
 
     if source.type in _NO_OUTPUT_TYPES:
         raise HTTPException(status_code=422, detail=f"A {source.type.value} card has no output")
@@ -419,7 +565,11 @@ def _resolve_output(db: Session, card: WorkflowCard, visiting: set) -> list[str]
 
 
 def _single_incoming_edge(db: Session, card: WorkflowCard) -> WorkflowEdge:
-    edges = db.query(WorkflowEdge).filter_by(target_card_id=card.id).all()
+    """The card's one *data-flow* incoming edge -- filtered to the
+    "input" handle explicitly so a Surface card's "surface_config" edge
+    (a separate handle on the same target card) never counts toward
+    this "exactly one" check."""
+    edges = db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="input").all()
     if len(edges) != 1:
         raise HTTPException(
             status_code=422, detail=f"A {card.type.value} card requires exactly one incoming connection"

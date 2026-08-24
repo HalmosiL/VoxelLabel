@@ -4,6 +4,8 @@ import Layout from "./components/Layout";
 import AnnotationTypesPage from "./pages/AnnotationTypesPage";
 import CaseDetailPage from "./pages/CaseDetailPage";
 import DeidentificationProfilesPage from "./pages/DeidentificationProfilesPage";
+import JobDetailPage from "./pages/JobDetailPage";
+import MyJobsPage from "./pages/MyJobsPage";
 import PatientDetailPage from "./pages/PatientDetailPage";
 import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
@@ -16,6 +18,8 @@ export default function App() {
       <Route path="/studies/:studyId/workflow" element={<WorkflowBoardPage />} />
       <Route element={<Layout />}>
         <Route path="/" element={<Navigate to="/studies" replace />} />
+        <Route path="/my-jobs" element={<MyJobsPage />} />
+        <Route path="/my-jobs/:cardId" element={<JobDetailPage />} />
         <Route path="/studies" element={<StudiesPage />} />
         <Route path="/studies/:studyId" element={<StudyDetailPage />} />
         <Route path="/studies/:studyId/cases/:caseId" element={<CaseDetailPage />} />

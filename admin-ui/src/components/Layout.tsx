@@ -7,6 +7,7 @@ const navGroups = [
   {
     label: "Workspace",
     items: [
+      { to: "/my-jobs", label: "My Jobs", icon: BriefcaseIcon },
       { to: "/studies", label: "Studies", icon: FolderIcon },
       { to: "/patients", label: "Patients", icon: UserIcon },
     ],
@@ -91,6 +92,18 @@ export default function Layout() {
         </div>
       </main>
     </div>
+  );
+}
+
+function BriefcaseIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M6 4a2 2 0 012-2h4a2 2 0 012 2v1h1.5A2.5 2.5 0 0118 7.5v6a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 012 13.5v-6A2.5 2.5 0 014.5 5H6V4zm2 1h4V4H8v1zM4.5 7a.5.5 0 00-.5.5V9h12V7.5a.5.5 0 00-.5-.5h-11zM16 10.5H4v3a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-3z"
+        clipRule="evenodd"
+      />
+    </svg>
   );
 }
 

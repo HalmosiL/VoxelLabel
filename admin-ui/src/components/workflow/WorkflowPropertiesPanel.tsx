@@ -110,6 +110,8 @@ export default function WorkflowPropertiesPanel({
           />
         )}
 
+        {card.type === "surface" && <SurfaceFields card={card} onPatch={onPatch} />}
+
         {card.type === "note" && <NoteFields card={card} onPatch={onPatch} />}
 
         {card.type === "milestone" && <MilestoneFields card={card} onPatch={onPatch} />}
@@ -543,6 +545,80 @@ function TaskFields({
           → Open annotated dataset card
         </button>
       )}
+    </div>
+  );
+}
+
+// ct-annotator's stable tool/pane identifiers (see ViewerPage.tsx's
+// DrawTool union and ALL_PANE_VISIBILITY_KEYS) -- "cursor" (pure
+// navigation) and "three_d" are handled separately (3D has its own
+// toggle below; cursor is never gated at all) rather than listed here.
+const SURFACE_TOOL_OPTIONS: { value: string; label: string }[] = [
+  { value: "paint", label: "Paint" },
+  { value: "erase", label: "Erase" },
+  { value: "fill", label: "Fill" },
+  { value: "polygon", label: "Polygon" },
+  { value: "auto", label: "Auto-contour" },
+  { value: "histogram", label: "Histogram" },
+];
+
+const SURFACE_PANE_OPTIONS: { value: string; label: string }[] = [
+  { value: "axial", label: "Axial" },
+  { value: "sagittal", label: "Sagittal" },
+  { value: "coronal", label: "Coronal" },
+];
+
+function SurfaceFields({ card, onPatch }: { card: WorkflowCard; onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void }) {
+  const tools = new Set((card.config.tools as string[] | undefined) ?? []);
+  const panes = new Set((card.config.panes as string[] | undefined) ?? []);
+  const show3d = card.config.show_3d !== false;
+
+  function toggleTool(value: string) {
+    const next = new Set(tools);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onPatch(card.id, { config: { ...card.config, tools: Array.from(next) } });
+  }
+
+  function togglePane(value: string) {
+    const next = new Set(panes);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onPatch(card.id, { config: { ...card.config, panes: Array.from(next) } });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="hint">
+        Connect this to an Annotation or Review card's top handle to mandatorily restrict what's available in the
+        annotation surface for that job -- anything unchecked here is hidden entirely, not just off by default.
+      </p>
+      <div className="flex flex-col gap-1.5">
+        <span className="label">Tools</span>
+        {SURFACE_TOOL_OPTIONS.map((opt) => (
+          <label key={opt.value} className="flex items-center gap-2 text-xs text-gray-700">
+            <input type="checkbox" checked={tools.has(opt.value)} onChange={() => toggleTool(opt.value)} />
+            {opt.label}
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <span className="label">MPR panes</span>
+        {SURFACE_PANE_OPTIONS.map((opt) => (
+          <label key={opt.value} className="flex items-center gap-2 text-xs text-gray-700">
+            <input type="checkbox" checked={panes.has(opt.value)} onChange={() => togglePane(opt.value)} />
+            {opt.label}
+          </label>
+        ))}
+      </div>
+      <label className="flex items-center gap-2 text-xs text-gray-700">
+        <input
+          type="checkbox"
+          checked={show3d}
+          onChange={(e) => onPatch(card.id, { config: { ...card.config, show_3d: e.target.checked } })}
+        />
+        3D view
+      </label>
     </div>
   );
 }

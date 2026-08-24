@@ -9,7 +9,8 @@ export type WorkflowCardType =
   | "review"
   | "union"
   | "note"
-  | "milestone";
+  | "milestone"
+  | "surface";
 
 export type WorkflowCardConfig = Record<string, unknown>;
 
@@ -123,4 +124,34 @@ export function deleteWorkflowEdge(edgeId: string): Promise<void> {
 
 export function runWorkflowCard(cardId: string): Promise<WorkflowCard> {
   return apiFetch(base, `/admin/workflow-cards/${cardId}/run`, { method: "POST" });
+}
+
+export interface SurfaceConfig {
+  tools: string[];
+  panes: string[];
+  show_3d: boolean;
+}
+
+/** The Surface card's config connected to this Annotation/Review card,
+ * or the permissive (everything enabled) default if none is connected.
+ * Used by WorkflowPropertiesPanel to preview an Annotation/Review card's
+ * effective restriction. */
+export function getSurfaceConfig(cardId: string): Promise<SurfaceConfig> {
+  return apiFetch(base, `/admin/workflow-cards/${cardId}/surface-config`);
+}
+
+export interface MyJob {
+  study_id: string;
+  study_name: string | null;
+  card_id: string;
+  card_title: string;
+  card_type: WorkflowCardType;
+  status: string;
+  cases: { id: string; title: string | null; annotated: boolean }[];
+}
+
+/** Every Annotation/Review card assigned to the calling user, across
+ * every Study -- backs the "My Jobs" page. */
+export function listMyJobs(): Promise<MyJob[]> {
+  return apiFetch(base, "/admin/my-jobs");
 }

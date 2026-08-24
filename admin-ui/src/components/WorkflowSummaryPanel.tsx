@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { getWorkflowBoard, SplitPart, WorkflowCard, WorkflowCardType } from "../api/workflowApi";
 import { TASK_STATUS_STYLE } from "./workflow/statusStyle";
-import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, PencilIcon } from "./icons";
+import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, MonitorIcon, PencilIcon } from "./icons";
 import SectionHeader from "./SectionHeader";
 
 const TYPE_ICON: Record<WorkflowCardType, ReactNode> = {
@@ -15,6 +15,7 @@ const TYPE_ICON: Record<WorkflowCardType, ReactNode> = {
   review: <DocumentIcon className="h-4 w-4" />,
   note: <DocumentIcon className="h-4 w-4" />,
   milestone: <FlagIcon className="h-4 w-4" />,
+  surface: <MonitorIcon className="h-4 w-4" />,
 };
 
 /** One-line, per-type description matching what each card shows on the
@@ -58,6 +59,12 @@ function describeCard(card: WorkflowCard): string {
     case "milestone": {
       const date = card.config.date as string | null | undefined;
       return date ? date : "";
+    }
+    case "surface": {
+      const tools = (card.config.tools as string[] | undefined)?.length ?? 0;
+      const panes = (card.config.panes as string[] | undefined)?.length ?? 0;
+      const show3d = card.config.show_3d === true;
+      return `${tools} tools · ${panes} panes · 3D ${show3d ? "on" : "off"}`;
     }
     default:
       return "";

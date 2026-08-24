@@ -41,6 +41,7 @@ import MilestoneNode from "../components/workflow/nodes/MilestoneNode";
 import NoteNode from "../components/workflow/nodes/NoteNode";
 import ReviewNode from "../components/workflow/nodes/ReviewNode";
 import SplitNode from "../components/workflow/nodes/SplitNode";
+import SurfaceNode from "../components/workflow/nodes/SurfaceNode";
 import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
@@ -55,6 +56,7 @@ const NODE_TYPES = {
   union: UnionNode,
   note: NoteNode,
   milestone: MilestoneNode,
+  surface: SurfaceNode,
 };
 
 function cardToNode(card: WorkflowCard): CardNode {
@@ -204,7 +206,14 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     const sourceNode = nodes.find((n) => n.id === connection.source);
     const targetNode = nodes.find((n) => n.id === connection.target);
     if (!sourceNode || !targetNode) return;
-    if (!isValidConnection(sourceNode.data.card.type, connection.sourceHandle, targetNode.data.card.type)) {
+    if (
+      !isValidConnection(
+        sourceNode.data.card.type,
+        connection.sourceHandle,
+        targetNode.data.card.type,
+        connection.targetHandle
+      )
+    ) {
       setError("That connection isn't allowed between these card types.");
       return;
     }
