@@ -89,8 +89,14 @@ def list_annotations_for_target(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     """List annotations for a given target (all versions; callers filter
-    by status/parent_version_id as needed)."""
-    annotations = db.query(Annotation).filter_by(target_type=target_type, target_id=target_id).all()
+    by status/parent_version_id as needed). Ordered oldest-first by
+    creation time so a caller that wants "the latest version" can just
+    take the last element, rather than relying on whatever order the
+    database happens to return an otherwise-unordered query in (not
+    guaranteed to match insertion order, and in practice doesn't always)."""
+    annotations = (
+        db.query(Annotation).filter_by(target_type=target_type, target_id=target_id).order_by(Annotation.created_at).all()
+    )
     if annotations:
         require_study_role(db, str(annotations[0].study_id), user, allowed_roles=_READ_ROLES)
 
