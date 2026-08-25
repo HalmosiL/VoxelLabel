@@ -427,7 +427,17 @@ def update_workflow_card(
     if body.height is not None:
         card.height = body.height
     if body.config is not None:
-        card.config = body.config
+        # A merge, not a replace: a caller that only knows about the one
+        # field it's changing (e.g. ct-annotator's status-dropdown proxy,
+        # which sends only {"status": ...} with no visibility into the
+        # card's other config) would otherwise silently wipe everything
+        # else already in config -- assigned_user_id notably included.
+        # admin-ui's own callers already always send the full spread
+        # ({...card.config, field: value}), so a merge here behaves
+        # identically for them; it only changes behavior for a caller
+        # that was sending a partial config, where replace was never the
+        # intended outcome.
+        card.config = {**card.config, **body.config}
 
     db.commit()
     db.refresh(card)
