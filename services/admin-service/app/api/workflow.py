@@ -409,7 +409,9 @@ def get_surface_config(
     "review") rides along in every response so ct-annotator can tell a
     Review job apart from an Annotation one and switch to its
     simplified, view-and-decide-only surface -- there's no other cheap
-    way for it to learn this without a second round trip."""
+    way for it to learn this without a second round trip. `status`
+    (todo/in_progress/done) rides along too, so ct-annotator can show
+    and let the assignee change it without a separate fetch."""
     card = _card_or_404(db, card_id)
     require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
     is_review = card.type == WorkflowCardType.REVIEW
@@ -428,7 +430,7 @@ def get_surface_config(
     if is_review:
         config = {**config, "tools": [], "show_3d": False}
 
-    return {**config, "card_type": card.type.value}
+    return {**config, "card_type": card.type.value, "status": card.config.get("status", "todo")}
 
 
 @router.get("/my-jobs")
