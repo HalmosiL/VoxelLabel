@@ -298,9 +298,15 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         # Review materializes one per decision (approved, rejected) -- the
         # "rejected" one is what a feedback edge back into an Annotation
         # card is drawn from. Same plural shape for both.
-        result["materialized_card_ids"] = {
-            c.materialized_source_handle: str(c.id) for c in _materialized_children(db, card.id)
-        }
+        children = _materialized_children(db, card.id)
+        result["materialized_card_ids"] = {c.materialized_source_handle: str(c.id) for c in children}
+        if card.type == WorkflowCardType.REVIEW:
+            # Backs the small named-output markers on the Review node
+            # itself (approved/rejected case counts), each child's own
+            # stored case list is already a plain "manual" snapshot.
+            result["materialized_counts"] = {
+                c.materialized_source_handle: len(c.config.get("case_ids", [])) for c in children
+            }
     elif card.type == WorkflowCardType.ANNOTATION:
         children = _materialized_children(db, card.id)
         result["materialized_card_id"] = str(children[0].id) if children else None

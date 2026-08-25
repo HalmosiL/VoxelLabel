@@ -35,9 +35,14 @@ export interface WorkflowCard {
   last_run_at: string | null;
   stale: boolean;
   annotation_progress?: { annotated: number; total: number };
-  // Split only: handle -> id of the Dataset card materialized for that part.
+  // Split: handle ("part_0", ...) -> id of the Dataset card materialized
+  // for that part. Review: handle ("approved" | "rejected") -> id of the
+  // Dataset card materialized for that decision.
   materialized_card_ids?: Record<string, string>;
-  // Annotation/Review only: id of the "materialize as dataset" child, if enabled.
+  // Review only: handle -> case count for each materialized_card_ids
+  // entry, without a second round trip to fetch each Dataset card.
+  materialized_counts?: Record<string, number>;
+  // Annotation only: id of the "materialize as dataset" child, if enabled.
   materialized_card_id?: string | null;
   // Dataset only: set when this card was auto-created by a Split/Annotation/Review Run.
   materialized_from?: { card_id: string; title: string } | null;

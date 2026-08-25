@@ -7,12 +7,22 @@ import { CardNode } from "../types";
 import { TASK_STATUS_STYLE } from "../statusStyle";
 import WorkflowNodeShell from "./WorkflowNodeShell";
 
+// The two named outputs a Review card materializes on Run -- approved
+// cases flow onward, rejected ones are meant to be wired back into an
+// Annotation card's input as a feedback loop (see WorkflowPropertiesPanel).
+const REVIEW_BRANCHES: { handle: string; label: string; dot: string }[] = [
+  { handle: "approved", label: "approved", dot: "bg-emerald-500" },
+  { handle: "rejected", label: "rejected", dot: "bg-red-500" },
+];
+
 function ReviewNode({ data, selected }: NodeProps<CardNode>) {
   const { card } = data;
   const assignedUserId = typeof card.config.assigned_user_id === "string" ? card.config.assigned_user_id : null;
   const status = typeof card.config.status === "string" ? card.config.status : "todo";
   const style = TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo;
   const progress = card.annotation_progress;
+  const materializeDataset = Boolean(card.config.materialize_dataset);
+  const counts = card.materialized_counts;
 
   return (
     <WorkflowNodeShell selected={selected} icon={<DocumentIcon className="h-4 w-4" />} title={card.title} stale={card.stale}>
@@ -37,6 +47,17 @@ function ReviewNode({ data, selected }: NodeProps<CardNode>) {
         <p className="mt-1 text-xs text-gray-500">
           {progress.annotated} of {progress.total} reviewed
         </p>
+      )}
+      {materializeDataset && (
+        <ul className="mt-2 flex flex-col gap-0.5 text-xs text-gray-600">
+          {REVIEW_BRANCHES.map((branch) => (
+            <li key={branch.handle} className="flex items-center gap-1.5">
+              <span className={`badge-dot ${branch.dot}`} />
+              <span>{branch.label}</span>
+              {counts && <span className="ml-auto text-gray-400">{counts[branch.handle] ?? 0}</span>}
+            </li>
+          ))}
+        </ul>
       )}
       <Handle type="target" position={Position.Left} id="input" />
       <Handle type="source" position={Position.Right} id="output" />
