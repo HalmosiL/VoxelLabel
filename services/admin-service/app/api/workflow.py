@@ -1021,3 +1021,35 @@ def _cascade_run(db: Session, card: WorkflowCard, visited: set[uuid.UUID]) -> No
             _cascade_run(db, downstream, visited)
         except HTTPException:
             pass
+
+
+def _cascade_new_case(db: Session, study_id: uuid.UUID) -> None:
+    """Ripples a just-created case through the board on its own, instead
+    of leaving it sitting in a Study until someone happens to click Run
+    somewhere -- called right after a new Case is committed (see
+    app/api/cases.py's create_case).
+
+    Only "all_cases" Dataset cards need triggering here: that's the one
+    card shape whose scope is computed live on every read (see
+    _dataset_output_ids), so it already includes the new case with no
+    Run of its own needed -- a "manual" Dataset is a deliberately
+    curated, pinned list and is never auto-updated, same as today. Once
+    an "all_cases" Dataset's new membership is established, everything
+    wired downstream of it gets the same cascade a manual Run already
+    does, via the exact same _downstream_cards/_cascade_run pair.
+    Best-effort per branch, same reasoning as run_workflow_card's own
+    top-level cascade: a downstream card that can't Run for its own
+    reasons shouldn't block the case from having been created."""
+    dataset_cards = (
+        db.query(WorkflowCard)
+        .filter(WorkflowCard.study_id == study_id, WorkflowCard.type == WorkflowCardType.DATASET)
+        .all()
+    )
+    for dataset_card in dataset_cards:
+        if dataset_card.config.get("mode") != "all_cases":
+            continue
+        for downstream in _downstream_cards(db, dataset_card):
+            try:
+                _cascade_run(db, downstream, {dataset_card.id})
+            except HTTPException:
+                pass

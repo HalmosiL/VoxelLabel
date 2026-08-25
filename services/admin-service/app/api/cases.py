@@ -16,6 +16,7 @@ from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap
 
 from app.api.imaging import _delete_instance
+from app.api.workflow import _cascade_new_case
 from app.storage import delete_object
 
 router = APIRouter(prefix="/admin", tags=["admin:cases"])
@@ -80,6 +81,17 @@ def create_case(
     )
     db.add(case)
     db.commit()
+
+    # Push the new case through the board on its own -- every "all_cases"
+    # Dataset card (and everything wired downstream of it) refreshes
+    # right away, the same way a manual Run on the board already would.
+    # Best-effort: a board mid-configuration somewhere downstream should
+    # never block the case itself from having been created.
+    try:
+        _cascade_new_case(db, case.study_id)
+    except Exception:
+        pass
+
     return {"id": str(case.id), "patient_id": str(patient.id), "accession_number": case.accession_number}
 
 
