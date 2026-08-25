@@ -442,15 +442,17 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
             deleteKeyCode={["Backspace", "Delete"]}
-            // Miro/Figma-style: plain left-drag on empty canvas draws a
-            // selection box (multi-select) instead of panning. Panning is
-            // scroll/trackpad-two-finger-drag (panOnScroll) or middle-
-            // click-drag (panOnDrag=[1]) -- right-click-drag (button 2)
-            // was tried too but isn't reliably supported by React Flow's
-            // underlying zoom/pan handling, so it's deliberately left out
-            // rather than offered as a broken affordance.
-            selectionOnDrag
-            panOnDrag={[1]}
+            // Plain left-drag (or middle-click-drag) on empty canvas pans
+            // the board; holding Ctrl while dragging switches to a
+            // selection box (multi-select) instead -- selectionKeyCode
+            // overrides panOnDrag for the duration the key is held, no
+            // separate selectionOnDrag flag needed. Right-click-drag
+            // (button 2) was tried too but isn't reliably supported by
+            // React Flow's underlying zoom/pan handling, so it's
+            // deliberately left out rather than offered as a broken
+            // affordance.
+            panOnDrag={[0, 1]}
+            selectionKeyCode="Control"
             panOnScroll
             fitView
           >
