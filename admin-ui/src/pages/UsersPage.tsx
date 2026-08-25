@@ -77,7 +77,7 @@ function NewUserForm({ onCreated }: { onCreated: () => void }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [role, setRole] = useState<"standard" | "admin">("standard");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -92,14 +92,14 @@ function NewUserForm({ onCreated }: { onCreated: () => void }) {
         first_name: firstName,
         last_name: lastName,
         password,
-        is_admin: isAdmin,
+        is_admin: role === "admin",
       });
       setUsername("");
       setEmail("");
       setFirstName("");
       setLastName("");
       setPassword("");
-      setIsAdmin(false);
+      setRole("standard");
       onCreated();
     } catch (err) {
       setError(String(err));
@@ -116,49 +116,35 @@ function NewUserForm({ onCreated }: { onCreated: () => void }) {
       </p>
       {error && <p className="alert-error mb-3">{error}</p>}
 
-      <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-4">
+      <form onSubmit={handleCreate} className="flex max-w-sm flex-col gap-4">
         <label className="field">
           <span className="label">Username</span>
-          <input className="input w-40" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} required />
         </label>
-        <label className="field flex-1">
+        <label className="field">
           <span className="label">Email</span>
-          <input
-            className="input"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </label>
         <label className="field">
           <span className="label">First name</span>
-          <input className="input w-36" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          <input className="input" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
         </label>
         <label className="field">
           <span className="label">Last name</span>
-          <input className="input w-36" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+          <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
         </label>
         <label className="field">
           <span className="label">Temporary password</span>
-          <input
-            className="input w-40"
-            type="text"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <input className="input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
-        <label className="flex items-center gap-2 pb-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
-            checked={isAdmin}
-            onChange={(e) => setIsAdmin(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-          />
-          Grant platform admin role
+        <label className="field">
+          <span className="label">Role</span>
+          <select className="input" value={role} onChange={(e) => setRole(e.target.value as "standard" | "admin")}>
+            <option value="standard">Standard user</option>
+            <option value="admin">Platform admin</option>
+          </select>
         </label>
-        <button type="submit" className="btn-primary" disabled={submitting}>
+        <button type="submit" className="btn-primary self-start" disabled={submitting}>
           Create
         </button>
       </form>
