@@ -110,7 +110,9 @@ export default function WorkflowPropertiesPanel({
           />
         )}
 
-        {card.type === "surface" && <SurfaceFields card={card} onPatch={onPatch} />}
+        {card.type === "annotation_surface" && <AnnotationSurfaceFields card={card} onPatch={onPatch} />}
+
+        {card.type === "review_surface" && <ReviewSurfaceFields card={card} onPatch={onPatch} />}
 
         {card.type === "note" && <NoteFields card={card} onPatch={onPatch} />}
 
@@ -568,7 +570,13 @@ const SURFACE_PANE_OPTIONS: { value: string; label: string }[] = [
   { value: "coronal", label: "Coronal" },
 ];
 
-function SurfaceFields({ card, onPatch }: { card: WorkflowCard; onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void }) {
+function AnnotationSurfaceFields({
+  card,
+  onPatch,
+}: {
+  card: WorkflowCard;
+  onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+}) {
   const tools = new Set((card.config.tools as string[] | undefined) ?? []);
   const panes = new Set((card.config.panes as string[] | undefined) ?? []);
   const show3d = card.config.show_3d !== false;
@@ -590,8 +598,8 @@ function SurfaceFields({ card, onPatch }: { card: WorkflowCard; onPatch: (cardId
   return (
     <div className="flex flex-col gap-3">
       <p className="hint">
-        Connect this to an Annotation or Review card's top handle to mandatorily restrict what's available in the
-        annotation surface for that job -- anything unchecked here is hidden entirely, not just off by default.
+        Connect this to an Annotation card's top handle to mandatorily restrict what's available in the annotation
+        surface for that job -- anything unchecked here is hidden entirely, not just off by default.
       </p>
       <div className="flex flex-col gap-1.5">
         <span className="label">Tools</span>
@@ -619,6 +627,44 @@ function SurfaceFields({ card, onPatch }: { card: WorkflowCard; onPatch: (cardId
         />
         3D view
       </label>
+    </div>
+  );
+}
+
+// The review surface never has tools or 3D at all, unconditionally (see
+// ct-annotator's ViewerPage reviewMode) -- no checkboxes for either
+// here, since they'd be dead UI; only which MPR panes are visible.
+function ReviewSurfaceFields({
+  card,
+  onPatch,
+}: {
+  card: WorkflowCard;
+  onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+}) {
+  const panes = new Set((card.config.panes as string[] | undefined) ?? []);
+
+  function togglePane(value: string) {
+    const next = new Set(panes);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onPatch(card.id, { config: { ...card.config, panes: Array.from(next) } });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="hint">
+        Connect this to a Review card's top handle to mandatorily restrict which MPR panes are available while
+        reviewing that job -- the review surface has no tools or 3D at all, so there's nothing else to configure.
+      </p>
+      <div className="flex flex-col gap-1.5">
+        <span className="label">MPR panes</span>
+        {SURFACE_PANE_OPTIONS.map((opt) => (
+          <label key={opt.value} className="flex items-center gap-2 text-xs text-gray-700">
+            <input type="checkbox" checked={panes.has(opt.value)} onChange={() => togglePane(opt.value)} />
+            {opt.label}
+          </label>
+        ))}
+      </div>
     </div>
   );
 }

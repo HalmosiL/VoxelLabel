@@ -3,7 +3,17 @@ import { Link } from "react-router-dom";
 
 import { getWorkflowBoard, SplitPart, WorkflowCard, WorkflowCardType } from "../api/workflowApi";
 import { TASK_STATUS_STYLE } from "./workflow/statusStyle";
-import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, MonitorIcon, PencilIcon } from "./icons";
+import {
+  DatabaseIcon,
+  DocumentIcon,
+  FlagIcon,
+  ForkIcon,
+  FunnelIcon,
+  MergeIcon,
+  MonitorCheckIcon,
+  MonitorIcon,
+  PencilIcon,
+} from "./icons";
 import SectionHeader from "./SectionHeader";
 
 const TYPE_ICON: Record<WorkflowCardType, ReactNode> = {
@@ -15,7 +25,11 @@ const TYPE_ICON: Record<WorkflowCardType, ReactNode> = {
   review: <DocumentIcon className="h-4 w-4" />,
   note: <DocumentIcon className="h-4 w-4" />,
   milestone: <FlagIcon className="h-4 w-4" />,
+  // Legacy generic type these two were split from -- see its comment on
+  // WorkflowCardType. No new card is ever created with it.
   surface: <MonitorIcon className="h-4 w-4" />,
+  annotation_surface: <MonitorIcon className="h-4 w-4" />,
+  review_surface: <MonitorCheckIcon className="h-4 w-4" />,
 };
 
 /** One-line, per-type description matching what each card shows on the
@@ -60,11 +74,16 @@ function describeCard(card: WorkflowCard): string {
       const date = card.config.date as string | null | undefined;
       return date ? date : "";
     }
-    case "surface": {
+    case "surface":
+    case "annotation_surface": {
       const tools = (card.config.tools as string[] | undefined)?.length ?? 0;
       const panes = (card.config.panes as string[] | undefined)?.length ?? 0;
       const show3d = card.config.show_3d === true;
       return `${tools} tools · ${panes} panes · 3D ${show3d ? "on" : "off"}`;
+    }
+    case "review_surface": {
+      const panes = (card.config.panes as string[] | undefined)?.length ?? 0;
+      return `${panes} panes · no tools · no 3D`;
     }
     default:
       return "";

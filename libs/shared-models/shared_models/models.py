@@ -77,12 +77,25 @@ class WorkflowCardType(str, enum.Enum):
     UNION = "union"
     NOTE = "note"
     MILESTONE = "milestone"
-    # Pure configuration, never part of the case-flow graph: connects to
-    # one Annotation/Review card (via the "surface_config" edge handle,
-    # not the ordinary data "input") to mandatorily restrict which
-    # ct-annotator tools/panes/3D are available while working that job.
-    # See app/api/workflow.py's get_surface_config.
+    # Superseded by ANNOTATION_SURFACE/REVIEW_SURFACE below -- kept only
+    # because a Postgres enum value can't be cleanly dropped once it may
+    # have live rows. No new card is ever created with this type; do not
+    # reference it in new code.
     SURFACE = "surface"
+    # Pure configuration, never part of the case-flow graph: connects to
+    # one Annotation card (via the "surface_config" edge handle, not the
+    # ordinary data "input") to mandatorily restrict which ct-annotator
+    # tools/panes/3D are available while working that job. See
+    # app/api/workflow.py's get_surface_config.
+    ANNOTATION_SURFACE = "annotation_surface"
+    # Same idea, but for a Review card -- and deliberately a distinct
+    # type rather than reusing ANNOTATION_SURFACE, because the two jobs'
+    # surfaces are shaped differently: the review surface (see
+    # ct-annotator's ViewerPage reviewMode) has no tools and no 3D at
+    # all, unconditionally, so a review-only card only ever configures
+    # which MPR panes are visible -- exposing tools/show_3d checkboxes
+    # for it would just be dead UI.
+    REVIEW_SURFACE = "review_surface"
 
 
 class Study(Base):

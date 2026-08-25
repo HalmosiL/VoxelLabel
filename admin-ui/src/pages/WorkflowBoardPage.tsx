@@ -35,13 +35,14 @@ import { CARD_TEMPLATES, DRAG_DATA_FORMAT } from "../components/workflow/CardLib
 import CardLibrarySidebar from "../components/workflow/CardLibrarySidebar";
 import { isValidConnection } from "../components/workflow/handleRules";
 import AnnotationNode from "../components/workflow/nodes/AnnotationNode";
+import AnnotationSurfaceNode from "../components/workflow/nodes/AnnotationSurfaceNode";
 import DatasetNode from "../components/workflow/nodes/DatasetNode";
 import FilterNode from "../components/workflow/nodes/FilterNode";
 import MilestoneNode from "../components/workflow/nodes/MilestoneNode";
 import NoteNode from "../components/workflow/nodes/NoteNode";
 import ReviewNode from "../components/workflow/nodes/ReviewNode";
+import ReviewSurfaceNode from "../components/workflow/nodes/ReviewSurfaceNode";
 import SplitNode from "../components/workflow/nodes/SplitNode";
-import SurfaceNode from "../components/workflow/nodes/SurfaceNode";
 import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
@@ -56,7 +57,8 @@ const NODE_TYPES = {
   union: UnionNode,
   note: NoteNode,
   milestone: MilestoneNode,
-  surface: SurfaceNode,
+  annotation_surface: AnnotationSurfaceNode,
+  review_surface: ReviewSurfaceNode,
 };
 
 function cardToNode(card: WorkflowCard): CardNode {

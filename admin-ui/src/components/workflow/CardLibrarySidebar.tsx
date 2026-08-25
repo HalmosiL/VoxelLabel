@@ -1,7 +1,17 @@
 import { DragEvent, ReactNode } from "react";
 
 import { WorkflowCardConfig, WorkflowCardType } from "../../api/workflowApi";
-import { DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelIcon, MergeIcon, MonitorIcon, PencilIcon } from "../icons";
+import {
+  DatabaseIcon,
+  DocumentIcon,
+  FlagIcon,
+  ForkIcon,
+  FunnelIcon,
+  MergeIcon,
+  MonitorCheckIcon,
+  MonitorIcon,
+  PencilIcon,
+} from "../icons";
 
 export interface CardTemplate {
   type: WorkflowCardType;
@@ -86,18 +96,29 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         defaultHeight: 90,
       },
       {
-        type: "surface",
-        label: "Surface",
+        type: "annotation_surface",
+        label: "Annotation Surface",
         icon: <MonitorIcon className="h-4 w-4" />,
-        defaultTitle: "Surface",
-        // Permissive by default -- connect it to an Annotation/Review card
-        // and uncheck things to restrict; an unconnected Annotation/Review
-        // card behaves as if every tool/pane/3D were enabled regardless.
+        defaultTitle: "Annotation Surface",
+        // Permissive by default -- connect it to an Annotation card and
+        // uncheck things to restrict; an unconnected Annotation card
+        // behaves as if every tool/pane/3D were enabled regardless.
         defaultConfig: {
           tools: ["paint", "erase", "fill", "polygon", "auto", "histogram"],
           panes: ["sagittal", "coronal", "axial"],
           show_3d: true,
         },
+        defaultWidth: 200,
+        defaultHeight: 90,
+      },
+      {
+        type: "review_surface",
+        label: "Review Surface",
+        icon: <MonitorCheckIcon className="h-4 w-4" />,
+        defaultTitle: "Review Surface",
+        // No tools/3D field at all -- the review surface never has
+        // either, unconditionally, so this only ever configures panes.
+        defaultConfig: { panes: ["sagittal", "coronal", "axial"] },
         defaultWidth: 200,
         defaultHeight: 90,
       },

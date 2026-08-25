@@ -30,10 +30,24 @@ export const HANDLE_RULES: Record<WorkflowCardType, HandleRule> = {
   review: { inputHandles: ["input", "surface_config"], outputHandles: ["output"] },
   note: { inputHandles: [], outputHandles: [] },
   milestone: { inputHandles: [], outputHandles: [] },
+  // Legacy generic type these two were split from -- see its comment on
+  // WorkflowCardType. Kept connectable-nowhere (not even its own old
+  // handle) so a stray existing row can't be wired into anything new;
+  // it was never meant to be created again.
+  surface: { inputHandles: [], outputHandles: [] },
   // Pure configuration, never part of the case-flow graph -- no data
   // input of its own, and its only output is the "surface_config"
-  // channel into an Annotation/Review card.
-  surface: { inputHandles: [], outputHandles: ["surface_config"] },
+  // channel into its one matching job type (see SURFACE_TARGET_TYPE).
+  annotation_surface: { inputHandles: [], outputHandles: ["surface_config"] },
+  review_surface: { inputHandles: [], outputHandles: ["surface_config"] },
+};
+
+// A Surface card only ever pairs with its own matching job type --
+// annotation_surface with annotation, review_surface with review, never
+// interchangeably. Mirrors admin-service's create_workflow_edge.
+const SURFACE_TARGET_TYPE: Partial<Record<WorkflowCardType, WorkflowCardType>> = {
+  annotation_surface: "annotation",
+  review_surface: "review",
 };
 
 export function isValidConnection(
@@ -52,6 +66,7 @@ export function isValidConnection(
   if (resolvedSourceHandle !== resolvedTargetHandle) return false;
   if (!sourceRule.outputHandles.includes(resolvedSourceHandle)) return false;
   if (!targetRule.inputHandles.includes(resolvedTargetHandle)) return false;
+  if (resolvedSourceHandle === "surface_config" && SURFACE_TARGET_TYPE[sourceType] !== targetType) return false;
   return true;
 }
 

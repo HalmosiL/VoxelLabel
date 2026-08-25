@@ -49,27 +49,35 @@ _READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 _WRITE_ROLES = ["data_manager", "admin"]
 # Split has no output handle of its own: its result is expressed entirely
 # as materialized Dataset cards (see run_workflow_card), not a graph edge.
-# Surface is pure configuration -- it never sits in the case-flow graph,
-# so for the ordinary "input"/"output" data-flow handles it behaves like
-# Note/Milestone (no data output, no data input, never Run). It still
-# connects to an Annotation/Review card, but only via the separate
-# "surface_config" handle pair, validated on its own in
-# create_workflow_edge below -- that check runs before these sets are
-# ever consulted for a surface_config edge.
-_NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.SURFACE}
+# The two Surface types (Annotation/Review) are pure configuration --
+# they never sit in the case-flow graph, so for the ordinary
+# "input"/"output" data-flow handles they behave like Note/Milestone (no
+# data output, no data input, never Run). Each still connects to its own
+# matching job-card type, but only via the separate "surface_config"
+# handle pair, validated on its own in create_workflow_edge below -- that
+# check runs before these sets are ever consulted for a surface_config
+# edge. SURFACE (the old, single generic type both were split from) is
+# included too, purely so a stray pre-existing row of that type can't
+# accidentally become a data-flow node -- no new card is ever created
+# with it.
+_SURFACE_TYPES = {WorkflowCardType.SURFACE, WorkflowCardType.ANNOTATION_SURFACE, WorkflowCardType.REVIEW_SURFACE}
+_NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, *_SURFACE_TYPES}
 # Dataset CAN take an incoming edge -- connecting something into it and
 # running it snapshots that upstream result as this Dataset's manual case
 # list (a user-placed, general version of Split/Annotation/Review's
 # automatic "materialize" -- see the DATASET branch in run_workflow_card).
-_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.SURFACE}
-_NO_RUN_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.SURFACE}
+_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, *_SURFACE_TYPES}
+_NO_RUN_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, *_SURFACE_TYPES}
 _MATERIALIZED_DEFAULT_WIDTH = 200.0
 _MATERIALIZED_DEFAULT_HEIGHT = 90.0
 
 # The permissive default returned by get_surface_config when an
 # Annotation/Review card has no Surface card connected -- keeps
 # unrestricted jobs (the common case today) behaving exactly as before
-# this feature existed.
+# this feature existed. A Review job's *effective* config always forces
+# tools=[] and show_3d=False regardless of this default or of an
+# ANNOTATION_SURFACE's own fields (see get_surface_config) -- the review
+# surface has no tools or 3D at all, unconditionally.
 _UNRESTRICTED_SURFACE_CONFIG = {
     "tools": ["paint", "erase", "fill", "polygon", "auto", "histogram"],
     "panes": ["sagittal", "coronal", "axial"],
@@ -154,18 +162,25 @@ def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard
     return db.query(WorkflowCard).filter_by(materialized_source_card_id=card_id).all()
 
 
+_SUBMITTED_OR_LATER = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]
+
+
 def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
-    """The subset of `case_ids` that actually have a real Annotation record
-    (or, for Review, one already approved/rejected).
+    """The subset of `case_ids` that actually have a real, *deliberately
+    submitted* Annotation record (or, for Review, one already
+    approved/rejected) -- a bare draft (created on every ct-annotator
+    Save, as an in-progress version) doesn't count on its own; the
+    annotator explicitly marking a case done (ct-annotator's "Mark as
+    annotated", which saves with status=submitted) is what flips this,
+    matching what a Reviewer would actually want to see queued.
 
     No Annotation is ever created with `target_type == "study"` anywhere
     in this codebase -- ct-annotator's real save path (the segmentation
     volume workflow every other part of this session is built around)
     posts with `target_type == "series"`, and its older bbox/freehand
     path posts with `target_type == "instance"`; a `"study"`-only check
-    here could never match either, so this always undercounted to zero.
-    Checks both real paths via their own join chain up to Case, and
-    unions the results."""
+    here could never match either. Checks both real paths via their own
+    join chain up to Case, and unions the results."""
     if not case_ids:
         return []
 
@@ -182,11 +197,11 @@ def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[
         .join(Annotation, Annotation.target_id == Instance.id)
         .filter(Annotation.target_type == "instance", ImagingStudy.case_id.in_(case_ids))
     )
-    if review:
-        series_query = series_query.filter(Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]))
-        instance_query = instance_query.filter(
-            Annotation.status.in_([AnnotationStatus.APPROVED, AnnotationStatus.REJECTED])
-        )
+    status_filter = (
+        [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _SUBMITTED_OR_LATER
+    )
+    series_query = series_query.filter(Annotation.status.in_(status_filter))
+    instance_query = instance_query.filter(Annotation.status.in_(status_filter))
 
     case_ids_found = {row[0] for row in series_query.all()} | {row[0] for row in instance_query.all()}
     return sorted(str(cid) for cid in case_ids_found)
@@ -382,6 +397,14 @@ def get_surface_config(
     enabled) if none is connected -- an unrestricted job behaves exactly
     like the viewer did before this feature existed.
 
+    A Review job's *effective* tools/show_3d are always forced off here,
+    regardless of what's configured -- the review surface never has
+    tools or 3D, unconditionally (see ct-annotator's ViewerPage
+    reviewMode), so a REVIEW_SURFACE card only ever configures `panes`.
+    This keeps the response shape identical for both job types, so
+    ct-annotator's own SurfaceConfig handling doesn't need to know which
+    kind of Surface card produced it.
+
     `card_type` (the underlying job's own type, "annotation" or
     "review") rides along in every response so ct-annotator can tell a
     Review job apart from an Annotation one and switch to its
@@ -389,18 +412,23 @@ def get_surface_config(
     way for it to learn this without a second round trip."""
     card = _card_or_404(db, card_id)
     require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
+    is_review = card.type == WorkflowCardType.REVIEW
 
     edge = db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="surface_config").first()
     surface = db.get(WorkflowCard, edge.source_card_id) if edge else None
     if surface is None:
-        return {**_UNRESTRICTED_SURFACE_CONFIG, "card_type": card.type.value}
+        config = dict(_UNRESTRICTED_SURFACE_CONFIG)
+    else:
+        config = {
+            "tools": surface.config.get("tools", _UNRESTRICTED_SURFACE_CONFIG["tools"]),
+            "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
+            "show_3d": surface.config.get("show_3d", True),
+        }
 
-    return {
-        "tools": surface.config.get("tools", _UNRESTRICTED_SURFACE_CONFIG["tools"]),
-        "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
-        "show_3d": surface.config.get("show_3d", True),
-        "card_type": card.type.value,
-    }
+    if is_review:
+        config = {**config, "tools": [], "show_3d": False}
+
+    return {**config, "card_type": card.type.value}
 
 
 @router.get("/my-jobs")
@@ -459,16 +487,29 @@ def create_workflow_edge(
         raise HTTPException(status_code=422, detail="Both cards must belong to this study")
 
     if body.target_handle == "surface_config":
-        # A Surface card's connection to the Annotation/Review card it
-        # restricts -- a completely separate handle pair from the
-        # ordinary data "input"/"output" flow, so it's validated here
-        # instead of falling into the generic checks below (which would
-        # otherwise reject Surface as a source via _NO_OUTPUT_TYPES).
-        if source.type != WorkflowCardType.SURFACE:
-            raise HTTPException(status_code=422, detail="Only a Surface card can connect to a surface_config handle")
-        if target.type not in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+        # A Surface card's connection to the job card it restricts -- a
+        # completely separate handle pair from the ordinary data
+        # "input"/"output" flow, so it's validated here instead of
+        # falling into the generic checks below (which would otherwise
+        # reject a Surface type as a source via _NO_OUTPUT_TYPES). Each
+        # Surface type only pairs with its own matching job type --
+        # ANNOTATION_SURFACE with ANNOTATION, REVIEW_SURFACE with
+        # REVIEW -- not interchangeably; the legacy bare SURFACE type is
+        # never valid here, since no card is created with it anymore.
+        _SURFACE_TARGET_TYPE = {
+            WorkflowCardType.ANNOTATION_SURFACE: WorkflowCardType.ANNOTATION,
+            WorkflowCardType.REVIEW_SURFACE: WorkflowCardType.REVIEW,
+        }
+        expected_target_type = _SURFACE_TARGET_TYPE.get(source.type)
+        if expected_target_type is None:
             raise HTTPException(
-                status_code=422, detail="A surface_config connection must target an Annotation or Review card"
+                status_code=422,
+                detail="Only an Annotation Surface or Review Surface card can connect to a surface_config handle",
+            )
+        if target.type != expected_target_type:
+            raise HTTPException(
+                status_code=422,
+                detail=f"A {source.type.value} card can only connect to a {expected_target_type.value} card",
             )
         if body.source_handle != "surface_config":
             raise HTTPException(

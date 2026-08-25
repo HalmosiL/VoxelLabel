@@ -15,6 +15,9 @@ router = APIRouter(prefix="/annotations", tags=["annotations"])
 _READ_ROLES = ["viewer", "annotator", "reviewer", "admin"]
 
 
+_CREATABLE_STATUSES = {AnnotationStatus.DRAFT, AnnotationStatus.SUBMITTED}
+
+
 @router.post("/studies/{study_id}")
 def create_annotation(
     study_id: str,
@@ -22,12 +25,20 @@ def create_annotation(
     target_id: uuid.UUID,
     type_name: str,
     payload: dict,
+    status: AnnotationStatus = AnnotationStatus.DRAFT,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Create a new draft annotation. The payload is validated against the
-    registered annotation type's JSON Schema before being stored."""
+    """Create a new annotation version, as draft (an in-progress save) or
+    submitted (the annotator explicitly marking it done and ready for
+    review -- ct-annotator's "Mark as annotated") -- never approved or
+    rejected, which only the reviewer-only /review endpoint below can
+    set. The payload is validated against the registered annotation
+    type's JSON Schema before being stored."""
     require_study_role(db, study_id, user, allowed_roles=["annotator", "admin"])
+
+    if status not in _CREATABLE_STATUSES:
+        raise HTTPException(status_code=422, detail=f"Cannot create an annotation with status '{status.value}'")
 
     annotation_type = db.query(AnnotationType).filter_by(name=type_name).first()
     if annotation_type is None:
@@ -45,7 +56,7 @@ def create_annotation(
         annotator_id=user.subject,
         type_id=annotation_type.id,
         payload=payload,
-        status=AnnotationStatus.DRAFT,
+        status=status,
     )
     db.add(annotation)
     db.commit()

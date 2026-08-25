@@ -10,7 +10,12 @@ export type WorkflowCardType =
   | "union"
   | "note"
   | "milestone"
-  | "surface";
+  // "surface" is the legacy, single generic type these two were split
+  // from -- kept only so a stray pre-existing row of that type doesn't
+  // crash the board; no new card is ever created with it.
+  | "surface"
+  | "annotation_surface"
+  | "review_surface";
 
 export type WorkflowCardConfig = Record<string, unknown>;
 

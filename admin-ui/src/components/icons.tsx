@@ -112,3 +112,16 @@ export function MonitorIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export function MonitorCheckIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M2 5a2 2 0 012-2h12a2 2 0 012 2v7a2 2 0 01-2 2h-4.5l.5 2h1.5a1 1 0 110 2h-7a1 1 0 110-2h1.5l.5-2H4a2 2 0 01-2-2V5z" opacity={0.35} />
+      <path
+        fillRule="evenodd"
+        d="M15.28 6.72a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 01-1.06 0l-1.5-1.5a.75.75 0 111.06-1.06l.97.97 2.97-2.97a.75.75 0 011.06 0z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}

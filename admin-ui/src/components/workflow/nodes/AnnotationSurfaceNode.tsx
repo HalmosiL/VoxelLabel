@@ -5,7 +5,7 @@ import { MonitorIcon } from "../../icons";
 import { CardNode } from "../types";
 import WorkflowNodeShell from "./WorkflowNodeShell";
 
-function SurfaceNode({ data, selected }: NodeProps<CardNode>) {
+function AnnotationSurfaceNode({ data, selected }: NodeProps<CardNode>) {
   const { card } = data;
   const tools = Array.isArray(card.config.tools) ? (card.config.tools as string[]) : [];
   const panes = Array.isArray(card.config.panes) ? (card.config.panes as string[]) : [];
@@ -25,4 +25,4 @@ function SurfaceNode({ data, selected }: NodeProps<CardNode>) {
   );
 }
 
-export default memo(SurfaceNode);
+export default memo(AnnotationSurfaceNode);
