@@ -37,7 +37,7 @@ export default function JobDetailPage() {
   }
 
   const style = TASK_STATUS_STYLE[job.status] ?? TASK_STATUS_STYLE.todo;
-  const annotatedCount = job.cases.filter((c) => c.annotated).length;
+  const annotatedCount = job.cases.filter((c) => c.status === "done").length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -87,7 +87,7 @@ export default function JobDetailPage() {
                 </tr>
               )}
               {job.cases.map((c) => {
-                const caseStyle = CASE_STATUS_STYLE[c.annotated ? "annotated" : "not_annotated"];
+                const caseStyle = CASE_STATUS_STYLE[c.status];
                 return (
                   <tr key={c.id}>
                     <td>{c.title || `${c.id.slice(0, 8)}…`}</td>

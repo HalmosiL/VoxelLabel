@@ -150,6 +150,12 @@ export function getSurfaceConfig(cardId: string): Promise<SurfaceConfig> {
   return apiFetch(base, `/admin/workflow-cards/${cardId}/surface-config`);
 }
 
+// A case's real status within a job's scope -- "done" (submitted-or-
+// approved for Annotation, approved for Review), "rejected" (needs
+// rework, kept distinct from "pending" so it doesn't read as untouched),
+// or "pending" (nothing submitted yet, or awaiting a review decision).
+export type CaseStatus = "done" | "rejected" | "pending";
+
 export interface MyJob {
   study_id: string;
   study_name: string | null;
@@ -157,7 +163,7 @@ export interface MyJob {
   card_title: string;
   card_type: WorkflowCardType;
   status: string;
-  cases: { id: string; title: string | null; annotated: boolean }[];
+  cases: { id: string; title: string | null; status: CaseStatus }[];
 }
 
 /** Every Annotation/Review card assigned to the calling user, across
@@ -169,7 +175,7 @@ export function listMyJobs(): Promise<MyJob[]> {
 export interface WorkflowCardCase {
   id: string;
   title: string | null;
-  annotated: boolean;
+  status: CaseStatus;
   // Review cards only: id of the latest Annotation record if it's still
   // awaiting a decision, null once approved/rejected or if nothing's
   // been submitted yet. Backs the Study page's per-case Approve/Reject

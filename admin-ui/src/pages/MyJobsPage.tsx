@@ -27,7 +27,7 @@ export default function MyJobsPage() {
   // sitting there as dead weight. It reappears the moment a case lands
   // back in its scope (e.g. a rejected case fed back through the
   // workflow board's feedback loop).
-  const pending = jobs?.filter((job) => job.cases.some((c) => !c.annotated)) ?? null;
+  const pending = jobs?.filter((job) => job.cases.some((c) => c.status !== "done")) ?? null;
   const sorted = pending
     ? [...pending].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99))
     : null;

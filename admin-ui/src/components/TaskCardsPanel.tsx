@@ -246,7 +246,7 @@ function CardCaseList({
       {error && <p className="alert-error mb-2">{error}</p>}
       <ul className="flex flex-col gap-1">
         {cases.map((c) => {
-          const caseStyle = CASE_STATUS_STYLE[c.annotated ? "annotated" : "not_annotated"];
+          const caseStyle = CASE_STATUS_STYLE[c.status];
           return (
             <li key={c.id} className="flex items-center justify-between gap-3 py-0.5">
               <Link

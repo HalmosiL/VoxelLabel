@@ -552,17 +552,52 @@ def list_my_jobs(
     return result
 
 
+def _case_status(entry, review: bool) -> str:
+    """Classifies a case's single latest Annotation (see
+    `_latest_annotation_per_case`, `None` if it has none at all) into one
+    of three states worth showing distinctly, rather than collapsing
+    "rejected -- needs rework" into the same "not annotated" bucket a
+    case that was simply never touched would show:
+    - "done": submitted-or-approved for an Annotation card; approved for
+      a Review card.
+    - "rejected": needs rework -- kept separate so it doesn't read as
+      "nothing has happened here yet".
+    - "pending": nothing submitted yet (Annotation), or awaiting a
+      decision (Review, including a bare SUBMITTED with no decision)."""
+    if entry is None:
+        return "pending"
+    status = entry[1]
+    if status == AnnotationStatus.REJECTED:
+        return "rejected"
+    if review:
+        return "done" if status == AnnotationStatus.APPROVED else "pending"
+    return "done" if status in (AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED) else "pending"
+
+
 def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
     """The Annotation/Review card's case scope, each case's title
-    alongside whether it's actually annotated (submitted-or-later, or
-    for a Review card, approved/rejected) -- shared by list_my_jobs and
-    get_workflow_card_cases (the Study page's per-row expand)."""
+    alongside its status (see `_case_status`) -- shared by list_my_jobs
+    and get_workflow_card_cases (the Study page's per-row expand). For a
+    Review card, each case also carries `pending_annotation_id`: the id
+    of its latest Annotation record if that record is still SUBMITTED
+    (awaiting a decision) -- null otherwise. Backs the Study page's
+    Approve/Reject buttons, which need the actual annotation id to
+    decide on, not just its status."""
     case_ids = card.output_case_ids or []
     if not case_ids:
         return []
     cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
-    annotated_ids = set(_annotated_case_ids(db, case_ids, review=card.type == WorkflowCardType.REVIEW))
-    return [{"id": str(c.id), "title": c.title, "annotated": str(c.id) in annotated_ids} for c in cases]
+    review = card.type == WorkflowCardType.REVIEW
+    latest_per_case = _latest_annotation_per_case(db, case_ids)
+
+    result = []
+    for c in cases:
+        entry = latest_per_case.get(c.id)
+        case = {"id": str(c.id), "title": c.title, "status": _case_status(entry, review)}
+        if review:
+            case["pending_annotation_id"] = str(entry[0]) if entry and entry[1] == AnnotationStatus.SUBMITTED else None
+        result.append(case)
+    return result
 
 
 @router.get("/workflow-cards/{card_id}/cases")
@@ -571,30 +606,13 @@ def get_workflow_card_cases(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    """Same per-case annotated/not-annotated breakdown list_my_jobs
-    already returns per card, just reachable for any Annotation/Review
-    card the caller can see (not only their own assigned ones) -- backs
-    the expandable row on the Study page's Annotations/Reviews tables.
-
-    For a Review card, each case also carries `pending_annotation_id`:
-    the id of its latest Annotation record if that record is still
-    SUBMITTED (awaiting a decision) -- null once approved/rejected, or
-    if nothing's been submitted yet. Backs the Approve/Reject buttons on
-    that same expandable row, which need the actual annotation id to
-    decide on, not just the yes/no "annotated" flag."""
+    """Same per-case status breakdown list_my_jobs already returns per
+    card, just reachable for any Annotation/Review card the caller can
+    see (not only their own assigned ones) -- backs the expandable row
+    on the Study page's Annotations/Reviews tables."""
     card = _card_or_404(db, card_id)
     require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
-    result = _cases_with_annotated_status(db, card)
-
-    if card.type == WorkflowCardType.REVIEW:
-        latest_per_case = _latest_annotation_per_case(db, card.output_case_ids or [])
-        for case in result:
-            entry = latest_per_case.get(uuid.UUID(case["id"]))
-            case["pending_annotation_id"] = (
-                str(entry[0]) if entry and entry[1] == AnnotationStatus.SUBMITTED else None
-            )
-
-    return result
+    return _cases_with_annotated_status(db, card)
 
 
 @router.post("/studies/{study_id}/workflow/edges", status_code=201)
