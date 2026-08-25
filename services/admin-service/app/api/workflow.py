@@ -162,7 +162,7 @@ def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard
     return db.query(WorkflowCard).filter_by(materialized_source_card_id=card_id).all()
 
 
-_SUBMITTED_OR_LATER = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]
+_ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 
 
 def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
@@ -173,6 +173,15 @@ def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[
     annotator explicitly marking a case done (ct-annotator's "Mark as
     annotated", which saves with status=submitted) is what flips this,
     matching what a Reviewer would actually want to see queued.
+
+    REJECTED is deliberately excluded from the Annotation side (though
+    still counted on the Review side, below): a rejection means the case
+    needs rework, so it should fall back out of the Annotation job's own
+    "annotated" count rather than keep showing as done -- the annotator
+    then sees it drop out of their completed total (and back out of a
+    job that had reached "done"), no separate rework queue needed. If
+    they resubmit, the new Annotation row's own SUBMITTED status counts
+    it again, regardless of the older REJECTED row still sitting there.
 
     No Annotation is ever created with `target_type == "study"` anywhere
     in this codebase -- ct-annotator's real save path (the segmentation
@@ -197,9 +206,7 @@ def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[
         .join(Annotation, Annotation.target_id == Instance.id)
         .filter(Annotation.target_type == "instance", ImagingStudy.case_id.in_(case_ids))
     )
-    status_filter = (
-        [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _SUBMITTED_OR_LATER
-    )
+    status_filter = [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _ANNOTATED_STATUSES
     series_query = series_query.filter(Annotation.status.in_(status_filter))
     instance_query = instance_query.filter(Annotation.status.in_(status_filter))
 
