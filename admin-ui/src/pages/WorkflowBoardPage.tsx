@@ -87,11 +87,15 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
  * WorkflowEdge (materialized Dataset cards have no real input), so these
  * are recomputed client-side from each card's materialized_card_id(s)
  * rather than fetched, and marked non-deletable/non-selectable so they
- * can't be mistaken for a user-drawn connection. */
+ * can't be mistaken for a user-drawn connection. Split (part_0, part_1,
+ * ...) and Review (approved, rejected) both materialize more than one
+ * child, so both use the plural materialized_card_ids map; Annotation
+ * still materializes exactly one ("(annotated)"), via the singular
+ * materialized_card_id. */
 function materializationEdges(cards: WorkflowCard[]): Edge[] {
   const edges: Edge[] = [];
   for (const card of cards) {
-    if (card.type === "split" && card.materialized_card_ids) {
+    if ((card.type === "split" || card.type === "review") && card.materialized_card_ids) {
       for (const childId of Object.values(card.materialized_card_ids)) {
         edges.push({
           id: `materialize-${card.id}-${childId}`,
@@ -106,7 +110,7 @@ function materializationEdges(cards: WorkflowCard[]): Edge[] {
           focusable: false,
         });
       }
-    } else if ((card.type === "annotation" || card.type === "review") && card.materialized_card_id) {
+    } else if (card.type === "annotation" && card.materialized_card_id) {
       edges.push({
         id: `materialize-${card.id}-${card.materialized_card_id}`,
         source: card.id,

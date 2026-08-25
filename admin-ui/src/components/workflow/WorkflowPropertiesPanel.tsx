@@ -528,7 +528,9 @@ function TaskFields({
           checked={materializeDataset}
           onChange={(e) => onPatch(card.id, { config: { ...card.config, materialize_dataset: e.target.checked } })}
         />
-        Also create/update a Dataset card of just the annotated cases
+        {card.type === "review"
+          ? "Also create/update Dataset cards for the approved and rejected cases"
+          : "Also create/update a Dataset card of just the annotated cases"}
       </label>
       <RunButton card={card} onRun={onRun} running={running} label="Refresh from upstream" />
       <LastRun card={card} />
@@ -539,7 +541,27 @@ function TaskFields({
         </p>
       )}
       {card.output_case_ids && <CaseLinks ids={ids} studyId={studyId} cases={cases} />}
-      {card.materialized_card_id && (
+      {card.type === "review" && card.materialized_card_ids && (
+        <div className="flex flex-col items-start gap-1">
+          {card.materialized_card_ids.approved && (
+            <button
+              onClick={() => onSelectCard(card.materialized_card_ids!.approved)}
+              className="text-xs font-medium text-brand-600 hover:text-brand-700"
+            >
+              → Open approved dataset card
+            </button>
+          )}
+          {card.materialized_card_ids.rejected && (
+            <button
+              onClick={() => onSelectCard(card.materialized_card_ids!.rejected)}
+              className="text-xs font-medium text-brand-600 hover:text-brand-700"
+            >
+              → Open rejected dataset card (feed this back into Annotation for rework)
+            </button>
+          )}
+        </div>
+      )}
+      {card.type === "annotation" && card.materialized_card_id && (
         <button
           onClick={() => onSelectCard(card.materialized_card_id!)}
           className="self-start text-xs font-medium text-brand-600 hover:text-brand-700"

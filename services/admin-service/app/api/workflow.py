@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
@@ -165,23 +164,39 @@ def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard
 _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 
 
-def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
-    """The subset of `case_ids` that actually have a real, *deliberately
-    submitted* Annotation record (or, for Review, one already
-    approved/rejected) -- a bare draft (created on every ct-annotator
-    Save, as an in-progress version) doesn't count on its own; the
-    annotator explicitly marking a case done (ct-annotator's "Mark as
-    annotated", which saves with status=submitted) is what flips this,
-    matching what a Reviewer would actually want to see queued.
+def _latest_annotation_status_by_target(db: Session, target_type: str, target_ids: set) -> dict:
+    """Maps each of `target_ids` (all the same `target_type`) to its most
+    recently created Annotation's status -- "latest version" the same way
+    annotation-service's list_annotations_for_target already defines it
+    (oldest-first by created_at; the last one is current). Uses
+    Postgres's DISTINCT ON to pick that one row per target directly in
+    SQL, rather than fetching full history and reducing in Python.
 
-    REJECTED is deliberately excluded from the Annotation side (though
-    still counted on the Review side, below): a rejection means the case
-    needs rework, so it should fall back out of the Annotation job's own
-    "annotated" count rather than keep showing as done -- the annotator
-    then sees it drop out of their completed total (and back out of a
-    job that had reached "done"), no separate rework queue needed. If
-    they resubmit, the new Annotation row's own SUBMITTED status counts
-    it again, regardless of the older REJECTED row still sitting there.
+    This matters because a target accumulates many Annotation rows over
+    its lifetime (every draft Save, every submit, every review decision)
+    -- without restricting to the latest, a target rejected once and
+    later resubmitted-and-approved would still match "ever rejected",
+    which would make Review's "(approved)" and "(rejected)" branches
+    (below) show the same case in both forever instead of reflecting its
+    current decision."""
+    if not target_ids:
+        return {}
+    rows = (
+        db.query(Annotation.target_id, Annotation.status)
+        .filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids))
+        .order_by(Annotation.target_id, Annotation.created_at.desc())
+        .distinct(Annotation.target_id)
+        .all()
+    )
+    return {row[0]: row[1] for row in rows}
+
+
+def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus]) -> list[str]:
+    """The subset of `case_ids` whose *latest* Annotation record (see
+    `_latest_annotation_status_by_target`) is in one of `statuses`.
+    Shared by `_annotated_case_ids` (combined submitted-or-approved /
+    approved-or-rejected checks) and Review's per-decision materialization
+    (approved-only, rejected-only), below.
 
     No Annotation is ever created with `target_type == "study"` anywhere
     in this codebase -- ct-annotator's real save path (the segmentation
@@ -193,25 +208,53 @@ def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[
     if not case_ids:
         return []
 
-    series_query = (
-        db.query(func.distinct(ImagingStudy.case_id))
+    series_rows = (
+        db.query(ImagingStudy.case_id, Series.id)
         .join(Series, Series.imaging_study_id == ImagingStudy.id)
-        .join(Annotation, Annotation.target_id == Series.id)
-        .filter(Annotation.target_type == "series", ImagingStudy.case_id.in_(case_ids))
+        .filter(ImagingStudy.case_id.in_(case_ids))
+        .all()
     )
-    instance_query = (
-        db.query(func.distinct(ImagingStudy.case_id))
+    instance_rows = (
+        db.query(ImagingStudy.case_id, Instance.id)
         .join(Series, Series.imaging_study_id == ImagingStudy.id)
         .join(Instance, Instance.series_id == Series.id)
-        .join(Annotation, Annotation.target_id == Instance.id)
-        .filter(Annotation.target_type == "instance", ImagingStudy.case_id.in_(case_ids))
+        .filter(ImagingStudy.case_id.in_(case_ids))
+        .all()
     )
-    status_filter = [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _ANNOTATED_STATUSES
-    series_query = series_query.filter(Annotation.status.in_(status_filter))
-    instance_query = instance_query.filter(Annotation.status.in_(status_filter))
 
-    case_ids_found = {row[0] for row in series_query.all()} | {row[0] for row in instance_query.all()}
-    return sorted(str(cid) for cid in case_ids_found)
+    series_status = _latest_annotation_status_by_target(db, "series", {row[1] for row in series_rows})
+    instance_status = _latest_annotation_status_by_target(db, "instance", {row[1] for row in instance_rows})
+
+    matched_case_ids = set()
+    for case_id, series_id in series_rows:
+        if series_status.get(series_id) in statuses:
+            matched_case_ids.add(case_id)
+    for case_id, instance_id in instance_rows:
+        if instance_status.get(instance_id) in statuses:
+            matched_case_ids.add(case_id)
+
+    return sorted(str(cid) for cid in matched_case_ids)
+
+
+def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
+    """The subset of `case_ids` that actually have a real, *deliberately
+    submitted* Annotation record (or, for Review, one already
+    approved/rejected) -- a bare draft (created on every ct-annotator
+    Save, as an in-progress version) doesn't count on its own; the
+    annotator explicitly marking a case done (ct-annotator's "Mark as
+    annotated", which saves with status=submitted) is what flips this,
+    matching what a Reviewer would actually want to see queued.
+
+    REJECTED is deliberately excluded from the Annotation side (though
+    still counted on the Review side, here): a rejection means the case
+    needs rework, so it should fall back out of the Annotation job's own
+    "annotated" count rather than keep showing as done -- the annotator
+    then sees it drop out of their completed total (and back out of a
+    job that had reached "done"), no separate rework queue needed. If
+    they resubmit, the new Annotation row's own SUBMITTED status counts
+    it again, regardless of the older REJECTED row still sitting there."""
+    statuses = [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _ANNOTATED_STATUSES
+    return _case_ids_with_status(db, case_ids, statuses)
 
 
 def _annotation_progress(db: Session, case_ids: list[str], review: bool) -> dict:
@@ -250,11 +293,15 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
             db, output_case_ids, review=card.type == WorkflowCardType.REVIEW
         )
 
-    if card.type == WorkflowCardType.SPLIT:
+    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.REVIEW):
+        # Split materializes one Dataset per part (part_0, part_1, ...);
+        # Review materializes one per decision (approved, rejected) -- the
+        # "rejected" one is what a feedback edge back into an Annotation
+        # card is drawn from. Same plural shape for both.
         result["materialized_card_ids"] = {
             c.materialized_source_handle: str(c.id) for c in _materialized_children(db, card.id)
         }
-    elif card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+    elif card.type == WorkflowCardType.ANNOTATION:
         children = _materialized_children(db, card.id)
         result["materialized_card_id"] = str(children[0].id) if children else None
 
@@ -830,21 +877,32 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
             all_ids.extend(_resolve_output(db, source, set()))
         card.output_case_ids = _dedupe_sorted(all_ids)
 
-    elif card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
-        # Pure pass-through of the resolved input -- the "work" this Run
-        # does is refreshing which cases are in scope after an upstream
-        # change. The actual assignment (assignee/status) lives in
-        # `config`, edited via PATCH, not Run.
-        edge = _single_incoming_edge(db, card)
-        source = _card_or_404(db, edge.source_card_id)
-        card.output_case_ids = _resolve_output(db, source, set())
+    elif card.type == WorkflowCardType.ANNOTATION:
+        # Union of every incoming source's cases (not "exactly one" like
+        # Filter/Dataset/Review) -- this is what lets a Review card's
+        # "(rejected)" materialized branch feed back into an Annotation
+        # card as a second input alongside its original source, forming
+        # a real feedback loop: Annotation -> Review -> back into
+        # Annotation. Safe against cycles because Run only ever reads
+        # each upstream card's already-computed, stored output_case_ids
+        # (or a manual Dataset's static case_ids) -- never a live
+        # recursive walk -- so there's no infinite loop, just a snapshot
+        # from whenever each side was last Run.
+        incoming = db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="input").all()
+        if not incoming:
+            raise HTTPException(status_code=422, detail="Annotation requires at least one incoming connection")
+        all_ids = []
+        for edge in incoming:
+            source = _card_or_404(db, edge.source_card_id)
+            all_ids.extend(_resolve_output(db, source, set()))
+        card.output_case_ids = _dedupe_sorted(all_ids)
 
         if card.config.get("materialize_dataset"):
-            # Only the subset with a real Annotation record (or, for
-            # Review, one already approved/rejected) -- not every case the
-            # card happens to be assigned, which would include ones no one
-            # has actually annotated yet.
-            case_ids = _annotated_case_ids(db, card.output_case_ids, review=card.type == WorkflowCardType.REVIEW)
+            # Only the subset with a real, submitted-or-approved
+            # Annotation record -- not every case the card happens to be
+            # assigned, which would include ones no one has actually
+            # annotated yet.
+            case_ids = _annotated_case_ids(db, card.output_case_ids, review=False)
             children = _materialized_children(db, card.id)
             title = f"{card.title} (annotated)"
             if not children:
@@ -866,15 +924,58 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
                 children[0].title = title
                 children[0].config = {**children[0].config, "mode": "manual", "case_ids": case_ids}
 
+    elif card.type == WorkflowCardType.REVIEW:
+        # Pure pass-through of the resolved input -- the "work" this Run
+        # does is refreshing which cases are in scope after an upstream
+        # change. The actual assignment (assignee/status) lives in
+        # `config`, edited via PATCH, not Run.
+        edge = _single_incoming_edge(db, card)
+        source = _card_or_404(db, edge.source_card_id)
+        card.output_case_ids = _resolve_output(db, source, set())
+
+        if card.config.get("materialize_dataset"):
+            # Two branches, not one combined pool: "(approved)" for
+            # cases that passed review, "(rejected)" for cases that need
+            # rework -- a feedback edge from "(rejected)" back into an
+            # Annotation card's input is exactly how that rework gets
+            # requeued to the annotator.
+            existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
+            branches = {
+                "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED]),
+                "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED]),
+            }
+            for index, (handle, case_ids) in enumerate(branches.items()):
+                title = f"{card.title} ({handle})"
+                child = existing_children.get(handle)
+                if child is None:
+                    db.add(
+                        WorkflowCard(
+                            study_id=card.study_id,
+                            type=WorkflowCardType.DATASET,
+                            title=title,
+                            position_x=card.position_x + 260,
+                            position_y=card.position_y + index * 140,
+                            width=_MATERIALIZED_DEFAULT_WIDTH,
+                            height=_MATERIALIZED_DEFAULT_HEIGHT,
+                            config={"mode": "manual", "case_ids": case_ids},
+                            materialized_source_card_id=card.id,
+                            materialized_source_handle=handle,
+                        )
+                    )
+                else:
+                    child.title = title
+                    child.config = {**child.config, "mode": "manual", "case_ids": case_ids}
+
     card.last_run_at = datetime.now(timezone.utc)
     db.commit()
 
 
 def _downstream_cards(db: Session, card: WorkflowCard) -> list[WorkflowCard]:
     """Every card with a real "output" -> "input" data-flow edge from
-    `card` *or* from whichever Dataset card `card` just materialized
-    (its "(annotated)"/Split-part child) -- a user typically draws the
-    next edge from that materialized Dataset, not from the Annotation/
+    `card` *or* from whichever Dataset card(s) `card` just materialized
+    (its "(annotated)" Annotation child, "(approved)"/"(rejected)"
+    Review children, or Split-part children) -- a user typically draws
+    the next edge from a materialized Dataset, not from the Annotation/
     Review/Split card itself, so both sources need checking."""
     source_ids = {card.id} | {c.id for c in _materialized_children(db, card.id)}
     edges = db.query(WorkflowEdge).filter(WorkflowEdge.source_card_id.in_(source_ids), WorkflowEdge.source_handle == "output").all()
@@ -887,9 +988,14 @@ def _cascade_run(db: Session, card: WorkflowCard, visited: set[uuid.UUID]) -> No
     as run_workflow_card's own top-level ripple -- recursive so a chain
     like Annotation -> (annotated) -> Review -> (annotated) -> Union all
     refreshes together. `visited` is cycle protection (same idea as
-    _resolve_output's), not expected to ever matter on a real board
-    since Run preconditions already reject most cyclic wiring, but a
-    stray Union-back-into-itself shouldn't infinite-loop this."""
+    _resolve_output's) -- genuinely needed now, not just defensive: a
+    Review's "(rejected)" branch feeding back into an Annotation card's
+    input is a real, intended cycle (see the ANNOTATION branch of
+    _run_one_card), so cascading a Run from Annotation can reach Review
+    can reach back to that same Annotation card. `visited` stops the
+    cascade there rather than looping -- that card just doesn't get a
+    second Run within the same cascade; a rejection surfaces on its next
+    explicit Run."""
     if card.id in visited or card.type in _NO_RUN_TYPES:
         return
     visited = visited | {card.id}
