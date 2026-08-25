@@ -79,8 +79,11 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
     sourceHandle: edge.source_handle,
     target: edge.target_card_id,
     targetHandle: edge.target_handle,
-    // Right-angled routing instead of the default bezier curve.
+    // Right-angled routing instead of the default bezier curve, and
+    // draggable by either endpoint (see handleReconnect) to rewire it
+    // onto a different card/handle without deleting and redrawing.
     type: "step",
+    reconnectable: true,
   };
 }
 
@@ -228,6 +231,40 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       target_handle: connection.targetHandle ?? "input",
     })
       .then((edge) => setEdges((eds) => [...eds, edgeToRFEdge(edge)]))
+      .catch((err) => setError(String(err)));
+  }
+
+  /** Dragging an existing edge's endpoint onto a different handle rewires
+   * it -- there's no PATCH for an edge's endpoints server-side (each edge
+   * is an immutable created/deleted row, like everywhere else in this
+   * graph), so this deletes the old one and creates a new one, then
+   * swaps it into place in local state once the new id comes back. */
+  function handleReconnect(oldEdge: Edge, newConnection: Connection) {
+    const sourceNode = nodes.find((n) => n.id === newConnection.source);
+    const targetNode = nodes.find((n) => n.id === newConnection.target);
+    if (!sourceNode || !targetNode) return;
+    if (
+      !isValidConnection(
+        sourceNode.data.card.type,
+        newConnection.sourceHandle,
+        targetNode.data.card.type,
+        newConnection.targetHandle
+      )
+    ) {
+      setError("That connection isn't allowed between these card types.");
+      return;
+    }
+    history.record(nodes, realEdges);
+    Promise.all([
+      deleteWorkflowEdge(oldEdge.id),
+      createWorkflowEdge(studyId, {
+        source_card_id: newConnection.source,
+        source_handle: newConnection.sourceHandle ?? "output",
+        target_card_id: newConnection.target,
+        target_handle: newConnection.targetHandle ?? "input",
+      }),
+    ])
+      .then(([, edge]) => setEdges((eds) => eds.map((e) => (e.id === oldEdge.id ? edgeToRFEdge(edge) : e))))
       .catch((err) => setError(String(err)));
   }
 
@@ -440,6 +477,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onNodeDragStart={handleNodeDragStart}
             onNodeDragStop={handleNodeDragStop}
             onConnect={handleConnect}
+            onReconnect={handleReconnect}
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
             deleteKeyCode={["Backspace", "Delete"]}
