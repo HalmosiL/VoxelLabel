@@ -2,7 +2,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { memo } from "react";
 
 import Avatar from "../../Avatar";
-import { DocumentIcon } from "../../icons";
+import { DocumentIcon, QuestionMarkCircleIcon } from "../../icons";
 import { CardNode } from "../types";
 import { TASK_STATUS_STYLE } from "../statusStyle";
 import WorkflowNodeShell from "./WorkflowNodeShell";
@@ -23,7 +23,10 @@ function ReviewNode({ data, selected }: NodeProps<CardNode>) {
             <span className="truncate text-xs text-gray-600">{assignedUserId.slice(0, 8)}…</span>
           </div>
         ) : (
-          <span className="hint text-xs">unassigned</span>
+          <span className="flex items-center gap-1 text-xs text-red-500" title="Nobody is assigned to this job">
+            <QuestionMarkCircleIcon className="h-3.5 w-3.5" />
+            unassigned
+          </span>
         )}
         <span className={style.badge}>
           <span className={`badge-dot ${style.dot}`} />

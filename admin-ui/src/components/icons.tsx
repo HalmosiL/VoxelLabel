@@ -113,6 +113,18 @@ export function MonitorIcon({ className }: { className?: string }) {
   );
 }
 
+export function QuestionMarkCircleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M18 10a8 8 0 10-16 0 8 8 0 0016 0zM8.94 6.94a.75.75 0 11-1.061-1.061 3 3 0 112.871 5.026v.345a.75.75 0 01-1.5 0v-.5c0-.72.57-1.172 1.081-1.417.34-.163.582-.483.582-.882a1.5 1.5 0 00-2.973-.51zM10 15a1 1 0 100-2 1 1 0 000 2z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
 export function MonitorCheckIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">
