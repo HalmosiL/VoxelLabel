@@ -75,6 +75,12 @@ export default function TaskCardsPanel({
     updateWorkflowCard(card.id, { config }).catch((err) => setError(String(err)));
   }
 
+  function handleStatusChange(card: WorkflowCard, status: string) {
+    const config = { ...card.config, status };
+    setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, config } : c)));
+    updateWorkflowCard(card.id, { config }).catch((err) => setError(String(err)));
+  }
+
   return (
     <div className="card">
       <SectionHeader
@@ -152,11 +158,21 @@ export default function TaskCardsPanel({
                         </select>
                       </div>
                     </td>
-                    <td>
-                      <span className={style.badge}>
-                        <span className={`badge-dot ${style.dot}`} />
-                        {style.label}
-                      </span>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`badge-dot ${style.dot} flex-shrink-0`} />
+                        <select
+                          className="input w-auto max-w-[8rem] truncate border-none bg-transparent px-0 py-0.5 text-xs text-gray-600 shadow-none focus:ring-0"
+                          value={status}
+                          onChange={(e) => handleStatusChange(card, e.target.value)}
+                        >
+                          {Object.entries(TASK_STATUS_STYLE).map(([value, s]) => (
+                            <option key={value} value={value}>
+                              {s.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </td>
                     <td className="text-xs text-gray-600">
                       {progress ? `${progress.annotated} of ${progress.total} ${progressLabel}` : "not run yet"}
