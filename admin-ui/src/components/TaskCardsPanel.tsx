@@ -2,6 +2,7 @@ import { Fragment, ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { KeycloakUser, listKeycloakUsers } from "../api/adminApi";
+import { reviewAnnotation } from "../api/annotationApi";
 import {
   getWorkflowBoard,
   getWorkflowCardCases,
@@ -54,19 +55,21 @@ export default function TaskCardsPanel({
       .catch(() => setUsers([]));
   }, [studyId, cardType]);
 
+  function loadCases(cardId: string) {
+    setLoadingId(cardId);
+    getWorkflowCardCases(cardId)
+      .then((cases) => setCasesByCard((prev) => ({ ...prev, [cardId]: cases })))
+      .catch((err) => setError(String(err)))
+      .finally(() => setLoadingId(null));
+  }
+
   function toggleExpand(cardId: string) {
     if (expandedId === cardId) {
       setExpandedId(null);
       return;
     }
     setExpandedId(cardId);
-    if (!casesByCard[cardId]) {
-      setLoadingId(cardId);
-      getWorkflowCardCases(cardId)
-        .then((cases) => setCasesByCard((prev) => ({ ...prev, [cardId]: cases })))
-        .catch((err) => setError(String(err)))
-        .finally(() => setLoadingId(null));
-    }
+    if (!casesByCard[cardId]) loadCases(cardId);
   }
 
   function handleAssign(card: WorkflowCard, userId: string) {
@@ -184,7 +187,13 @@ export default function TaskCardsPanel({
                         {loadingId === card.id ? (
                           <p className="hint py-2">Loading cases…</p>
                         ) : (
-                          <CardCaseList studyId={studyId} cardId={card.id} cases={casesByCard[card.id] ?? []} />
+                          <CardCaseList
+                            studyId={studyId}
+                            cardId={card.id}
+                            cardType={cardType}
+                            cases={casesByCard[card.id] ?? []}
+                            onReviewed={() => loadCases(card.id)}
+                          />
                         )}
                       </td>
                     </tr>
@@ -199,30 +208,82 @@ export default function TaskCardsPanel({
   );
 }
 
-function CardCaseList({ studyId, cardId, cases }: { studyId: string; cardId: string; cases: WorkflowCardCase[] }) {
+function CardCaseList({
+  studyId,
+  cardId,
+  cardType,
+  cases,
+  onReviewed,
+}: {
+  studyId: string;
+  cardId: string;
+  cardType: WorkflowCardType;
+  cases: WorkflowCardCase[];
+  onReviewed: () => void;
+}) {
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   if (cases.length === 0) {
     return <p className="hint py-2">No cases in scope yet -- run this card on the workflow board.</p>;
   }
+
+  async function handleDecision(annotationId: string, decision: "approve" | "reject") {
+    setDecidingId(annotationId);
+    setError(null);
+    try {
+      await reviewAnnotation(annotationId, decision);
+      onReviewed();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDecidingId(null);
+    }
+  }
+
   return (
-    <ul className="flex flex-col gap-1 py-2">
-      {cases.map((c) => {
-        const caseStyle = CASE_STATUS_STYLE[c.annotated ? "annotated" : "not_annotated"];
-        return (
-          <li key={c.id} className="flex items-center justify-between gap-3 py-0.5">
-            <Link
-              to={`/studies/${studyId}/cases/${c.id}?jobId=${cardId}`}
-              className="truncate text-sm text-brand-600 hover:text-brand-700"
-            >
-              {c.title || `${c.id.slice(0, 8)}…`}
-            </Link>
-            <span className={`${caseStyle.badge} flex-shrink-0`}>
-              <span className={`badge-dot ${caseStyle.dot}`} />
-              {caseStyle.label}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="py-2">
+      {error && <p className="alert-error mb-2">{error}</p>}
+      <ul className="flex flex-col gap-1">
+        {cases.map((c) => {
+          const caseStyle = CASE_STATUS_STYLE[c.annotated ? "annotated" : "not_annotated"];
+          return (
+            <li key={c.id} className="flex items-center justify-between gap-3 py-0.5">
+              <Link
+                to={`/studies/${studyId}/cases/${c.id}?jobId=${cardId}`}
+                className="truncate text-sm text-brand-600 hover:text-brand-700"
+              >
+                {c.title || `${c.id.slice(0, 8)}…`}
+              </Link>
+              <div className="flex flex-shrink-0 items-center gap-2">
+                {cardType === "review" && c.pending_annotation_id && (
+                  <>
+                    <button
+                      onClick={() => handleDecision(c.pending_annotation_id!, "approve")}
+                      disabled={decidingId === c.pending_annotation_id}
+                      className="btn-secondary btn-sm"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleDecision(c.pending_annotation_id!, "reject")}
+                      disabled={decidingId === c.pending_annotation_id}
+                      className="btn-danger btn-sm"
+                    >
+                      Reject
+                    </button>
+                  </>
+                )}
+                <span className={caseStyle.badge}>
+                  <span className={`badge-dot ${caseStyle.dot}`} />
+                  {caseStyle.label}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

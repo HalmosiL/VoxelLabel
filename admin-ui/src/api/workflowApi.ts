@@ -170,6 +170,11 @@ export interface WorkflowCardCase {
   id: string;
   title: string | null;
   annotated: boolean;
+  // Review cards only: id of the latest Annotation record if it's still
+  // awaiting a decision, null once approved/rejected or if nothing's
+  // been submitted yet. Backs the Study page's per-case Approve/Reject
+  // buttons.
+  pending_annotation_id?: string | null;
 }
 
 /** Same per-case annotated/not-annotated breakdown listMyJobs already

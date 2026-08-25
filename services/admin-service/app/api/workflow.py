@@ -166,7 +166,7 @@ _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 
 def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set) -> dict:
     """Maps each of `target_ids` (all the same `target_type`) to its most
-    recently created Annotation's (status, created_at) -- "latest
+    recently created Annotation's (id, status, created_at) -- "latest
     version" the same way annotation-service's list_annotations_for_target
     already defines it (oldest-first by created_at; the last one is
     current). Uses Postgres's DISTINCT ON to pick that one row per target
@@ -175,22 +175,22 @@ def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set)
     if not target_ids:
         return {}
     rows = (
-        db.query(Annotation.target_id, Annotation.status, Annotation.created_at)
+        db.query(Annotation.target_id, Annotation.id, Annotation.status, Annotation.created_at)
         .filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids))
         .order_by(Annotation.target_id, Annotation.created_at.desc())
         .distinct(Annotation.target_id)
         .all()
     )
-    return {row[0]: (row[1], row[2]) for row in rows}
+    return {row[0]: (row[1], row[2], row[3]) for row in rows}
 
 
-def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus]) -> list[str]:
-    """The subset of `case_ids` whose single most-recent Annotation
-    record -- across *all* of that case's targets, not just whichever
-    target type happens to match first -- is in one of `statuses`.
-    Shared by `_annotated_case_ids` (combined submitted-or-approved /
-    approved-or-rejected checks) and Review's per-decision materialization
-    (approved-only, rejected-only), below.
+def _latest_annotation_per_case(db: Session, case_ids: list[str]) -> dict:
+    """Maps each of `case_ids` to its single most-recent Annotation's
+    (id, status, created_at) -- across *all* of that case's targets, not
+    just whichever target type happens to match first. Shared by
+    `_case_ids_with_status` (below) and the per-case review action (the
+    Study page's Approve/Reject buttons need the actual annotation id to
+    decide on, not just a yes/no membership check).
 
     No Annotation is ever created with `target_type == "study"` anywhere
     in this codebase -- ct-annotator's real save path (the segmentation
@@ -204,9 +204,9 @@ def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[Annot
     matches would let a stale rejection on a path the case has long
     since moved past permanently outvote a newer decision made on the
     other path. Instead this picks the single most recent Annotation
-    across both target types per case, and checks only that one."""
+    across both target types per case."""
     if not case_ids:
-        return []
+        return {}
 
     series_rows = (
         db.query(ImagingStudy.case_id, Series.id)
@@ -226,18 +226,28 @@ def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[Annot
     instance_latest = _latest_annotation_by_target(db, "instance", {row[1] for row in instance_rows})
 
     # The single most recent Annotation for each case, across both of its
-    # target types.
+    # target types (compared by created_at, the 3rd element of each entry).
     latest_per_case: dict = {}
     for case_id, series_id in series_rows:
         entry = series_latest.get(series_id)
-        if entry and (case_id not in latest_per_case or entry[1] > latest_per_case[case_id][1]):
+        if entry and (case_id not in latest_per_case or entry[2] > latest_per_case[case_id][2]):
             latest_per_case[case_id] = entry
     for case_id, instance_id in instance_rows:
         entry = instance_latest.get(instance_id)
-        if entry and (case_id not in latest_per_case or entry[1] > latest_per_case[case_id][1]):
+        if entry and (case_id not in latest_per_case or entry[2] > latest_per_case[case_id][2]):
             latest_per_case[case_id] = entry
 
-    return sorted(str(cid) for cid, (status, _created_at) in latest_per_case.items() if status in statuses)
+    return latest_per_case
+
+
+def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus]) -> list[str]:
+    """The subset of `case_ids` whose single most-recent Annotation record
+    (see `_latest_annotation_per_case`) is in one of `statuses`. Shared by
+    `_annotated_case_ids` (combined submitted-or-approved / approved-or-
+    rejected checks) and Review's per-decision materialization (approved-
+    only, rejected-only), below."""
+    latest_per_case = _latest_annotation_per_case(db, case_ids)
+    return sorted(str(cid) for cid, (_id, status, _created_at) in latest_per_case.items() if status in statuses)
 
 
 def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
@@ -564,10 +574,27 @@ def get_workflow_card_cases(
     """Same per-case annotated/not-annotated breakdown list_my_jobs
     already returns per card, just reachable for any Annotation/Review
     card the caller can see (not only their own assigned ones) -- backs
-    the expandable row on the Study page's Annotations/Reviews tables."""
+    the expandable row on the Study page's Annotations/Reviews tables.
+
+    For a Review card, each case also carries `pending_annotation_id`:
+    the id of its latest Annotation record if that record is still
+    SUBMITTED (awaiting a decision) -- null once approved/rejected, or
+    if nothing's been submitted yet. Backs the Approve/Reject buttons on
+    that same expandable row, which need the actual annotation id to
+    decide on, not just the yes/no "annotated" flag."""
     card = _card_or_404(db, card_id)
     require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
-    return _cases_with_annotated_status(db, card)
+    result = _cases_with_annotated_status(db, card)
+
+    if card.type == WorkflowCardType.REVIEW:
+        latest_per_case = _latest_annotation_per_case(db, card.output_case_ids or [])
+        for case in result:
+            entry = latest_per_case.get(uuid.UUID(case["id"]))
+            case["pending_annotation_id"] = (
+                str(entry[0]) if entry and entry[1] == AnnotationStatus.SUBMITTED else None
+            )
+
+    return result
 
 
 @router.post("/studies/{study_id}/workflow/edges", status_code=201)
