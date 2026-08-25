@@ -691,6 +691,32 @@ def run_workflow_card(
         ) != user.subject:
             raise HTTPException(status_code=403, detail="Insufficient study role")
 
+    _run_one_card(db, card)
+
+    # Ripple the refresh downstream: whatever's wired off this card (or
+    # off its materialized "(annotated)"/Split-part Dataset child --
+    # that's typically where a user actually draws the next edge from,
+    # not the Annotation/Review/Split card itself) gets re-Run too, so
+    # e.g. marking a case Annotated is immediately visible at a
+    # downstream Review card without someone separately clicking Run on
+    # it. Best-effort per branch: a downstream card that can't run for
+    # its own reasons (a genuinely broken edge, say) doesn't take down
+    # the response for the card the caller actually asked to run.
+    for downstream in _downstream_cards(db, card):
+        try:
+            _cascade_run(db, downstream, {card.id})
+        except HTTPException:
+            pass
+
+    db.refresh(card)
+    return _serialize_card(db, card, {card.id: card}, {})
+
+
+def _run_one_card(db: Session, card: WorkflowCard) -> None:
+    """The actual per-type Run logic, shared by the direct
+    run_workflow_card endpoint and _cascade_run's downstream ripple.
+    Commits and stamps last_run_at itself; does not serialize a
+    response (callers that need one call _serialize_card afterward)."""
     if card.type in _NO_RUN_TYPES:
         raise HTTPException(status_code=422, detail=f"Nothing to run for a {card.type.value} card")
 
@@ -808,5 +834,34 @@ def run_workflow_card(
 
     card.last_run_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(card)
-    return _serialize_card(db, card, {card.id: card}, {})
+
+
+def _downstream_cards(db: Session, card: WorkflowCard) -> list[WorkflowCard]:
+    """Every card with a real "output" -> "input" data-flow edge from
+    `card` *or* from whichever Dataset card `card` just materialized
+    (its "(annotated)"/Split-part child) -- a user typically draws the
+    next edge from that materialized Dataset, not from the Annotation/
+    Review/Split card itself, so both sources need checking."""
+    source_ids = {card.id} | {c.id for c in _materialized_children(db, card.id)}
+    edges = db.query(WorkflowEdge).filter(WorkflowEdge.source_card_id.in_(source_ids), WorkflowEdge.source_handle == "output").all()
+    target_ids = {e.target_card_id for e in edges}
+    return [c for c in (db.get(WorkflowCard, tid) for tid in target_ids) if c is not None]
+
+
+def _cascade_run(db: Session, card: WorkflowCard, visited: set[uuid.UUID]) -> None:
+    """Runs `card` and then ripples to whatever's downstream of it, same
+    as run_workflow_card's own top-level ripple -- recursive so a chain
+    like Annotation -> (annotated) -> Review -> (annotated) -> Union all
+    refreshes together. `visited` is cycle protection (same idea as
+    _resolve_output's), not expected to ever matter on a real board
+    since Run preconditions already reject most cyclic wiring, but a
+    stray Union-back-into-itself shouldn't infinite-loop this."""
+    if card.id in visited or card.type in _NO_RUN_TYPES:
+        return
+    visited = visited | {card.id}
+    _run_one_card(db, card)
+    for downstream in _downstream_cards(db, card):
+        try:
+            _cascade_run(db, downstream, visited)
+        except HTTPException:
+            pass
