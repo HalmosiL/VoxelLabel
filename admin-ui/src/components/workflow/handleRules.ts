@@ -60,13 +60,19 @@ export function isValidConnection(
   const targetRule = HANDLE_RULES[targetType];
   const resolvedSourceHandle = sourceHandle ?? "output";
   const resolvedTargetHandle = targetHandle ?? "input";
-  // A handle only ever pairs with a same-named handle on the other end
-  // ("output" <-> "input", "surface_config" <-> "surface_config") --
-  // there's no cross-channel connection today.
-  if (resolvedSourceHandle !== resolvedTargetHandle) return false;
   if (!sourceRule.outputHandles.includes(resolvedSourceHandle)) return false;
   if (!targetRule.inputHandles.includes(resolvedTargetHandle)) return false;
-  if (resolvedSourceHandle === "surface_config" && SURFACE_TARGET_TYPE[sourceType] !== targetType) return false;
+  // "surface_config" is a separate channel from the ordinary "output" ->
+  // "input" data flow -- it may only pair with a "surface_config" handle
+  // on the other end, never mixed with the data channel (that's the
+  // "no cross-channel connection" rule; it's about channel identity, not
+  // literal name-equality, since the data channel's own two ends are
+  // named differently on purpose: "output" on the source, "input" on
+  // the target).
+  const sourceIsSurfaceConfig = resolvedSourceHandle === "surface_config";
+  const targetIsSurfaceConfig = resolvedTargetHandle === "surface_config";
+  if (sourceIsSurfaceConfig !== targetIsSurfaceConfig) return false;
+  if (sourceIsSurfaceConfig && SURFACE_TARGET_TYPE[sourceType] !== targetType) return false;
   return true;
 }
 
