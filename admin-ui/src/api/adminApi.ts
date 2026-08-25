@@ -32,6 +32,16 @@ export interface KeycloakUser {
   id: string;
   username: string | null;
   email: string | null;
+  is_admin: boolean;
+}
+
+export interface CreateUserInput {
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  password: string;
+  is_admin: boolean;
 }
 
 export interface AnnotationType {
@@ -246,6 +256,14 @@ export function addClinicalDataConsent(
 
 export function listKeycloakUsers(): Promise<KeycloakUser[]> {
   return apiFetch(base, "/admin/keycloak-users");
+}
+
+/** Creates a real Keycloak account (global admin only) -- the password is
+ * marked temporary server-side, so the new user sets their own at first
+ * login. Sent as a JSON body rather than this file's usual query-string
+ * convention, since a password doesn't belong in a URL. */
+export function createKeycloakUser(input: CreateUserInput): Promise<KeycloakUser> {
+  return apiFetch(base, "/admin/users", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function listAnnotationTypes(): Promise<AnnotationType[]> {

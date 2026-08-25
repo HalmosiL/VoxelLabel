@@ -10,6 +10,7 @@ import PatientDetailPage from "./pages/PatientDetailPage";
 import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
 import StudyDetailPage from "./pages/StudyDetailPage";
+import UsersPage from "./pages/UsersPage";
 import WorkflowBoardPage from "./pages/WorkflowBoardPage";
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/patients/:patientId" element={<PatientDetailPage />} />
         <Route path="/annotation-types" element={<AnnotationTypesPage />} />
         <Route path="/deidentification-profiles" element={<DeidentificationProfilesPage />} />
+        <Route path="/users" element={<UsersPage />} />
       </Route>
     </Routes>
   );

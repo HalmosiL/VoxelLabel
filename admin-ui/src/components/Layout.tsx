@@ -17,6 +17,7 @@ const navGroups = [
     items: [
       { to: "/annotation-types", label: "Annotation Types", icon: TagIcon },
       { to: "/deidentification-profiles", label: "De-identification", icon: ShieldIcon },
+      { to: "/users", label: "Users", icon: UsersIcon },
     ],
   },
 ];
@@ -123,6 +124,14 @@ function UserIcon({ className }: { className?: string }) {
         d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z"
         clipRule="evenodd"
       />
+    </svg>
+  );
+}
+
+function UsersIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 8a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.5 16.5a5.5 5.5 0 0111 0 .5.5 0 01-.5.5H2a.5.5 0 01-.5-.5zM12.5 17a5.47 5.47 0 00-.9-3.03A5.5 5.5 0 0118.5 16.5a.5.5 0 01-.5.5h-5.5z" />
     </svg>
   );
 }

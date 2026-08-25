@@ -96,11 +96,11 @@ curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/users/$USER_ID/role-mappings
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d "[$ROLE_JSON]" >/dev/null
 
-echo "Creating service-account client '$SERVICE_ACCOUNT_CLIENT_ID' (admin-service -> Keycloak user lookups) ..."
+echo "Creating service-account client '$SERVICE_ACCOUNT_CLIENT_ID' (admin-service -> Keycloak user lookups/creation) ..."
 # Confidential, client-credentials-only client -- no browser flow, no
-# direct-access-grants. Scoped narrowly (view-users only, below) rather
-# than using master-realm admin credentials, so a leak of this secret
-# can't do more than read this realm's user list.
+# direct-access-grants. Scoped to this realm's users (view-users +
+# manage-users, below) rather than using master-realm admin credentials,
+# so a leak of this secret can't reach anything outside this realm.
 curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d "{\"clientId\": \"$SERVICE_ACCOUNT_CLIENT_ID\", \"enabled\": true, \"publicClient\": false, \"secret\": \"$SERVICE_ACCOUNT_CLIENT_SECRET\", \"serviceAccountsEnabled\": true, \"standardFlowEnabled\": false, \"directAccessGrantsEnabled\": false, \"protocol\": \"openid-connect\"}" >/dev/null
@@ -114,10 +114,22 @@ REALM_MGMT_CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clie
   -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
 VIEW_USERS_ROLE=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients/$REALM_MGMT_CLIENT_UUID/roles/view-users" \
   -H "Authorization: Bearer $TOKEN")
+# manage-users lets the service account create realm users and assign
+# them the "admin" realm role -- backs admin-ui's "New user" panel.
+MANAGE_USERS_ROLE=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients/$REALM_MGMT_CLIENT_UUID/roles/manage-users" \
+  -H "Authorization: Bearer $TOKEN")
+# query-users + view-realm are needed on top of view-users specifically
+# for the roles/{role}/users lookup (list_realm_users' is_admin
+# cross-reference) -- Keycloak treats "who holds this role" as a realm-
+# level read, not a plain user read.
+QUERY_USERS_ROLE=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients/$REALM_MGMT_CLIENT_UUID/roles/query-users" \
+  -H "Authorization: Bearer $TOKEN")
+VIEW_REALM_ROLE=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients/$REALM_MGMT_CLIENT_UUID/roles/view-realm" \
+  -H "Authorization: Bearer $TOKEN")
 
-echo "Granting 'view-users' (realm-management) to the service account ..."
+echo "Granting 'view-users' + 'manage-users' + 'query-users' + 'view-realm' (realm-management) to the service account ..."
 curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/users/$SERVICE_ACCOUNT_USER_ID/role-mappings/clients/$REALM_MGMT_CLIENT_UUID" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "[$VIEW_USERS_ROLE]" >/dev/null
+  -d "[$VIEW_USERS_ROLE, $MANAGE_USERS_ROLE, $QUERY_USERS_ROLE, $VIEW_REALM_ROLE]" >/dev/null
 
 echo "Done. Test user: $TEST_USERNAME / $TEST_PASSWORD (realm role: admin)"
