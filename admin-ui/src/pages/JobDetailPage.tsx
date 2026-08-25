@@ -2,13 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { listMyJobs, MyJob } from "../api/workflowApi";
-import { TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
+import { CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
 import EmptyState from "../components/EmptyState";
-
-const CASE_STATUS_STYLE: Record<"annotated" | "not_annotated", { badge: string; dot: string; label: string }> = {
-  annotated: { badge: "badge-green", dot: "bg-emerald-500", label: "Annotated" },
-  not_annotated: { badge: "badge-gray", dot: "bg-gray-400", label: "Not annotated" },
-};
 
 /** Full-page view of a single job assigned to the calling user -- reuses
  * /admin/my-jobs (already scoped to "assigned to me") rather than a

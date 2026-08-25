@@ -160,3 +160,17 @@ export interface MyJob {
 export function listMyJobs(): Promise<MyJob[]> {
   return apiFetch(base, "/admin/my-jobs");
 }
+
+export interface WorkflowCardCase {
+  id: string;
+  title: string | null;
+  annotated: boolean;
+}
+
+/** Same per-case annotated/not-annotated breakdown listMyJobs already
+ * carries per card, just reachable for any Annotation/Review card the
+ * caller can see (not only their own assigned ones) -- backs the
+ * expandable row on the Study page's Annotations/Reviews tables. */
+export function getWorkflowCardCases(cardId: string): Promise<WorkflowCardCase[]> {
+  return apiFetch(base, `/admin/workflow-cards/${cardId}/cases`);
+}

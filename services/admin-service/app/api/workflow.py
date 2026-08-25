@@ -453,10 +453,7 @@ def list_my_jobs(
 
     result = []
     for card in my_cards:
-        case_ids = card.output_case_ids or []
-        cases = db.query(Case).filter(Case.id.in_(case_ids)).all() if case_ids else []
         study = studies_by_id.get(card.study_id)
-        annotated_ids = set(_annotated_case_ids(db, case_ids, review=card.type == WorkflowCardType.REVIEW))
         result.append(
             {
                 "study_id": str(card.study_id),
@@ -465,10 +462,38 @@ def list_my_jobs(
                 "card_title": card.title,
                 "card_type": card.type.value,
                 "status": card.config.get("status", "todo"),
-                "cases": [{"id": str(c.id), "title": c.title, "annotated": str(c.id) in annotated_ids} for c in cases],
+                "cases": _cases_with_annotated_status(db, card),
             }
         )
     return result
+
+
+def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
+    """The Annotation/Review card's case scope, each case's title
+    alongside whether it's actually annotated (submitted-or-later, or
+    for a Review card, approved/rejected) -- shared by list_my_jobs and
+    get_workflow_card_cases (the Study page's per-row expand)."""
+    case_ids = card.output_case_ids or []
+    if not case_ids:
+        return []
+    cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
+    annotated_ids = set(_annotated_case_ids(db, case_ids, review=card.type == WorkflowCardType.REVIEW))
+    return [{"id": str(c.id), "title": c.title, "annotated": str(c.id) in annotated_ids} for c in cases]
+
+
+@router.get("/workflow-cards/{card_id}/cases")
+def get_workflow_card_cases(
+    card_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Same per-case annotated/not-annotated breakdown list_my_jobs
+    already returns per card, just reachable for any Annotation/Review
+    card the caller can see (not only their own assigned ones) -- backs
+    the expandable row on the Study page's Annotations/Reviews tables."""
+    card = _card_or_404(db, card_id)
+    require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
+    return _cases_with_annotated_status(db, card)
 
 
 @router.post("/studies/{study_id}/workflow/edges", status_code=201)
