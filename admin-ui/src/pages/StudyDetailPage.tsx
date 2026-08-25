@@ -4,9 +4,11 @@ import { Link, useParams } from "react-router-dom";
 import { getStudy, Study, updateStudy } from "../api/adminApi";
 import CasesPanel from "../components/CasesPanel";
 import DatasetsPanel from "../components/DatasetsPanel";
+import { DocumentIcon, PencilIcon } from "../components/icons";
 import MembersPanel from "../components/MembersPanel";
 import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
+import TaskCardsPanel from "../components/TaskCardsPanel";
 import WorkflowSummaryPanel from "../components/WorkflowSummaryPanel";
 
 export default function StudyDetailPage() {
@@ -46,6 +48,20 @@ export default function StudyDetailPage() {
 
       <MembersPanel studyId={studyId} />
       <CasesPanel studyId={studyId} />
+      <TaskCardsPanel
+        studyId={studyId}
+        cardType="annotation"
+        title="Annotations"
+        icon={<PencilIcon className="h-4 w-4" />}
+        progressLabel="annotated"
+      />
+      <TaskCardsPanel
+        studyId={studyId}
+        cardType="review"
+        title="Reviews"
+        icon={<DocumentIcon className="h-4 w-4" />}
+        progressLabel="reviewed"
+      />
       <WorkflowSummaryPanel studyId={studyId} />
       <DatasetsPanel studyId={studyId} />
 

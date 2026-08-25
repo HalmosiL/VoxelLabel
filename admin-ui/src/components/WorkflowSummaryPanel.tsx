@@ -1,32 +1,28 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getWorkflowBoard, SplitPart, WorkflowCard, WorkflowCardType } from "../api/workflowApi";
-import { TASK_STATUS_STYLE } from "./workflow/statusStyle";
+import { getWorkflowBoard, SplitPart, WorkflowCard } from "../api/workflowApi";
 import {
   DatabaseIcon,
-  DocumentIcon,
   FlagIcon,
   ForkIcon,
   FunnelIcon,
   MergeIcon,
   MonitorCheckIcon,
   MonitorIcon,
-  PencilIcon,
 } from "./icons";
 import SectionHeader from "./SectionHeader";
 
-const TYPE_ICON: Record<WorkflowCardType, ReactNode> = {
+// Annotation/Review have their own dedicated table sections
+// (TaskCardsPanel) and Dataset its own card grid (DatasetsPanel) --
+// this panel only ever shows the remaining, less structured card
+// types, so neither TYPE_ICON nor describeCard needs an entry for them.
+const TYPE_ICON: Record<string, ReactNode> = {
   dataset: <DatabaseIcon className="h-4 w-4" />,
   split: <ForkIcon className="h-4 w-4" />,
   filter: <FunnelIcon className="h-4 w-4" />,
   union: <MergeIcon className="h-4 w-4" />,
-  annotation: <PencilIcon className="h-4 w-4" />,
-  review: <DocumentIcon className="h-4 w-4" />,
-  note: <DocumentIcon className="h-4 w-4" />,
   milestone: <FlagIcon className="h-4 w-4" />,
-  // Legacy generic type these two were split from -- see its comment on
-  // WorkflowCardType. No new card is ever created with it.
   surface: <MonitorIcon className="h-4 w-4" />,
   annotation_surface: <MonitorIcon className="h-4 w-4" />,
   review_surface: <MonitorCheckIcon className="h-4 w-4" />,
@@ -57,16 +53,6 @@ function describeCard(card: WorkflowCard): string {
     case "union": {
       const count = card.output_count as number | null;
       return count === null ? "not run yet" : `${count} cases (deduplicated)`;
-    }
-    case "annotation":
-    case "review": {
-      const assignedUserId = card.config.assigned_user_id as string | null;
-      const status = (card.config.status as string) ?? "todo";
-      const style = TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo;
-      const assignee = assignedUserId ? `${assignedUserId.slice(0, 8)}…` : "unassigned";
-      const progress = card.annotation_progress;
-      const progressText = progress ? ` · ${progress.annotated}/${progress.total} annotated` : "";
-      return `${style.label} · ${assignee}${progressText}`;
     }
     case "note":
       return (card.config.text as string | undefined) || "(empty)";
@@ -140,7 +126,7 @@ export default function WorkflowSummaryPanel({ studyId }: { studyId: string }) {
 
   useEffect(() => {
     getWorkflowBoard(studyId)
-      .then((board) => setCards(board.cards))
+      .then((board) => setCards(board.cards.filter((c) => c.type !== "annotation" && c.type !== "review")))
       .catch((err) => setError(String(err)));
   }, [studyId]);
 
