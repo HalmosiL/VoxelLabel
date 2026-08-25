@@ -939,38 +939,40 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
         source = _card_or_404(db, edge.source_card_id)
         card.output_case_ids = _resolve_output(db, source, set())
 
-        if card.config.get("materialize_dataset"):
-            # Two branches, not one combined pool: "(approved)" for
-            # cases that passed review, "(rejected)" for cases that need
-            # rework -- a feedback edge from "(rejected)" back into an
-            # Annotation card's input is exactly how that rework gets
-            # requeued to the annotator.
-            existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
-            branches = {
-                "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED]),
-                "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED]),
-            }
-            for index, (handle, case_ids) in enumerate(branches.items()):
-                title = f"{card.title} ({handle})"
-                child = existing_children.get(handle)
-                if child is None:
-                    db.add(
-                        WorkflowCard(
-                            study_id=card.study_id,
-                            type=WorkflowCardType.DATASET,
-                            title=title,
-                            position_x=card.position_x + 260,
-                            position_y=card.position_y + index * 140,
-                            width=_MATERIALIZED_DEFAULT_WIDTH,
-                            height=_MATERIALIZED_DEFAULT_HEIGHT,
-                            config={"mode": "manual", "case_ids": case_ids},
-                            materialized_source_card_id=card.id,
-                            materialized_source_handle=handle,
-                        )
+        # Unlike Annotation's "(annotated)" child (opt-in via
+        # materialize_dataset), Review always materializes both branches
+        # on every Run: "(approved)" for cases that passed review,
+        # "(rejected)" for cases that need rework. A feedback edge from
+        # "(rejected)" back into an Annotation card's input is exactly
+        # how that rework gets requeued to the annotator, so both need
+        # to exist immediately -- there's no meaningful "Review without
+        # its own decision outputs" the way there is for Annotation.
+        existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
+        branches = {
+            "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED]),
+            "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED]),
+        }
+        for index, (handle, case_ids) in enumerate(branches.items()):
+            title = f"{card.title} ({handle})"
+            child = existing_children.get(handle)
+            if child is None:
+                db.add(
+                    WorkflowCard(
+                        study_id=card.study_id,
+                        type=WorkflowCardType.DATASET,
+                        title=title,
+                        position_x=card.position_x + 260,
+                        position_y=card.position_y + index * 140,
+                        width=_MATERIALIZED_DEFAULT_WIDTH,
+                        height=_MATERIALIZED_DEFAULT_HEIGHT,
+                        config={"mode": "manual", "case_ids": case_ids},
+                        materialized_source_card_id=card.id,
+                        materialized_source_handle=handle,
                     )
-                else:
-                    child.title = title
-                    child.config = {**child.config, "mode": "manual", "case_ids": case_ids}
+                )
+            else:
+                child.title = title
+                child.config = {**child.config, "mode": "manual", "case_ids": case_ids}
 
     card.last_run_at = datetime.now(timezone.utc)
     db.commit()

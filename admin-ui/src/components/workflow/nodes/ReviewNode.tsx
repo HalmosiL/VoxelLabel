@@ -21,7 +21,6 @@ function ReviewNode({ data, selected }: NodeProps<CardNode>) {
   const status = typeof card.config.status === "string" ? card.config.status : "todo";
   const style = TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo;
   const progress = card.annotation_progress;
-  const materializeDataset = Boolean(card.config.materialize_dataset);
   const counts = card.materialized_counts;
 
   return (
@@ -48,17 +47,15 @@ function ReviewNode({ data, selected }: NodeProps<CardNode>) {
           {progress.annotated} of {progress.total} reviewed
         </p>
       )}
-      {materializeDataset && (
-        <ul className="mt-2 flex flex-col gap-0.5 text-xs text-gray-600">
-          {REVIEW_BRANCHES.map((branch) => (
-            <li key={branch.handle} className="flex items-center gap-1.5">
-              <span className={`badge-dot ${branch.dot}`} />
-              <span>{branch.label}</span>
-              {counts && <span className="ml-auto text-gray-400">{counts[branch.handle] ?? 0}</span>}
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="mt-2 flex flex-col gap-0.5 text-xs text-gray-600">
+        {REVIEW_BRANCHES.map((branch) => (
+          <li key={branch.handle} className="flex items-center gap-1.5">
+            <span className={`badge-dot ${branch.dot}`} />
+            <span>{branch.label}</span>
+            <span className="ml-auto text-gray-400">{counts?.[branch.handle] ?? 0}</span>
+          </li>
+        ))}
+      </ul>
       <Handle type="target" position={Position.Left} id="input" />
       <Handle type="source" position={Position.Right} id="output" />
       {/* Separate handle for a Surface card's job restriction -- unrelated

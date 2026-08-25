@@ -522,16 +522,18 @@ function TaskFields({
           ))}
         </select>
       </label>
-      <label className="flex items-center gap-2 text-xs text-gray-700">
-        <input
-          type="checkbox"
-          checked={materializeDataset}
-          onChange={(e) => onPatch(card.id, { config: { ...card.config, materialize_dataset: e.target.checked } })}
-        />
-        {card.type === "review"
-          ? "Also create/update Dataset cards for the approved and rejected cases"
-          : "Also create/update a Dataset card of just the annotated cases"}
-      </label>
+      {card.type === "review" ? (
+        <p className="hint">Running this card always refreshes its "(approved)" and "(rejected)" Dataset cards.</p>
+      ) : (
+        <label className="flex items-center gap-2 text-xs text-gray-700">
+          <input
+            type="checkbox"
+            checked={materializeDataset}
+            onChange={(e) => onPatch(card.id, { config: { ...card.config, materialize_dataset: e.target.checked } })}
+          />
+          Also create/update a Dataset card of just the annotated cases
+        </label>
+      )}
       <RunButton card={card} onRun={onRun} running={running} label="Refresh from upstream" />
       <LastRun card={card} />
       <StaleBadge card={card} />
