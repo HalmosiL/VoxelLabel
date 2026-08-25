@@ -675,7 +675,21 @@ def run_workflow_card(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     card = _card_or_404(db, card_id)
-    require_study_role(db, str(card.study_id), user, allowed_roles=_WRITE_ROLES)
+    require_study_role(db, str(card.study_id), user, allowed_roles=["data_manager", "admin", "annotator", "reviewer"])
+
+    if not _has_study_role(db, str(card.study_id), user, _WRITE_ROLES):
+        # Narrowed permission, same reasoning/shape as update_workflow_card's
+        # self-service status carve-out: the assignee of their own
+        # Annotation/Review card may re-Run it (refreshing output_case_ids
+        # and, if materialize_dataset is set, the "(annotated)" Dataset
+        # child) without general board-editing/Run rights. This is what
+        # lets ct-annotator's "Mark as Annotated" immediately push the case
+        # into that materialized dataset instead of waiting for someone
+        # with data_manager/admin to click Run on the board.
+        if card.type not in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW) or card.config.get(
+            "assigned_user_id"
+        ) != user.subject:
+            raise HTTPException(status_code=403, detail="Insufficient study role")
 
     if card.type in _NO_RUN_TYPES:
         raise HTTPException(status_code=422, detail=f"Nothing to run for a {card.type.value} card")
