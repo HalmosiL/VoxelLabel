@@ -2,7 +2,14 @@ import { Fragment, ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { KeycloakUser, listKeycloakUsers } from "../api/adminApi";
-import { getWorkflowBoard, getWorkflowCardCases, WorkflowCard, WorkflowCardCase, WorkflowCardType } from "../api/workflowApi";
+import {
+  getWorkflowBoard,
+  getWorkflowCardCases,
+  updateWorkflowCard,
+  WorkflowCard,
+  WorkflowCardCase,
+  WorkflowCardType,
+} from "../api/workflowApi";
 import Avatar from "./Avatar";
 import EmptyState from "./EmptyState";
 import { QuestionMarkCircleIcon } from "./icons";
@@ -47,8 +54,6 @@ export default function TaskCardsPanel({
       .catch(() => setUsers([]));
   }, [studyId, cardType]);
 
-  const usersById = new Map(users.map((u) => [u.id, u]));
-
   function toggleExpand(cardId: string) {
     if (expandedId === cardId) {
       setExpandedId(null);
@@ -62,6 +67,12 @@ export default function TaskCardsPanel({
         .catch((err) => setError(String(err)))
         .finally(() => setLoadingId(null));
     }
+  }
+
+  function handleAssign(card: WorkflowCard, userId: string) {
+    const config = { ...card.config, assigned_user_id: userId || null };
+    setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, config } : c)));
+    updateWorkflowCard(card.id, { config }).catch((err) => setError(String(err)));
   }
 
   return (
@@ -98,7 +109,6 @@ export default function TaskCardsPanel({
             )}
             {cards.map((card) => {
               const assignedUserId = card.config.assigned_user_id as string | null;
-              const assignedUser = assignedUserId ? usersById.get(assignedUserId) : null;
               const status = (card.config.status as string) ?? "todo";
               const style = TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo;
               const progress = card.annotation_progress;
@@ -119,20 +129,28 @@ export default function TaskCardsPanel({
                       <span className="font-medium text-gray-900">{card.title}</span>
                       {card.stale && <span className="badge-gray ml-2 text-[10px]">stale</span>}
                     </td>
-                    <td>
-                      {assignedUserId ? (
-                        <div className="flex items-center gap-1.5">
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5">
+                        {assignedUserId ? (
                           <Avatar id={assignedUserId} />
-                          <span className="truncate text-xs text-gray-600">
-                            {assignedUser?.username ?? `${assignedUserId.slice(0, 8)}…`}
+                        ) : (
+                          <span title="Nobody is assigned to this job">
+                            <QuestionMarkCircleIcon className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />
                           </span>
-                        </div>
-                      ) : (
-                        <span className="flex items-center gap-1 text-xs text-red-500" title="Nobody is assigned to this job">
-                          <QuestionMarkCircleIcon className="h-3.5 w-3.5" />
-                          unassigned
-                        </span>
-                      )}
+                        )}
+                        <select
+                          className="input w-auto max-w-[10rem] truncate border-none bg-transparent px-0 py-0.5 text-xs text-gray-600 shadow-none focus:ring-0"
+                          value={assignedUserId ?? ""}
+                          onChange={(e) => handleAssign(card, e.target.value)}
+                        >
+                          <option value="">Unassigned</option>
+                          {users.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.username ?? u.id}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </td>
                     <td>
                       <span className={style.badge}>
