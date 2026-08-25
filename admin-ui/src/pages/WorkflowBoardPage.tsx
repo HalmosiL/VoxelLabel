@@ -79,6 +79,8 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
     sourceHandle: edge.source_handle,
     target: edge.target_card_id,
     targetHandle: edge.target_handle,
+    // Right-angled routing instead of the default bezier curve.
+    type: "step",
   };
 }
 
@@ -87,37 +89,32 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
  * WorkflowEdge (materialized Dataset cards have no real input), so these
  * are recomputed client-side from each card's materialized_card_id(s)
  * rather than fetched, and marked non-deletable/non-selectable so they
- * can't be mistaken for a user-drawn connection. Split (part_0, part_1,
- * ...) and Review (approved, rejected) both materialize more than one
- * child, so both use the plural materialized_card_ids map; Annotation
- * still materializes exactly one ("(annotated)"), via the singular
- * materialized_card_id. */
+ * can't be mistaken for a user-drawn connection. Split has no real
+ * output handle of its own (see handleRules.ts), so its nodes render a
+ * dedicated non-interactive "materialize" anchor to originate from;
+ * Annotation and Review both still have a real "output" handle, so
+ * their connector(s) originate from that instead -- Review's two
+ * (approved, rejected) just both fan out from the same point. */
 function materializationEdges(cards: WorkflowCard[]): Edge[] {
   const edges: Edge[] = [];
   for (const card of cards) {
-    if ((card.type === "split" || card.type === "review") && card.materialized_card_ids) {
-      for (const childId of Object.values(card.materialized_card_ids)) {
-        edges.push({
-          id: `materialize-${card.id}-${childId}`,
-          source: card.id,
-          sourceHandle: "materialize",
-          target: childId,
-          targetHandle: "materialize",
-          type: "smoothstep",
-          style: { strokeDasharray: "4 3", stroke: "#c7c7c7" },
-          deletable: false,
-          selectable: false,
-          focusable: false,
-        });
-      }
-    } else if (card.type === "annotation" && card.materialized_card_id) {
+    const childEntries =
+      card.type === "split"
+        ? Object.entries(card.materialized_card_ids ?? {}).map(([, childId]) => [childId, "materialize"] as const)
+        : card.type === "review"
+          ? Object.entries(card.materialized_card_ids ?? {}).map(([, childId]) => [childId, "output"] as const)
+          : card.type === "annotation" && card.materialized_card_id
+            ? [[card.materialized_card_id, "output"] as const]
+            : [];
+
+    for (const [childId, sourceHandle] of childEntries) {
       edges.push({
-        id: `materialize-${card.id}-${card.materialized_card_id}`,
+        id: `materialize-${card.id}-${childId}`,
         source: card.id,
-        sourceHandle: "output",
-        target: card.materialized_card_id,
+        sourceHandle,
+        target: childId,
         targetHandle: "materialize",
-        type: "smoothstep",
+        type: "step",
         style: { strokeDasharray: "4 3", stroke: "#c7c7c7" },
         deletable: false,
         selectable: false,

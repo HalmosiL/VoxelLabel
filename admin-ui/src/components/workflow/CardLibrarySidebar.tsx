@@ -59,7 +59,9 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         defaultTitle: "Review",
         defaultConfig: { assigned_user_id: null, status: "todo" },
         defaultWidth: 220,
-        defaultHeight: 100,
+        // Taller than Annotation's 100 -- also needs room for the
+        // always-shown approved/rejected named-output rows.
+        defaultHeight: 160,
       },
       {
         type: "split",
