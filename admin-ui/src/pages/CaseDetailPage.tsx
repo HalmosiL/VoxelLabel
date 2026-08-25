@@ -33,10 +33,14 @@ import { DocumentIcon } from "../components/icons";
 
 /** Appends `&jobId=<id>` when this Case page was reached via a My Jobs
  * link -- lets ct-annotator fetch and enforce that job's Surface-card
- * restriction. Absent (a plain visit) means an unrestricted viewer. */
+ * restriction. Absent (a plain visit) means an unrestricted viewer.
+ * Also passes this Case page's own URL as `returnUrl`, so the viewer's
+ * "Back" arrow (opened in a new tab, so there's no browser history to
+ * go back to) can return here instead of to ct-annotator's own picker. */
 function viewerUrl(seriesId: string, studyId: string, jobId: string | null): string {
   const url = `${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}`;
-  return jobId ? `${url}&jobId=${jobId}` : url;
+  const withJob = jobId ? `${url}&jobId=${jobId}` : url;
+  return `${withJob}&returnUrl=${encodeURIComponent(window.location.href)}`;
 }
 
 export default function CaseDetailPage() {
