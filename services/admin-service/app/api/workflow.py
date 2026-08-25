@@ -727,19 +727,29 @@ def _cumulative_ratios(parts: list[dict]) -> list[float]:
     return cumulative
 
 
-def _split_bucket_index(case_id: str, seed: str, cumulative_ratios: list[float]) -> int:
-    """Deterministic per-case-id hash assignment, not shuffle-and-cut: a
-    given case always lands in the same part for a given seed regardless
-    of what else is in the input set, so re-running Split after new cases
-    are added upstream never reshuffles already-split cases. Generalizes
-    the old binary train/val threshold to N parts via cumulative ratio
-    boundaries."""
-    digest = hashlib.sha256(f"{seed}:{case_id}".encode()).hexdigest()
-    fraction = int(digest, 16) / (2**256 - 1)
-    for index, boundary in enumerate(cumulative_ratios):
-        if fraction < boundary:
-            return index
-    return len(cumulative_ratios) - 1
+def _split_case_ids(case_ids: list[str], seed: str, cumulative_ratios: list[float]) -> list[list[str]]:
+    """Assigns every case to exactly one part, always hitting each part's
+    exact target ratio -- unlike giving each case an independent
+    per-case hash draw (a weighted coin flip per case), which only
+    approaches the target ratio statistically and can be visibly off for
+    a small case count (e.g. 10 cases at a 70/30 split could easily land
+    6/4 or 8/2). Sorts all cases by a stable per-case hash (deterministic
+    for a given seed, unrelated to any other case) and cuts that order
+    at the ratio boundaries. Still close to stable when the input set
+    changes: adding one case only shifts the ranks after it by one
+    position, so at most the case(s) sitting right at a cut boundary can
+    move to the adjacent part -- not a full reshuffle -- while every
+    Run still lands on the exact requested ratio."""
+    ordered = sorted(case_ids, key=lambda cid: hashlib.sha256(f"{seed}:{cid}".encode()).hexdigest())
+    total = len(ordered)
+    boundaries = [round(ratio * total) for ratio in cumulative_ratios]
+    boundaries[-1] = total  # pin the last boundary so rounding never drops a case
+    buckets: list[list[str]] = []
+    start = 0
+    for boundary in boundaries:
+        buckets.append(ordered[start:boundary])
+        start = boundary
+    return buckets
 
 
 def _dedupe_sorted(ids) -> list[str]:
@@ -826,9 +836,7 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
         seed = card.config.get("seed") or uuid.uuid4().hex
         cumulative = _cumulative_ratios(parts)
 
-        buckets: list[list[str]] = [[] for _ in parts]
-        for case_id in input_ids:
-            buckets[_split_bucket_index(case_id, seed, cumulative)].append(case_id)
+        buckets = _split_case_ids(input_ids, seed, cumulative)
 
         existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
         output: dict[str, list[str]] = {}

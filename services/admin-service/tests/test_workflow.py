@@ -17,7 +17,7 @@ from app.api.workflow import (
     _is_stale,
     _matches_filter,
     _output_count,
-    _split_bucket_index,
+    _split_case_ids,
     _split_parts,
 )
 from shared_models.models import WorkflowCardType
@@ -34,45 +34,69 @@ def test_cumulative_ratios_normalizes_when_not_summing_to_one() -> None:
     assert 0.4 < boundaries[0] < 0.6
 
 
-def test_split_bucket_index_is_deterministic_for_a_given_seed() -> None:
+def test_split_case_ids_is_deterministic_for_a_given_seed() -> None:
     cumulative = [0.5, 1.0]
-    first = _split_bucket_index("case-1", "fixed-seed", cumulative)
-    second = _split_bucket_index("case-1", "fixed-seed", cumulative)
+    ids = [f"case-{i}" for i in range(10)]
+    first = _split_case_ids(ids, "fixed-seed", cumulative)
+    second = _split_case_ids(ids, "fixed-seed", cumulative)
     assert first == second
 
 
-def test_split_bucket_index_distributes_roughly_by_ratio() -> None:
-    cumulative = [0.5, 1.0]
-    buckets = [_split_bucket_index(f"case-{i}", "fixed-seed", cumulative) for i in range(500)]
-    first_part_fraction = buckets.count(0) / len(buckets)
-    assert 0.4 < first_part_fraction < 0.6
-
-
-def test_split_bucket_index_stable_when_new_ids_join_the_pool() -> None:
-    """The whole point of hashing per case id (not shuffle-and-cut): a
-    case's bucket never changes just because other cases were added."""
+def test_split_case_ids_hits_the_exact_ratio_even_for_few_cases() -> None:
+    """The whole point of sort-and-cut over an independent per-case hash
+    draw: a small case count still lands on the exact requested ratio,
+    not just something statistically close to it."""
     cumulative = [0.7, 1.0]
+    ids = [f"case-{i}" for i in range(10)]
+    buckets = _split_case_ids(ids, "fixed-seed", cumulative)
+    assert [len(b) for b in buckets] == [7, 3]
+
+
+def test_split_case_ids_exact_ratio_holds_at_larger_scale_too() -> None:
+    cumulative = [0.5, 1.0]
+    ids = [f"case-{i}" for i in range(500)]
+    buckets = _split_case_ids(ids, "fixed-seed", cumulative)
+    assert [len(b) for b in buckets] == [250, 250]
+
+
+def test_split_case_ids_every_case_placed_exactly_once() -> None:
+    cumulative = [0.3, 0.6, 1.0]
+    ids = [f"case-{i}" for i in range(37)]  # odd count, doesn't divide evenly
+    buckets = _split_case_ids(ids, "fixed-seed", cumulative)
+    assert sorted(cid for bucket in buckets for cid in bucket) == sorted(ids)
+    assert sum(len(b) for b in buckets) == len(ids)
+
+
+def test_split_case_ids_mostly_stable_when_new_ids_join_the_pool() -> None:
+    """Not perfectly stable like a per-case-independent hash draw would
+    be, but close: growing the pool only moves cases whose rank lands
+    near a cut boundary, not an arbitrary reshuffle."""
+    cumulative = [0.5, 1.0]
     original_ids = [f"case-{i}" for i in range(20)]
-    original_buckets = {cid: _split_bucket_index(cid, "fixed-seed", cumulative) for cid in original_ids}
+    original_buckets = _split_case_ids(original_ids, "fixed-seed", cumulative)
+    original_assignment = {cid: i for i, bucket in enumerate(original_buckets) for cid in bucket}
 
-    grown_ids = original_ids + [f"new-case-{i}" for i in range(5)]
-    for cid in original_ids:
-        assert _split_bucket_index(cid, "fixed-seed", cumulative) == original_buckets[cid]
-    assert len(grown_ids) == 25  # sanity: the new ids really were added
+    grown_ids = original_ids + [f"new-case-{i}" for i in range(2)]
+    grown_buckets = _split_case_ids(grown_ids, "fixed-seed", cumulative)
+    grown_assignment = {cid: i for i, bucket in enumerate(grown_buckets) for cid in bucket}
+
+    moved = [cid for cid in original_ids if grown_assignment[cid] != original_assignment[cid]]
+    assert len(moved) <= 2  # only boundary-adjacent cases can move, not most of the 20
 
 
-def test_split_bucket_index_different_seed_gives_different_split() -> None:
+def test_split_case_ids_different_seed_gives_different_split() -> None:
     cumulative = [0.5, 1.0]
     ids = [f"case-{i}" for i in range(50)]
-    split_a = {cid: _split_bucket_index(cid, "seed-a", cumulative) for cid in ids}
-    split_b = {cid: _split_bucket_index(cid, "seed-b", cumulative) for cid in ids}
+    split_a = _split_case_ids(ids, "seed-a", cumulative)
+    split_b = _split_case_ids(ids, "seed-b", cumulative)
     assert split_a != split_b
 
 
-def test_split_bucket_index_supports_n_way_split() -> None:
+def test_split_case_ids_supports_n_way_split() -> None:
     cumulative = _cumulative_ratios([{"ratio": 1}, {"ratio": 1}, {"ratio": 1}])
-    buckets = {_split_bucket_index(f"case-{i}", "fixed-seed", cumulative) for i in range(200)}
-    assert buckets == {0, 1, 2}
+    ids = [f"case-{i}" for i in range(201)]
+    buckets = _split_case_ids(ids, "fixed-seed", cumulative)
+    assert [len(b) for b in buckets] == [67, 67, 67]
 
 
 def test_split_parts_requires_at_least_two() -> None:
