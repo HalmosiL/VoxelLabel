@@ -19,9 +19,19 @@ export default function MyJobsPage() {
       .catch((err) => setError(String(err)));
   }, []);
 
-  const sorted = jobs
-    ? [...jobs].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99))
+  // A job only needs the assignee's attention while it actually has a
+  // case waiting on them -- the assignment itself never goes away, but
+  // a job with nothing pending (everything in its scope already
+  // annotated/reviewed, or nothing in scope yet) has nothing to show
+  // for right now, so it drops out of the active list rather than
+  // sitting there as dead weight. It reappears the moment a case lands
+  // back in its scope (e.g. a rejected case fed back through the
+  // workflow board's feedback loop).
+  const pending = jobs?.filter((job) => job.cases.some((c) => !c.annotated)) ?? null;
+  const sorted = pending
+    ? [...pending].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99))
     : null;
+  const doneCount = jobs ? jobs.length - (pending?.length ?? 0) : 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -31,6 +41,12 @@ export default function MyJobsPage() {
       {sorted && sorted.length === 0 && <p className="hint">No Annotation or Review cards are assigned to you.</p>}
 
       <div className="flex flex-col gap-4">{sorted?.map((job) => <JobCard key={job.card_id} job={job} />)}</div>
+
+      {doneCount > 0 && (
+        <p className="hint">
+          {doneCount} more assigned {doneCount === 1 ? "job has" : "jobs have"} nothing pending right now.
+        </p>
+      )}
     </div>
   );
 }
