@@ -145,6 +145,13 @@ export function updateCase(caseId: string, fields: CaseFormFields): Promise<void
   return apiFetch(base, `/admin/cases/${caseId}?${qs}`, { method: "PATCH" });
 }
 
+/** Deletes a case and everything under it (imaging studies, series,
+ * instances, clinical data items) -- irreversible, so callers should
+ * confirm with the user first. */
+export function deleteCase(caseId: string): Promise<void> {
+  return apiFetch(base, `/admin/cases/${caseId}`, { method: "DELETE" });
+}
+
 export function createClinicalDataItem(
   caseId: string,
   type: string,

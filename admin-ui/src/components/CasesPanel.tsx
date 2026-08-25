@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { createCase } from "../api/adminApi";
+import { createCase, deleteCase } from "../api/adminApi";
 import { CaseSummary, listCases, listPatients, PatientSummary } from "../api/dataApi";
 import EmptyState from "./EmptyState";
+import { TrashIcon } from "./icons";
 import Modal from "./Modal";
 import SectionHeader from "./SectionHeader";
 
@@ -19,6 +20,19 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
   }
 
   useEffect(refresh, [studyId]);
+
+  async function handleDelete(c: CaseSummary) {
+    const label = c.title || `Patient ${c.patient_pseudonym_id.slice(0, 8)}…`;
+    if (!window.confirm(`Delete "${label}"? This removes all its imaging and clinical data too, and cannot be undone.`)) {
+      return;
+    }
+    try {
+      await deleteCase(c.id);
+      refresh();
+    } catch (err) {
+      setError(String(err));
+    }
+  }
 
   return (
     <div className="card">
@@ -67,10 +81,19 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
                     ))}
                   </div>
                 </td>
-                <td className="text-right text-gray-300">
-                  <Link to={`/studies/${studyId}/cases/${c.id}`}>
-                    <ChevronRight />
-                  </Link>
+                <td className="text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => handleDelete(c)}
+                      className="text-gray-400 hover:text-red-600"
+                      title="Delete case"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                    <Link to={`/studies/${studyId}/cases/${c.id}`} className="text-gray-300">
+                      <ChevronRight />
+                    </Link>
+                  </div>
                 </td>
               </tr>
             ))}
