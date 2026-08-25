@@ -164,36 +164,30 @@ def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard
 _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 
 
-def _latest_annotation_status_by_target(db: Session, target_type: str, target_ids: set) -> dict:
+def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set) -> dict:
     """Maps each of `target_ids` (all the same `target_type`) to its most
-    recently created Annotation's status -- "latest version" the same way
-    annotation-service's list_annotations_for_target already defines it
-    (oldest-first by created_at; the last one is current). Uses
-    Postgres's DISTINCT ON to pick that one row per target directly in
-    SQL, rather than fetching full history and reducing in Python.
-
-    This matters because a target accumulates many Annotation rows over
-    its lifetime (every draft Save, every submit, every review decision)
-    -- without restricting to the latest, a target rejected once and
-    later resubmitted-and-approved would still match "ever rejected",
-    which would make Review's "(approved)" and "(rejected)" branches
-    (below) show the same case in both forever instead of reflecting its
-    current decision."""
+    recently created Annotation's (status, created_at) -- "latest
+    version" the same way annotation-service's list_annotations_for_target
+    already defines it (oldest-first by created_at; the last one is
+    current). Uses Postgres's DISTINCT ON to pick that one row per target
+    directly in SQL, rather than fetching full history and reducing in
+    Python."""
     if not target_ids:
         return {}
     rows = (
-        db.query(Annotation.target_id, Annotation.status)
+        db.query(Annotation.target_id, Annotation.status, Annotation.created_at)
         .filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids))
         .order_by(Annotation.target_id, Annotation.created_at.desc())
         .distinct(Annotation.target_id)
         .all()
     )
-    return {row[0]: row[1] for row in rows}
+    return {row[0]: (row[1], row[2]) for row in rows}
 
 
 def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus]) -> list[str]:
-    """The subset of `case_ids` whose *latest* Annotation record (see
-    `_latest_annotation_status_by_target`) is in one of `statuses`.
+    """The subset of `case_ids` whose single most-recent Annotation
+    record -- across *all* of that case's targets, not just whichever
+    target type happens to match first -- is in one of `statuses`.
     Shared by `_annotated_case_ids` (combined submitted-or-approved /
     approved-or-rejected checks) and Review's per-decision materialization
     (approved-only, rejected-only), below.
@@ -203,8 +197,14 @@ def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[Annot
     volume workflow every other part of this session is built around)
     posts with `target_type == "series"`, and its older bbox/freehand
     path posts with `target_type == "instance"`; a `"study"`-only check
-    here could never match either. Checks both real paths via their own
-    join chain up to Case, and unions the results."""
+    here could never match either. A case can carry annotation history
+    on both paths (e.g. old per-instance bbox rows from before its real
+    work moved to the modern per-series segmentation-volume flow) --
+    comparing each target's own latest independently and unioning the
+    matches would let a stale rejection on a path the case has long
+    since moved past permanently outvote a newer decision made on the
+    other path. Instead this picks the single most recent Annotation
+    across both target types per case, and checks only that one."""
     if not case_ids:
         return []
 
@@ -222,18 +222,22 @@ def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[Annot
         .all()
     )
 
-    series_status = _latest_annotation_status_by_target(db, "series", {row[1] for row in series_rows})
-    instance_status = _latest_annotation_status_by_target(db, "instance", {row[1] for row in instance_rows})
+    series_latest = _latest_annotation_by_target(db, "series", {row[1] for row in series_rows})
+    instance_latest = _latest_annotation_by_target(db, "instance", {row[1] for row in instance_rows})
 
-    matched_case_ids = set()
+    # The single most recent Annotation for each case, across both of its
+    # target types.
+    latest_per_case: dict = {}
     for case_id, series_id in series_rows:
-        if series_status.get(series_id) in statuses:
-            matched_case_ids.add(case_id)
+        entry = series_latest.get(series_id)
+        if entry and (case_id not in latest_per_case or entry[1] > latest_per_case[case_id][1]):
+            latest_per_case[case_id] = entry
     for case_id, instance_id in instance_rows:
-        if instance_status.get(instance_id) in statuses:
-            matched_case_ids.add(case_id)
+        entry = instance_latest.get(instance_id)
+        if entry and (case_id not in latest_per_case or entry[1] > latest_per_case[case_id][1]):
+            latest_per_case[case_id] = entry
 
-    return sorted(str(cid) for cid in matched_case_ids)
+    return sorted(str(cid) for cid, (status, _created_at) in latest_per_case.items() if status in statuses)
 
 
 def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
