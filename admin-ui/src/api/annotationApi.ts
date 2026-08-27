@@ -13,3 +13,12 @@ export function reviewAnnotation(annotationId: string, decision: "approve" | "re
   const qs = new URLSearchParams({ decision });
   return apiFetch(base, `/annotations/${annotationId}/review?${qs}`, { method: "POST" });
 }
+
+/** Deletes one annotation version outright -- backs the Study page's
+ * "Delete annotation" action (both the Annotations and Reviews tables).
+ * A case left with no annotation reverts to "pending" and drops out of
+ * any Review card's pending-decision list. Called directly from the
+ * browser, same as reviewAnnotation above. */
+export function deleteAnnotation(annotationId: string): Promise<void> {
+  return apiFetch(base, `/annotations/${annotationId}`, { method: "DELETE" });
+}

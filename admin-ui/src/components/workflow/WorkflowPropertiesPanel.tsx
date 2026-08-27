@@ -20,6 +20,7 @@ interface PanelProps {
   onBulkDelete: () => void;
   onRun: (cardId: string) => void;
   onSelectCard: (cardId: string) => void;
+  onOpenChat: (cardId: string) => void;
   running: boolean;
 }
 
@@ -36,6 +37,7 @@ export default function WorkflowPropertiesPanel({
   onBulkDelete,
   onRun,
   onSelectCard,
+  onOpenChat,
   running,
 }: PanelProps) {
   if (selectedCount > 1) {
@@ -106,6 +108,17 @@ export default function WorkflowPropertiesPanel({
             onPatch={onPatch}
             onRun={onRun}
             onSelectCard={onSelectCard}
+            running={running}
+          />
+        )}
+
+        {(card.type === "llm" || card.type === "builder" || card.type === "criterion") && (
+          <AiFields
+            card={card}
+            onPatch={onPatch}
+            onOpenChat={onOpenChat}
+            onSelectCard={onSelectCard}
+            onRun={onRun}
             running={running}
           />
         )}
@@ -466,6 +479,99 @@ function UnionFields({
       <LastRun card={card} />
       <StaleBadge card={card} />
       {card.output_case_ids && <CaseLinks ids={ids} studyId={studyId} cases={cases} />}
+    </div>
+  );
+}
+
+// The Clinical Trial module's mocked-LLM card. No Run button here --
+// unlike every other RUNNABLE_TYPES card, it isn't a batch recompute;
+// its chat session (opened via onOpenChat) is what drives it.
+// Per-card-type blurb and materialized-children label for the three
+// Clinical Trial Assistant chat card types -- everything else about
+// their panel (MCP badge, connected count, "Open session", the
+// materialized-children list) is the same shape, so only these two
+// strings actually vary by role.
+const AI_CARD_BLURB: Record<string, string> = {
+  llm: "Connects via MCP to whatever Dataset(s) are wired into its input, as this session's data sources.",
+  builder:
+    "Scoped to the whole study, not to connected data -- helps plan a CONSORT-style eligibility pipeline and constructs it on the board (a root Dataset, then a chain of Criterion cards).",
+  criterion: "Connects via MCP to whatever's wired into its input, and judges each connected case against the criterion below.",
+};
+const AI_CARD_CHILDREN_LABEL: Record<string, string> = {
+  llm: "Created datasets",
+  criterion: "Included / excluded",
+};
+
+function AiFields({
+  card,
+  onPatch,
+  onOpenChat,
+  onSelectCard,
+  onRun,
+  running,
+}: {
+  card: WorkflowCard;
+  onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+  onOpenChat: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
+  onRun: (cardId: string) => void;
+  running: boolean;
+}) {
+  const [criterion, setCriterion] = useState((card.config.criterion as string) ?? "");
+  // Builder has no connected data of its own (scoped to the whole study
+  // instead -- see handleRules.ts), so it never gets this field at all;
+  // LLM/Criterion always do, defaulting to 0 rather than hiding the line.
+  const connectedCount = card.llm_connected_case_count;
+  const children = Object.entries(card.materialized_card_ids ?? {});
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="hint">{AI_CARD_BLURB[card.type] ?? AI_CARD_BLURB.llm}</p>
+      {card.type === "criterion" && (
+        <label className="field">
+          <span className="label">Criterion</span>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder='e.g. "age >= 18"'
+            value={criterion}
+            onChange={(e) => setCriterion(e.target.value)}
+            onBlur={() => onPatch(card.id, { config: { ...card.config, criterion } })}
+          />
+        </label>
+      )}
+      {connectedCount != null && (
+        <p className="flex items-center gap-1.5 text-xs text-gray-700">
+          <span className="badge-blue">MCP</span>
+          {connectedCount} case{connectedCount === 1 ? "" : "s"} connected
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={() => onOpenChat(card.id)} className="btn-secondary btn-sm self-start">
+          Open session
+        </button>
+        {/* Criterion's one action ("evaluate every connected case") is
+            well-defined enough to also offer as a one-click Run, unlike
+            LLM/Builder's open-ended chat -- RunButton itself no-ops for
+            those (see RUNNABLE_TYPES). */}
+        <RunButton card={card} onRun={onRun} running={running} label="Evaluate" />
+      </div>
+      {card.type === "criterion" && (
+        <div className="flex items-center gap-2">
+          <StaleBadge card={card} />
+          <LastRun card={card} />
+        </div>
+      )}
+      {children.length > 0 && (
+        <div className="flex flex-col items-start gap-1">
+          <span className="label">{AI_CARD_CHILDREN_LABEL[card.type] ?? "Created datasets"}</span>
+          {children.map(([handle, id]) => (
+            <button key={handle} onClick={() => onSelectCard(id)} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+              → Open {handle} dataset card
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

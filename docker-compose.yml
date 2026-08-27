@@ -117,11 +117,64 @@ services:
       KEYCLOAK_REALM: ct-platform
       KEYCLOAK_ADMIN_CLIENT_ID: admin-service-account
       KEYCLOAK_ADMIN_CLIENT_SECRET: admin-service-account-secret
+      # The Clinical Trial module's chat loop: a real small local model
+      # (via Ollama) driven through a real MCP server's tools.
+      OLLAMA_BASE_URL: http://ollama:11434
+      # qwen3:1.7b over qwen3:4b -- both support "think" mode and call
+      # tools reliably (confirmed live, including the full filtered-
+      # dataset tool chain), but 1.7b is dramatically faster on this
+      # GPU: a real production-shaped call answered correctly in ~3s
+      # against 4b's ~8-20s. granite4.1:3b was faster still but has no
+      # thinking mode at all -- ruled out once chain-of-thought became a
+      # real requirement, not just a nice-to-have.
+      OLLAMA_MODEL: qwen3:1.7b
+      MCP_SERVER_URL: http://mcp-server:8000/mcp
     ports:
       - "8004:8000"
     depends_on:
       - postgres
       - minio
+
+  # A real MCP server (not framing/mocked) exposing the Clinical Trial
+  # Assistant's tools -- reachable only inside this compose network
+  # (no host port published); admin-service's llm_chat is the only
+  # caller, and its own require_study_role check is the trust boundary.
+  mcp-server:
+    build:
+      context: .
+      dockerfile: services/mcp-server/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      # For read_document -- a real fetch from inside this container, so
+      # the internal hostname (same reasoning as ingestion-service).
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_BUCKET: ct-pixel-data
+      OBJECT_STORAGE_ACCESS_KEY: minioadmin
+      OBJECT_STORAGE_SECRET_KEY: minioadmin
+    depends_on:
+      - postgres
+      - minio
+
+  # Runs the actual small local language model the Clinical Trial
+  # Assistant card talks to. Reserves the host's NVIDIA GPU (needs the
+  # driver + nvidia-container-toolkit installed on the host, confirmed
+  # working via `docker run --gpus all ... nvidia-smi`) -- CPU-only
+  # would also work, just much slower. The model itself isn't baked into
+  # the image -- pull it once with `docker compose exec ollama ollama
+  # pull <model>`.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   # Browser-facing React app -- talks to the four APIs and Keycloak directly
   # from the browser (all ports above are published to the host), not
@@ -138,3 +191,4 @@ volumes:
   postgres-data:
   minio-data:
   keycloak-data:
+  ollama-data:

@@ -30,11 +30,11 @@ export default function Layout() {
       <aside className="flex w-64 flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 backdrop-blur-sm">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white shadow-sm shadow-brand-600/30">
-            CT
+            VL
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight text-gray-900">Platform Admin</div>
-            <div className="text-xs leading-tight text-gray-400">CT Annotation System</div>
+            <div className="text-sm font-semibold leading-tight text-gray-900">VoxelLabel</div>
+            <div className="text-xs leading-tight text-gray-400">Admin</div>
           </div>
         </div>
 

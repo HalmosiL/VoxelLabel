@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { listMyJobs, MyJob } from "../api/workflowApi";
-import { CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
+import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
 import EmptyState from "../components/EmptyState";
 
 /** Full-page view of a single job assigned to the calling user -- reuses
@@ -87,7 +87,8 @@ export default function JobDetailPage() {
                 </tr>
               )}
               {job.cases.map((c) => {
-                const caseStyle = CASE_STATUS_STYLE[c.status];
+                const caseStyle =
+                  job.card_type === "review" && c.pending_annotation_id ? AWAITING_REVIEW_STYLE : CASE_STATUS_STYLE[c.status];
                 return (
                   <tr key={c.id}>
                     <td>{c.title || `${c.id.slice(0, 8)}…`}</td>

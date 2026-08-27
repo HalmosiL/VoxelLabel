@@ -15,7 +15,16 @@ export type WorkflowCardType =
   // crash the board; no new card is ever created with it.
   | "surface"
   | "annotation_surface"
-  | "review_surface";
+  | "review_surface"
+  // The Clinical Trial module's three AI chat card types -- a real
+  // small model driven over a real MCP server (see LlmNode.tsx and
+  // LlmChatModal.tsx). "llm" is the original data-connected assistant;
+  // "builder" is the Pipeline Builder (study-scoped, no connected
+  // data); "criterion" is a per-eligibility-criterion sub-agent
+  // (BuilderNode.tsx / CriterionNode.tsx).
+  | "llm"
+  | "builder"
+  | "criterion";
 
 export type WorkflowCardConfig = Record<string, unknown>;
 
@@ -37,15 +46,47 @@ export interface WorkflowCard {
   annotation_progress?: { annotated: number; total: number };
   // Split: handle ("part_0", ...) -> id of the Dataset card materialized
   // for that part. Review: handle ("approved" | "rejected") -> id of the
-  // Dataset card materialized for that decision.
+  // Dataset card materialized for that decision. LLM: handle
+  // ("created_1", "created_2", ...) -> id of a Dataset spawned by a
+  // "create a dataset" chat request. Criterion: handle ("included" |
+  // "excluded") -> id of the Dataset card materialized by its own
+  // evaluate_criterion call.
   materialized_card_ids?: Record<string, string>;
-  // Review only: handle -> case count for each materialized_card_ids
-  // entry, without a second round trip to fetch each Dataset card.
+  // Review/Criterion only: handle -> case count for each
+  // materialized_card_ids entry, without a second round trip to fetch
+  // each Dataset card.
   materialized_counts?: Record<string, number>;
   // Annotation only: id of the "materialize as dataset" child, if enabled.
   materialized_card_id?: string | null;
   // Dataset only: set when this card was auto-created by a Split/Annotation/Review Run.
   materialized_from?: { card_id: string; title: string } | null;
+  // LLM/Criterion only: how many cases are currently wired into its
+  // input, computed fresh on every read (neither card type is ever Run).
+  llm_connected_case_count?: number;
+}
+
+/** One turn of an LLM card's chat transcript (config.messages). A
+ * `tool_call` renders as its own distinct block in the chat UI --
+ * imitating how Claude Code's own transcript shows a tool use -- rather
+ * than folding into `content` as plain prose. */
+export interface LlmChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  tool_call?: {
+    name: string;
+    args: Record<string, unknown>;
+    result_summary: string;
+  } | null;
+  // The model's own reasoning trace for this turn, when the underlying
+  // model supports Ollama's "think" mode -- rendered as a separate,
+  // collapsed-by-default block above the reply. Absent/null for models
+  // (or turns) with no such trace, not just an empty string.
+  thinking?: string | null;
+  // Every tool name that reasoning pass led to calling (may be more
+  // than one), shown alongside the Thinking block itself so it's clear
+  // at a glance what the reasoning resulted in without expanding it.
+  // Only set on the message that also carries `thinking`.
+  thinking_tools?: string[] | null;
 }
 
 export interface SplitPart {
@@ -136,6 +177,18 @@ export function runWorkflowCard(cardId: string): Promise<WorkflowCard> {
   return apiFetch(base, `/admin/workflow-cards/${cardId}/run`, { method: "POST" });
 }
 
+/** Sends one chat message to an LLM/Builder/Criterion card's real chat
+ * session -- backs LlmChatModal. `board_changed` tells the caller
+ * whether to do a full board refresh (a card and/or edge was created or
+ * a materialized child's contents changed) versus just merging the
+ * returned card's updated `config.messages`. */
+export function sendLlmChatMessage(cardId: string, message: string): Promise<{ board_changed: boolean } & WorkflowCard> {
+  return apiFetch(base, `/admin/workflow-cards/${cardId}/llm-chat`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
 export interface SurfaceConfig {
   tools: string[];
   panes: string[];
@@ -163,7 +216,7 @@ export interface MyJob {
   card_title: string;
   card_type: WorkflowCardType;
   status: string;
-  cases: { id: string; title: string | null; status: CaseStatus }[];
+  cases: WorkflowCardCase[];
 }
 
 /** Every Annotation/Review card assigned to the calling user, across
@@ -176,6 +229,10 @@ export interface WorkflowCardCase {
   id: string;
   title: string | null;
   status: CaseStatus;
+  // Id of the case's single most recent Annotation record regardless of
+  // status, null if it has none at all. Backs the Study page's "Delete
+  // annotation" action.
+  latest_annotation_id?: string | null;
   // Review cards only: id of the latest Annotation record if it's still
   // awaiting a decision, null once approved/rejected or if nothing's
   // been submitted yet. Backs the Study page's per-case Approve/Reject
@@ -189,4 +246,56 @@ export interface WorkflowCardCase {
  * expandable row on the Study page's Annotations/Reviews tables. */
 export function getWorkflowCardCases(cardId: string): Promise<WorkflowCardCase[]> {
   return apiFetch(base, `/admin/workflow-cards/${cardId}/cases`);
+}
+
+/** One card in a saved (or built-in) pipeline template -- `key` is a
+ * local, template-scoped reference (not a real card id), same shape as
+ * admin-ui's own PIPELINE_TEMPLATES so a custom template fetched from
+ * the API and a built-in one insert through the exact same code. */
+export interface PipelineTemplateCardDTO {
+  key: string;
+  type: WorkflowCardType;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  config: WorkflowCardConfig;
+}
+
+export interface PipelineTemplateEdgeDTO {
+  source_key: string;
+  source_handle: string;
+  target_key: string;
+  target_handle: string;
+}
+
+export interface PipelineTemplateDTO {
+  id: string;
+  title: string;
+  description: string;
+  cards: PipelineTemplateCardDTO[];
+  edges: PipelineTemplateEdgeDTO[];
+  created_by: string | null;
+  created_at: string;
+}
+
+export function listPipelineTemplates(): Promise<PipelineTemplateDTO[]> {
+  return apiFetch(base, "/admin/pipeline-templates");
+}
+
+export function createPipelineTemplate(input: {
+  title: string;
+  description: string;
+  cards: PipelineTemplateCardDTO[];
+  edges: PipelineTemplateEdgeDTO[];
+}): Promise<PipelineTemplateDTO> {
+  return apiFetch(base, "/admin/pipeline-templates", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deletePipelineTemplate(templateId: string): Promise<void> {
+  return apiFetch(base, `/admin/pipeline-templates/${templateId}`, { method: "DELETE" });
 }

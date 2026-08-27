@@ -40,6 +40,19 @@ export const HANDLE_RULES: Record<WorkflowCardType, HandleRule> = {
   // channel into its one matching job type (see SURFACE_TARGET_TYPE).
   annotation_surface: { inputHandles: [], outputHandles: ["surface_config"] },
   review_surface: { inputHandles: [], outputHandles: ["surface_config"] },
+  // Any number of Dataset(s) can be wired in as connected data sources
+  // (same multi-input shape as Union/Annotation); no real output of its
+  // own -- what it produces is expressed as named materialized Dataset
+  // children (see llm_chat), exactly like Split's parts.
+  llm: { inputHandles: ["input"], outputHandles: [] },
+  // Scoped to the whole Study (its tools take study_id, not card_id) --
+  // no data-flow edges at all, structurally like Note/Milestone.
+  builder: { inputHandles: [], outputHandles: [] },
+  // Takes one real input (the population it judges); no real output of
+  // its own -- always materializes named "included"/"excluded" Dataset
+  // children instead (see evaluate_criterion), exactly like Review's
+  // approved/rejected.
+  criterion: { inputHandles: ["input"], outputHandles: [] },
 };
 
 // A Surface card only ever pairs with its own matching job type --
@@ -76,4 +89,9 @@ export function isValidConnection(
   return true;
 }
 
-export const RUNNABLE_TYPES: WorkflowCardType[] = ["dataset", "split", "filter", "union", "annotation", "review"];
+// Criterion is the one chat-capable type in this list -- unlike LLM/
+// Builder's open-ended chat, its one action ("evaluate every connected
+// case against my stored criterion") is well-defined and repeatable, so
+// Run is a canned-message shortcut for it (see _run_one_card's own
+// CRITERION branch) rather than something only reachable via chat.
+export const RUNNABLE_TYPES: WorkflowCardType[] = ["dataset", "split", "filter", "union", "annotation", "review", "criterion"];

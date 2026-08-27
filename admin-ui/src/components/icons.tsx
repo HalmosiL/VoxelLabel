@@ -137,3 +137,39 @@ export function MonitorCheckIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+// Marks the Clinical Trial module's mocked-LLM card, both in the
+// sidebar palette and on the node itself.
+export function SparklesIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M12 2a1 1 0 01.967.744L14.146 7.2 17.5 8.34a1 1 0 010 1.32L14.146 10.8l-1.179 4.456a1 1 0 01-1.934 0L9.854 10.8 6.5 9.66a1 1 0 010-1.32L9.854 7.2l1.179-4.456A1 1 0 0112 2z" />
+      <path d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1z" opacity={0.6} />
+      <path d="M5 12a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1z" opacity={0.6} />
+    </svg>
+  );
+}
+
+/** Pipeline Builder card icon -- a wrench, for "helps construct the board". */
+export function WrenchIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M14.5 2a3.5 3.5 0 00-3.408 4.327L4.293 13.13a1.5 1.5 0 000 2.122l.455.455a1.5 1.5 0 002.122 0l6.803-6.799A3.5 3.5 0 0017.85 4.98a.5.5 0 00-.828-.22l-1.69 1.69a1 1 0 01-1.414 0l-.368-.368a1 1 0 010-1.414l1.69-1.69a.5.5 0 00-.22-.828A3.51 3.51 0 0014.5 2z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+/** Eligibility Criterion card icon -- a funnel with a checkmark, for
+ * "narrows the population by one rule". */
+export function FunnelCheckIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M2.5 3.5A1 1 0 013.4 3h13.2a1 1 0 01.9 1.5l-4.75 6.65v4.02a1 1 0 01-1.45.9l-2.2-1.1a1 1 0 01-.55-.9v-2.92L2.6 4.5a1 1 0 01-.1-1z" />
+      <path d="M14 12l1.2 1.2L18 10.4" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

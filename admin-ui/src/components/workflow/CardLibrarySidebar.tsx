@@ -6,11 +6,14 @@ import {
   DocumentIcon,
   FlagIcon,
   ForkIcon,
+  FunnelCheckIcon,
   FunnelIcon,
   MergeIcon,
   MonitorCheckIcon,
   MonitorIcon,
   PencilIcon,
+  SparklesIcon,
+  WrenchIcon,
 } from "../icons";
 
 export interface CardTemplate {
@@ -98,6 +101,40 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         defaultHeight: 90,
       },
       {
+        type: "llm",
+        label: "Clinical Trial Assistant",
+        icon: <SparklesIcon className="h-4 w-4" />,
+        defaultTitle: "Clinical Trial Assistant",
+        // An empty transcript is the only state a fresh session needs.
+        defaultConfig: { messages: [] },
+        defaultWidth: 220,
+        defaultHeight: 100,
+      },
+      {
+        type: "builder",
+        label: "Pipeline Builder",
+        icon: <WrenchIcon className="h-4 w-4" />,
+        defaultTitle: "Pipeline Builder",
+        // Scoped to the whole Study rather than connected data -- no
+        // other state a fresh session needs beyond its own transcript.
+        defaultConfig: { messages: [] },
+        defaultWidth: 220,
+        defaultHeight: 100,
+      },
+      {
+        type: "criterion",
+        label: "Eligibility Criterion",
+        icon: <FunnelCheckIcon className="h-4 w-4" />,
+        defaultTitle: "Eligibility Criterion",
+        // `criterion` holds the one natural-language rule this
+        // sub-agent judges connected cases against.
+        defaultConfig: { criterion: "", messages: [] },
+        defaultWidth: 220,
+        // Taller than a plain chat card -- also needs room for the
+        // always-shown included/excluded named-output rows.
+        defaultHeight: 160,
+      },
+      {
         type: "annotation_surface",
         label: "Annotation Surface",
         icon: <MonitorIcon className="h-4 w-4" />,
@@ -168,7 +205,10 @@ export default function CardLibrarySidebar() {
   }
 
   return (
-    <aside className="flex w-56 flex-shrink-0 flex-col gap-5 overflow-y-auto border-r border-gray-200/70 bg-white/80 p-4">
+    // No width/border/scroll of its own -- WorkflowBoardPage wraps this
+    // (and its Store tab sibling, PipelineStore) in one shared <aside>
+    // that owns those, so switching tabs doesn't visually reset them.
+    <div className="flex flex-col gap-5 p-4">
       {GROUPS.map((group) => (
         <div key={group.label}>
           <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{group.label}</div>
@@ -189,6 +229,6 @@ export default function CardLibrarySidebar() {
           </div>
         </div>
       ))}
-    </aside>
+    </div>
   );
 }

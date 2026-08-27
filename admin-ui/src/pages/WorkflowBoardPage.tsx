@@ -14,12 +14,21 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  DragEvent,
+  MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getStudy, KeycloakUser, listKeycloakUsers, Study } from "../api/adminApi";
 import { CaseSummary, listCases } from "../api/dataApi";
 import {
+  createPipelineTemplate,
   createWorkflowCard,
   createWorkflowEdge,
   deleteWorkflowCard,
@@ -29,15 +38,26 @@ import {
   updateWorkflowCard,
   WorkflowCard,
   WorkflowCardPatchInput,
+  WorkflowCardType,
   WorkflowEdge,
 } from "../api/workflowApi";
 import { CARD_TEMPLATES, DRAG_DATA_FORMAT } from "../components/workflow/CardLibrarySidebar";
 import CardLibrarySidebar from "../components/workflow/CardLibrarySidebar";
+import PipelineStore from "../components/workflow/PipelineStore";
+import {
+  PipelineTemplate,
+  pipelineTemplateToCreateInput,
+  TEMPLATE_DRAG_DATA_FORMAT,
+} from "../components/workflow/pipelineTemplates";
+import SaveTemplateModal from "../components/workflow/SaveTemplateModal";
 import { isValidConnection } from "../components/workflow/handleRules";
 import AnnotationNode from "../components/workflow/nodes/AnnotationNode";
 import AnnotationSurfaceNode from "../components/workflow/nodes/AnnotationSurfaceNode";
+import BuilderNode from "../components/workflow/nodes/BuilderNode";
+import CriterionNode from "../components/workflow/nodes/CriterionNode";
 import DatasetNode from "../components/workflow/nodes/DatasetNode";
 import FilterNode from "../components/workflow/nodes/FilterNode";
+import LlmNode from "../components/workflow/nodes/LlmNode";
 import MilestoneNode from "../components/workflow/nodes/MilestoneNode";
 import NoteNode from "../components/workflow/nodes/NoteNode";
 import ReviewNode from "../components/workflow/nodes/ReviewNode";
@@ -47,6 +67,8 @@ import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
 import WorkflowPropertiesPanel from "../components/workflow/WorkflowPropertiesPanel";
+import FlowEdge, { FlowTone } from "../components/workflow/edges/FlowEdge";
+import LlmChatModal from "../components/workflow/LlmChatModal";
 
 const NODE_TYPES = {
   dataset: DatasetNode,
@@ -59,7 +81,23 @@ const NODE_TYPES = {
   milestone: MilestoneNode,
   annotation_surface: AnnotationSurfaceNode,
   review_surface: ReviewSurfaceNode,
+  llm: LlmNode,
+  builder: BuilderNode,
+  criterion: CriterionNode,
 };
+
+const EDGE_TYPES = { flow: FlowEdge };
+
+// Which card types a Store template insert Runs automatically (see
+// insertTemplateAt) -- deterministic, synchronous recomputes only.
+// Split/Review are what actually need this (their named materialized
+// children, e.g. Review's approved/rejected, are the whole point of a
+// template like "Felülvizsgálat visszacsatolással"); Filter/Union/
+// Annotation are included too since they're just as cheap and a card
+// downstream of one may need its output_case_ids populated to Run in
+// turn. Never Criterion/LLM/Builder -- those call out to a real local
+// model, which must stay a deliberate, user-triggered action.
+const _AUTO_RUN_TEMPLATE_TYPES = new Set<WorkflowCardType>(["split", "filter", "union", "annotation", "review"]);
 
 function cardToNode(card: WorkflowCard): CardNode {
   return {
@@ -82,18 +120,23 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
     // Right-angled routing instead of the default bezier curve, and
     // draggable by either endpoint (see handleReconnect) to rewire it
     // onto a different card/handle without deleting and redrawing.
-    type: "step",
+    // "flow" (see FlowEdge) draws the same right-angled path but also
+    // animates real cases moving along it -- flow data is attached
+    // separately (see annotateFlowEdges) since it depends on the cards
+    // on both ends, not just the edge itself.
+    type: "flow",
     reconnectable: true,
   };
 }
 
-/** Derived, non-interactive connector lines from a Split/Annotation/Review
- * card to whichever Dataset card(s) it materialized -- not a real
- * WorkflowEdge (materialized Dataset cards have no real input), so these
- * are recomputed client-side from each card's materialized_card_id(s)
- * rather than fetched, and marked non-deletable/non-selectable so they
- * can't be mistaken for a user-drawn connection. Split has no real
- * output handle of its own (see handleRules.ts), so its nodes render a
+/** Derived, non-interactive connector lines from a Split/Annotation/
+ * Review/LLM/Criterion card to whichever Dataset card(s) it
+ * materialized -- not a real WorkflowEdge (materialized Dataset cards
+ * have no real input), so these are recomputed client-side from each
+ * card's materialized_card_id(s) rather than fetched, and marked
+ * non-deletable/non-selectable so they can't be mistaken for a
+ * user-drawn connection. Split/LLM/Criterion have no real output
+ * handle of their own (see handleRules.ts), so their nodes render a
  * dedicated non-interactive "materialize" anchor to originate from;
  * Annotation and Review both still have a real "output" handle, so
  * their connector(s) originate from that instead -- Review's two
@@ -101,31 +144,121 @@ function edgeToRFEdge(edge: WorkflowEdge): Edge {
 function materializationEdges(cards: WorkflowCard[]): Edge[] {
   const edges: Edge[] = [];
   for (const card of cards) {
-    const childEntries =
-      card.type === "split"
-        ? Object.entries(card.materialized_card_ids ?? {}).map(([, childId]) => [childId, "materialize"] as const)
+    // [childId, anchor handle to draw from, semantic branch key]. Review's
+    // approved/rejected both fan out from the same real "output" handle, so
+    // the branch key (needed to tell them apart for flow tone/count -- see
+    // annotateFlowEdges) has to travel separately from the anchor handle.
+    const childEntries: Array<readonly [string, string, string]> =
+      card.type === "split" || card.type === "llm" || card.type === "criterion"
+        ? Object.entries(card.materialized_card_ids ?? {}).map(([key, childId]) => [childId, "materialize", key] as const)
         : card.type === "review"
-          ? Object.entries(card.materialized_card_ids ?? {}).map(([, childId]) => [childId, "output"] as const)
+          ? Object.entries(card.materialized_card_ids ?? {}).map(([key, childId]) => [childId, "output", key] as const)
           : card.type === "annotation" && card.materialized_card_id
-            ? [[card.materialized_card_id, "output"] as const]
+            ? [[card.materialized_card_id, "output", "annotated"] as const]
             : [];
 
-    for (const [childId, sourceHandle] of childEntries) {
+    for (const [childId, sourceHandle, branchKey] of childEntries) {
       edges.push({
         id: `materialize-${card.id}-${childId}`,
         source: card.id,
         sourceHandle,
         target: childId,
         targetHandle: "materialize",
-        type: "step",
-        style: { strokeDasharray: "4 3", stroke: "#c7c7c7" },
+        type: "flow",
+        style: { strokeDasharray: "4 3" },
         deletable: false,
         selectable: false,
         focusable: false,
+        data: { branchKey },
       });
     }
   }
   return edges;
+}
+
+/** Maps a card id to the tone its downstream cases should render in --
+ * a Review's approved/rejected materialized children, and an
+ * Annotation's materialized "(annotated)" child, carry that outcome
+ * with them wherever they're wired onward (e.g. the rejected branch
+ * looping back into an Annotation card's input). Everything else flows
+ * "neutral": it hasn't been decided on yet. */
+function buildFlowToneMap(cards: WorkflowCard[]): Record<string, FlowTone> {
+  const tones: Record<string, FlowTone> = {};
+  for (const card of cards) {
+    if (card.type === "review") {
+      const approvedId = card.materialized_card_ids?.approved;
+      const rejectedId = card.materialized_card_ids?.rejected;
+      if (approvedId) tones[approvedId] = "done";
+      if (rejectedId) tones[rejectedId] = "rejected";
+    }
+    if (card.type === "criterion") {
+      const includedId = card.materialized_card_ids?.included;
+      const excludedId = card.materialized_card_ids?.excluded;
+      if (includedId) tones[includedId] = "done";
+      if (excludedId) tones[excludedId] = "rejected";
+    }
+    if (card.type === "annotation" && card.materialized_card_id) {
+      tones[card.materialized_card_id] = "done";
+    }
+  }
+  return tones;
+}
+
+function cardOutputCount(card: WorkflowCard | undefined, handle: string | null): number {
+  if (!card) return 0;
+  const count = card.output_count;
+  if (count == null) return 0;
+  return typeof count === "number" ? count : (count[handle ?? "output"] ?? 0);
+}
+
+/** Attaches how many cases are actually on each edge right now, and
+ * which tone they carry, so FlowEdge can animate real volume instead of
+ * a decorative flourish -- an edge with nothing flowing through it
+ * renders idle rather than pretending otherwise. Derived entirely from
+ * data the board already loads (no extra request), so it's cheap to
+ * recompute on every render as cards/edges change (e.g. right after a
+ * Run updates a card's counts). */
+function annotateFlowEdges(edges: Edge[], cards: WorkflowCard[]): Edge[] {
+  const cardsById = new Map(cards.map((c) => [c.id, c]));
+  const tones = buildFlowToneMap(cards);
+
+  return edges.map((edge) => {
+    const isMaterialization = edge.deletable === false;
+    let count: number;
+    let tone: FlowTone;
+
+    if (isMaterialization) {
+      const parent = cardsById.get(edge.source);
+      const branchKey = (edge.data as { branchKey?: string } | undefined)?.branchKey;
+      if (parent?.type === "review") {
+        count = parent.materialized_counts?.[branchKey ?? ""] ?? 0;
+        tone = branchKey === "approved" ? "done" : "rejected";
+      } else if (parent?.type === "criterion") {
+        count = parent.materialized_counts?.[branchKey ?? ""] ?? 0;
+        tone = branchKey === "included" ? "done" : "rejected";
+      } else if (parent?.type === "split") {
+        const splitCounts = parent.output_count;
+        count = splitCounts && typeof splitCounts !== "number" ? (splitCounts[branchKey ?? ""] ?? 0) : 0;
+        tone = "neutral";
+      } else if (parent?.type === "llm") {
+        // Unlike Split's per-part counts (cached on the parent itself),
+        // an LLM-created Dataset's count just lives on that Dataset card
+        // like any other -- it's a plain "manual" child, computed live
+        // regardless of Run history.
+        const child = cardsById.get(edge.target);
+        count = typeof child?.output_count === "number" ? child.output_count : 0;
+        tone = "neutral";
+      } else {
+        count = parent?.annotation_progress?.annotated ?? 0;
+        tone = "done";
+      }
+    } else {
+      count = cardOutputCount(cardsById.get(edge.source), edge.sourceHandle ?? null);
+      tone = tones[edge.source] ?? "neutral";
+    }
+
+    return { ...edge, data: { count, tone } };
+  });
 }
 
 function isEditableTarget(): boolean {
@@ -151,6 +284,31 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [runningCardId, setRunningCardId] = useState<string | null>(null);
+  // Which LLM card's chat session (if any) is open -- lifted here rather
+  // than into LlmNode/WorkflowPropertiesPanel so the modal can call the
+  // same refreshBoard() every other board-mutating action already uses.
+  const [chatCardId, setChatCardId] = useState<string | null>(null);
+  // Which panel the left sidebar shows -- the draggable card library, or
+  // the Store's ready-made pipeline templates (see handleInsertTemplate).
+  const [sidebarTab, setSidebarTab] = useState<"library" | "store">("library");
+  // Store's own width, user-resizable (see the drag handle next to the
+  // <aside> below) and remembered across sessions -- the Library tab
+  // stays a fixed compact width, since its plain draggable card list
+  // never needs more room the way the Store's pipeline thumbnails do.
+  const [storeSidebarWidth, setStoreSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem("workflowStoreSidebarWidth"));
+      return saved >= 320 && saved <= 900 ? saved : 384;
+    } catch {
+      return 384;
+    }
+  });
+  const [insertingTemplateId, setInsertingTemplateId] = useState<string | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  // Bumped after a template save succeeds so PipelineStore refetches
+  // even if the Store tab (and so PipelineStore itself) was already
+  // mounted when the save happened -- see its own prop comment.
+  const [templateRefreshSignal, setTemplateRefreshSignal] = useState(0);
   const clipboardRef = useRef<{ nodes: CardNode[]; edges: Edge[] } | null>(null);
 
   const { screenToFlowPosition, fitView } = useReactFlow();
@@ -159,6 +317,14 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   // must never enter undo/redo history or the backend-sync logic that
   // treats history edges as real WorkflowEdge rows.
   const realEdges = edges.filter((e) => e.deletable !== false);
+  // Recomputed from the current cards on every render (cheap, no extra
+  // request) rather than threaded through every edge-mutation call site,
+  // so a Run's updated counts animate correctly no matter how the edge
+  // it's on was created (drawn, reconnected, pasted, ...).
+  const renderedEdges = useMemo(
+    () => annotateFlowEdges(edges, nodes.map((n) => n.data.card)),
+    [edges, nodes],
+  );
 
   function refreshBoard() {
     getWorkflowBoard(studyId)
@@ -306,22 +472,216 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
+
+    const templateJson = event.dataTransfer.getData(TEMPLATE_DRAG_DATA_FORMAT);
+    if (templateJson) {
+      // The whole template travels as JSON, not just an id -- a custom
+      // (saved-by-a-user) one only exists in PipelineStore's own
+      // fetched state, nowhere this page could look an id up in.
+      try {
+        const template: PipelineTemplate = JSON.parse(templateJson);
+        // Dropped exactly where the cursor let go -- the template's own
+        // (0,0) origin lands there, same as a single card's position_x/y
+        // becomes exactly the drop point below.
+        insertTemplateAt(template, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+      } catch (err) {
+        setError(String(err));
+      }
+      return;
+    }
+
     const type = event.dataTransfer.getData(DRAG_DATA_FORMAT);
-    const template = CARD_TEMPLATES.find((t) => t.type === type);
-    if (!template) return;
+    const cardTemplate = CARD_TEMPLATES.find((t) => t.type === type);
+    if (!cardTemplate) return;
 
     const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
     history.record(nodes, realEdges);
     createWorkflowCard(studyId, {
-      type: template.type,
-      title: template.defaultTitle,
+      type: cardTemplate.type,
+      title: cardTemplate.defaultTitle,
       position_x: position.x,
       position_y: position.y,
-      width: template.defaultWidth,
-      height: template.defaultHeight,
-      config: template.defaultConfig,
+      width: cardTemplate.defaultWidth,
+      height: cardTemplate.defaultHeight,
+      config: cardTemplate.defaultConfig,
     })
       .then((card) => setNodes((nds) => [...nds, cardToNode(card)]))
+      .catch((err) => setError(String(err)));
+  }
+
+  /** Instantiates a whole Store template at once -- same create-cards-
+   * then-create-edges-by-key shape as the Ctrl+V clipboard-paste handler
+   * above (see its own comments), just sourced from a static template's
+   * relative positions instead of copied real nodes. `origin` is
+   * wherever the template's own (0,0) should land in flow space -- the
+   * drop point for a drag (see handleDrop), or the current viewport's
+   * center for the Store's "Beszúrás" button (see handleInsertTemplate). */
+  async function insertTemplateAt(template: PipelineTemplate, origin: { x: number; y: number }) {
+    setInsertingTemplateId(template.id);
+    history.record(nodes, realEdges);
+    try {
+      const keyToId = new Map<string, string>();
+      for (const card of template.cards) {
+        const created = await createWorkflowCard(studyId, {
+          type: card.type,
+          title: card.title,
+          position_x: origin.x + card.x,
+          position_y: origin.y + card.y,
+          width: card.width,
+          height: card.height,
+          config: card.config,
+        });
+        keyToId.set(card.key, created.id);
+      }
+
+      for (const edge of template.edges) {
+        const source = keyToId.get(edge.sourceKey);
+        const target = keyToId.get(edge.targetKey);
+        if (!source || !target) continue;
+        await createWorkflowEdge(studyId, {
+          source_card_id: source,
+          source_handle: edge.sourceHandle,
+          target_card_id: target,
+          target_handle: edge.targetHandle,
+        });
+      }
+
+      // Run every deterministic, already-wired card in the template, in
+      // the order it's listed (source before target, by construction --
+      // see PIPELINE_TEMPLATES) -- this is what actually materializes
+      // Split's parts / Review's approved-rejected, so a template like
+      // "Felülvizsgálat visszacsatolással" produces its real named
+      // children immediately instead of only once someone happens to
+      // click Run later. AI-driven cards (Criterion, LLM, Builder) are
+      // deliberately excluded -- evaluating a criterion is a real model
+      // call a user should trigger on purpose, never a side effect of
+      // dropping a template on the board. A card with no incoming edge
+      // (a template's own root Dataset) is skipped too -- Running one
+      // requires exactly one incoming connection.
+      const hasIncomingEdge = new Set(template.edges.map((e) => e.targetKey));
+      const runResultByKey = new Map<string, WorkflowCard>();
+      for (const card of template.cards) {
+        if (!_AUTO_RUN_TEMPLATE_TYPES.has(card.type) || !hasIncomingEdge.has(card.key)) continue;
+        const cardId = keyToId.get(card.key);
+        if (!cardId) continue;
+        const result = await runWorkflowCard(cardId);
+        runResultByKey.set(card.key, result);
+      }
+
+      // Now that Review/Split have actually materialized their named
+      // children for real, wire up any illustrative feedback loop (see
+      // PipelineTemplateFeedback) as a real WorkflowEdge too -- e.g.
+      // Review's freshly-created "(rejected)" Dataset back into
+      // Annotation's input, completing the loop the template promises
+      // instead of leaving it as just a diagram.
+      for (const fb of template.feedback ?? []) {
+        const childId = runResultByKey.get(fb.sourceKey)?.materialized_card_ids?.[fb.sourceHandle];
+        const targetId = keyToId.get(fb.targetKey);
+        if (!childId || !targetId) continue;
+        await createWorkflowEdge(studyId, {
+          source_card_id: childId,
+          source_handle: "output",
+          target_card_id: targetId,
+          target_handle: fb.targetHandle,
+        });
+      }
+
+      // A plain create-cards-then-create-edges insert could patch local
+      // state directly (see the old version of this function), but Run
+      // creates cards (the materialized children) this page doesn't
+      // know about yet -- simplest to just pull the complete result
+      // from the server instead of hand-reconciling all of it locally.
+      refreshBoard();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setInsertingTemplateId(null);
+    }
+  }
+
+  /** The Store's "Beszúrás" button -- centers the template on whatever's
+   * currently in view, for a click-only insert with no drag involved. */
+  function handleInsertTemplate(template: PipelineTemplate) {
+    insertTemplateAt(
+      template,
+      screenToFlowPosition({
+        x: window.innerWidth / 2 - 200,
+        y: window.innerHeight / 2 - 150,
+      })
+    );
+  }
+
+  /** Drag-to-resize the Store sidebar (see the handle rendered right
+   * after the <aside> below) -- plain window-level mouse listeners for
+   * the drag's duration, the same pattern as any other drag-resize
+   * handle, since React Flow's own drag handling doesn't cover the
+   * surrounding page chrome. Persisted to localStorage so the chosen
+   * width survives a reload -- purely a per-browser convenience, never
+   * anything the backend needs to know about. */
+  function startStoreSidebarResize(event: ReactMouseEvent) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = storeSidebarWidth;
+
+    function onMouseMove(moveEvent: MouseEvent) {
+      const next = Math.min(900, Math.max(320, startWidth + (moveEvent.clientX - startX)));
+      setStoreSidebarWidth(next);
+      try {
+        localStorage.setItem("workflowStoreSidebarWidth", String(next));
+      } catch {
+        // Storage unavailable (private browsing, disabled) -- the resize
+        // itself still works for the rest of this session, just isn't
+        // remembered next time.
+      }
+    }
+    function onMouseUp() {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }
+
+  /** The toolbar's "Mentés Store-ba" flow -- snapshots the current
+   * selection (cards, relative to the selection's own top-left corner,
+   * plus whichever real edges run between two selected cards) into a
+   * new template, the reverse of insertTemplateAt. */
+  function handleSaveTemplate(title: string, description: string) {
+    const selected = nodes.filter((n) => n.selected);
+    if (selected.length === 0) return;
+    const minX = Math.min(...selected.map((n) => n.position.x));
+    const minY = Math.min(...selected.map((n) => n.position.y));
+    const selectedIds = new Set(selected.map((n) => n.id));
+
+    const template = {
+      title,
+      description,
+      cards: selected.map((n) => ({
+        key: n.id,
+        type: n.data.card.type,
+        title: n.data.card.title,
+        x: n.position.x - minX,
+        y: n.position.y - minY,
+        width: n.width ?? n.data.card.width ?? 200,
+        height: n.height ?? n.data.card.height ?? 90,
+        config: n.data.card.config,
+      })),
+      edges: realEdges
+        .filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target))
+        .map((e) => ({
+          sourceKey: e.source,
+          sourceHandle: e.sourceHandle ?? "output",
+          targetKey: e.target,
+          targetHandle: e.targetHandle ?? "input",
+        })),
+    };
+
+    createPipelineTemplate(pipelineTemplateToCreateInput(template))
+      .then(() => {
+        setSavingTemplate(false);
+        setSidebarTab("store");
+        setTemplateRefreshSignal((n) => n + 1);
+      })
       .catch((err) => setError(String(err)));
   }
 
@@ -423,6 +783,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const selectedNodes = nodes.filter((n) => n.selected);
   const selectedCard = selectedNodes.length === 1 ? selectedNodes[0].data.card : null;
   const hasIncomingEdge = selectedCard ? realEdges.some((e) => e.target === selectedCard.id) : false;
+  const chatCard = chatCardId ? (nodes.find((n) => n.id === chatCardId)?.data.card ?? null) : null;
 
   return (
     <div className="flex h-screen flex-col">
@@ -437,6 +798,14 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSavingTemplate(true)}
+            disabled={selectedNodes.length === 0}
+            className="btn-secondary btn-sm"
+            title={selectedNodes.length === 0 ? "Jelölj ki legalább egy kártyát" : "A kijelölt kártyák mentése új Store sablonként"}
+          >
+            Mentés Store-ba
+          </button>
           <button
             onClick={() => history.undo(nodes, realEdges, applySnapshot)}
             disabled={!history.canUndo}
@@ -460,7 +829,55 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <CardLibrarySidebar />
+        {/* Wider on the Store tab -- the pipeline thumbnails need real
+            room to stay legible; the plain draggable card list doesn't
+            need (or want) that extra width, so it only widens while
+            Store is actually open. The Store's own width is further
+            user-resizable via the drag handle right after this <aside>
+            (inline style, not a Tailwind width class, since it's a
+            continuous user-chosen value, not one of a fixed set). */}
+        <aside
+          className="flex flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 transition-[width]"
+          style={{ width: sidebarTab === "store" ? storeSidebarWidth : 224 }}
+        >
+          <div className="flex flex-shrink-0 border-b border-gray-200/70 text-sm">
+            <button
+              onClick={() => setSidebarTab("library")}
+              className={`flex-1 border-b-2 px-3 py-2 font-medium ${
+                sidebarTab === "library" ? "border-brand-600 text-brand-700" : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Library
+            </button>
+            <button
+              onClick={() => setSidebarTab("store")}
+              className={`flex-1 border-b-2 px-3 py-2 font-medium ${
+                sidebarTab === "store" ? "border-brand-600 text-brand-700" : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Store
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {sidebarTab === "library" ? (
+              <CardLibrarySidebar />
+            ) : (
+              <PipelineStore
+                onInsert={handleInsertTemplate}
+                inserting={insertingTemplateId}
+                refreshSignal={templateRefreshSignal}
+              />
+            )}
+          </div>
+        </aside>
+
+        {sidebarTab === "store" && (
+          <div
+            onMouseDown={startStoreSidebarResize}
+            className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200/70 transition-colors hover:bg-brand-400 active:bg-brand-500"
+            title="Húzd az oldalsáv átméretezéséhez"
+          />
+        )}
 
         <div
           className="relative flex-1"
@@ -470,8 +887,9 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         >
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={renderedEdges}
             nodeTypes={NODE_TYPES}
+            edgeTypes={EDGE_TYPES}
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onNodeDragStart={handleNodeDragStart}
@@ -514,8 +932,21 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           onBulkDelete={handleBulkDelete}
           onRun={handleRun}
           onSelectCard={handleSelectCard}
+          onOpenChat={setChatCardId}
           running={runningCardId !== null}
         />
+
+        {chatCard && (
+          <LlmChatModal card={chatCard} onClose={() => setChatCardId(null)} onBoardChanged={refreshBoard} />
+        )}
+
+        {savingTemplate && (
+          <SaveTemplateModal
+            cardCount={selectedNodes.length}
+            onClose={() => setSavingTemplate(false)}
+            onSave={handleSaveTemplate}
+          />
+        )}
       </div>
     </div>
   );

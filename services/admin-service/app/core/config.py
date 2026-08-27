@@ -30,6 +30,12 @@ class Settings:
     keycloak_realm: str = os.environ.get("KEYCLOAK_REALM", "ct-platform")
     keycloak_admin_client_id: str = os.environ.get("KEYCLOAK_ADMIN_CLIENT_ID", "admin-service-account")
     keycloak_admin_client_secret: str = os.environ.get("KEYCLOAK_ADMIN_CLIENT_SECRET", "admin-service-account-secret")
+    # The Clinical Trial module's chat loop (see app/llm_client.py):
+    # a real small local model served by Ollama...
+    ollama_base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
+    ollama_model: str = os.environ.get("OLLAMA_MODEL", "qwen3:1.7b")
+    # ...driven through a real MCP server's tools, not anything mocked.
+    mcp_server_url: str = os.environ.get("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
 
 
 settings = Settings()

@@ -136,3 +136,32 @@ def review_annotation(
     db.add(AnnotationReview(annotation_id=annotation.id, reviewer_id=user.subject, decision=decision, comment=comment))
     db.commit()
     return {"id": str(annotation.id), "status": annotation.status.value}
+
+
+@router.delete("/{annotation_id}", status_code=204)
+def delete_annotation(
+    annotation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Delete one annotation version outright -- used to undo a wrong or
+    unwanted submission from the Study page's case list. A case with no
+    remaining annotation reverts to "pending" (see admin-service's
+    `_case_status`), which also clears a Review card's
+    `pending_annotation_id` for it, so it stops showing as needing a
+    decision. Only ever exposed for a case's single latest version, so
+    in practice nothing else points at it as a `parent_version_id`; any
+    `AnnotationReview` rows logged against it are removed first so the
+    delete itself never fails on the foreign key."""
+    annotation = db.get(Annotation, annotation_id)
+    if annotation is None:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+
+    require_study_role(db, str(annotation.study_id), user, allowed_roles=["annotator", "reviewer", "admin"])
+
+    if db.query(Annotation).filter_by(parent_version_id=annotation.id).first() is not None:
+        raise HTTPException(status_code=409, detail="Cannot delete an annotation that has a newer version")
+
+    db.query(AnnotationReview).filter_by(annotation_id=annotation.id).delete()
+    db.delete(annotation)
+    db.commit()

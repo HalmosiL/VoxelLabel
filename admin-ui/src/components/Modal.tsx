@@ -1,11 +1,24 @@
 import { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-export default function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export default function Modal({
+  title,
+  onClose,
+  children,
+  maxWidthClassName = "max-w-md",
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  // Every existing caller is a short form, so max-w-md stays the
+  // default; a modal with more to show (e.g. LlmChatModal's transcript)
+  // can ask for more room without affecting anyone else.
+  maxWidthClassName?: string;
+}) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+        className={`w-full ${maxWidthClassName} rounded-2xl bg-white p-6 shadow-xl`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

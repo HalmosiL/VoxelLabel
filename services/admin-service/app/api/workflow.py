@@ -18,6 +18,7 @@ race against `run_workflow_card` (a Run landing between an autosave's
 snapshot-read and its delayed write would silently clobber the just-
 computed output), so each mutation only ever touches its own row.
 """
+import asyncio
 import hashlib
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.llm_client import run_llm_turn
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import (
@@ -60,13 +62,47 @@ _WRITE_ROLES = ["data_manager", "admin"]
 # accidentally become a data-flow node -- no new card is ever created
 # with it.
 _SURFACE_TYPES = {WorkflowCardType.SURFACE, WorkflowCardType.ANNOTATION_SURFACE, WorkflowCardType.REVIEW_SURFACE}
-_NO_OUTPUT_TYPES = {WorkflowCardType.SPLIT, WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, *_SURFACE_TYPES}
+# LLM (the Clinical Trial module's real chat card, driven by a local
+# model over MCP) has a real "input" -- Dataset(s) wired in as its
+# connected data sources -- but no real "output" of its own: like
+# Split, what it produces is expressed as named materialized Dataset
+# children (see llm_chat), not a graph edge, and it's never Run in the
+# batch sense (a chat message drives it instead), so it's
+# _NO_OUTPUT_TYPES and _NO_RUN_TYPES but *not* _NO_INPUT_TYPES.
+# BUILDER (the Pipeline Builder chat card) is scoped to the whole Study
+# rather than to connected data -- it has no input or output edges at
+# all, structurally like Note/Milestone, but is chat-capable like LLM.
+# CRITERION (a per-eligibility-criterion chat sub-agent) mirrors LLM's
+# shape exactly: a real "input" (the population it judges), no real
+# output of its own (it always materializes named "included"/"excluded"
+# Dataset children instead, via evaluate_criterion -- see llm_chat).
+# Unlike LLM/Builder, Criterion's one useful action ("evaluate every
+# connected case against my stored criterion") is well-defined and
+# repeatable -- not open-ended chat -- so it's the one chat-capable
+# type that's also a RUNNABLE_TYPES/Run target: see _run_one_card's own
+# CRITERION branch, which is a canned-message shortcut through the same
+# run_llm_turn loop, not a separate deterministic implementation.
+_NO_OUTPUT_TYPES = {
+    WorkflowCardType.SPLIT,
+    WorkflowCardType.NOTE,
+    WorkflowCardType.MILESTONE,
+    WorkflowCardType.LLM,
+    WorkflowCardType.BUILDER,
+    WorkflowCardType.CRITERION,
+    *_SURFACE_TYPES,
+}
 # Dataset CAN take an incoming edge -- connecting something into it and
 # running it snapshots that upstream result as this Dataset's manual case
 # list (a user-placed, general version of Split/Annotation/Review's
 # automatic "materialize" -- see the DATASET branch in run_workflow_card).
-_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, *_SURFACE_TYPES}
-_NO_RUN_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, *_SURFACE_TYPES}
+_NO_INPUT_TYPES = {WorkflowCardType.NOTE, WorkflowCardType.MILESTONE, WorkflowCardType.BUILDER, *_SURFACE_TYPES}
+_NO_RUN_TYPES = {
+    WorkflowCardType.NOTE,
+    WorkflowCardType.MILESTONE,
+    WorkflowCardType.LLM,
+    WorkflowCardType.BUILDER,
+    *_SURFACE_TYPES,
+}
 _MATERIALIZED_DEFAULT_WIDTH = 200.0
 _MATERIALIZED_DEFAULT_HEIGHT = 90.0
 
@@ -114,6 +150,10 @@ class WorkflowEdgeIn(BaseModel):
     source_handle: str = "output"
     target_card_id: uuid.UUID
     target_handle: str = "input"
+
+
+class LlmChatIn(BaseModel):
+    message: str
 
 
 def _card_or_404(db: Session, card_id: uuid.UUID) -> WorkflowCard:
@@ -164,27 +204,29 @@ def _materialized_children(db: Session, card_id: uuid.UUID) -> list[WorkflowCard
 _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 
 
-def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set) -> dict:
+def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set, since=None) -> dict:
     """Maps each of `target_ids` (all the same `target_type`) to its most
     recently created Annotation's (id, status, created_at) -- "latest
     version" the same way annotation-service's list_annotations_for_target
     already defines it (oldest-first by created_at; the last one is
     current). Uses Postgres's DISTINCT ON to pick that one row per target
     directly in SQL, rather than fetching full history and reducing in
-    Python."""
+    Python.
+
+    `since`, when given, ignores any Annotation older than that -- see
+    `_latest_annotation_per_case`'s docstring for why a card needs this."""
     if not target_ids:
         return {}
-    rows = (
-        db.query(Annotation.target_id, Annotation.id, Annotation.status, Annotation.created_at)
-        .filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids))
-        .order_by(Annotation.target_id, Annotation.created_at.desc())
-        .distinct(Annotation.target_id)
-        .all()
+    query = db.query(Annotation.target_id, Annotation.id, Annotation.status, Annotation.created_at).filter(
+        Annotation.target_type == target_type, Annotation.target_id.in_(target_ids)
     )
+    if since is not None:
+        query = query.filter(Annotation.created_at >= since)
+    rows = query.order_by(Annotation.target_id, Annotation.created_at.desc()).distinct(Annotation.target_id).all()
     return {row[0]: (row[1], row[2], row[3]) for row in rows}
 
 
-def _latest_annotation_per_case(db: Session, case_ids: list[str]) -> dict:
+def _latest_annotation_per_case(db: Session, case_ids: list[str], since=None) -> dict:
     """Maps each of `case_ids` to its single most-recent Annotation's
     (id, status, created_at) -- across *all* of that case's targets, not
     just whichever target type happens to match first. Shared by
@@ -204,7 +246,17 @@ def _latest_annotation_per_case(db: Session, case_ids: list[str]) -> dict:
     matches would let a stale rejection on a path the case has long
     since moved past permanently outvote a newer decision made on the
     other path. Instead this picks the single most recent Annotation
-    across both target types per case."""
+    across both target types per case.
+
+    `since` (pass a card's own `created_at`) excludes any Annotation
+    older than that -- otherwise a brand-new Annotation/Review card
+    placed downstream of an existing one that already annotated/reviewed
+    these same cases would read that older card's work as its own and
+    show every case "done" before anyone has touched *this* job at all.
+    A case's annotation history is otherwise tracked purely per case,
+    with no notion of which workflow card a given Annotation belongs to
+    -- this is what stands in for that, cheaply, without a schema
+    change: nothing before this card existed counts toward it."""
     if not case_ids:
         return {}
 
@@ -222,8 +274,8 @@ def _latest_annotation_per_case(db: Session, case_ids: list[str]) -> dict:
         .all()
     )
 
-    series_latest = _latest_annotation_by_target(db, "series", {row[1] for row in series_rows})
-    instance_latest = _latest_annotation_by_target(db, "instance", {row[1] for row in instance_rows})
+    series_latest = _latest_annotation_by_target(db, "series", {row[1] for row in series_rows}, since=since)
+    instance_latest = _latest_annotation_by_target(db, "instance", {row[1] for row in instance_rows}, since=since)
 
     # The single most recent Annotation for each case, across both of its
     # target types (compared by created_at, the 3rd element of each entry).
@@ -240,17 +292,17 @@ def _latest_annotation_per_case(db: Session, case_ids: list[str]) -> dict:
     return latest_per_case
 
 
-def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus]) -> list[str]:
+def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus], since=None) -> list[str]:
     """The subset of `case_ids` whose single most-recent Annotation record
     (see `_latest_annotation_per_case`) is in one of `statuses`. Shared by
     `_annotated_case_ids` (combined submitted-or-approved / approved-or-
     rejected checks) and Review's per-decision materialization (approved-
     only, rejected-only), below."""
-    latest_per_case = _latest_annotation_per_case(db, case_ids)
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=since)
     return sorted(str(cid) for cid, (_id, status, _created_at) in latest_per_case.items() if status in statuses)
 
 
-def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[str]:
+def _annotated_case_ids(db: Session, case_ids: list[str], review: bool, since=None) -> list[str]:
     """The subset of `case_ids` that actually have a real, *deliberately
     submitted* Annotation record (or, for Review, one already
     approved/rejected) -- a bare draft (created on every ct-annotator
@@ -268,13 +320,23 @@ def _annotated_case_ids(db: Session, case_ids: list[str], review: bool) -> list[
     they resubmit, the new Annotation row's own SUBMITTED status counts
     it again, regardless of the older REJECTED row still sitting there."""
     statuses = [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _ANNOTATED_STATUSES
-    return _case_ids_with_status(db, case_ids, statuses)
+    return _case_ids_with_status(db, case_ids, statuses, since=since)
 
 
-def _annotation_progress(db: Session, case_ids: list[str], review: bool) -> dict:
+def _annotation_progress(db: Session, case_ids: list[str], review: bool, since=None) -> dict:
     if not case_ids:
         return {"annotated": 0, "total": 0}
-    return {"annotated": len(_annotated_case_ids(db, case_ids, review)), "total": len(case_ids)}
+    if review:
+        # A case with nothing ever submitted has nothing for a reviewer
+        # to decide on -- it shouldn't count toward this job's total any
+        # more than it belongs in its case list (see
+        # _cases_with_annotated_status, which excludes it the same way).
+        latest_per_case = _latest_annotation_per_case(db, case_ids, since=since)
+        annotated = sum(
+            1 for entry in latest_per_case.values() if entry[1] in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED)
+        )
+        return {"annotated": annotated, "total": len(latest_per_case)}
+    return {"annotated": len(_annotated_case_ids(db, case_ids, review, since=since)), "total": len(case_ids)}
 
 
 def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by_target: dict) -> dict:
@@ -304,26 +366,39 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
     }
     if card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW) and output_case_ids:
         result["annotation_progress"] = _annotation_progress(
-            db, output_case_ids, review=card.type == WorkflowCardType.REVIEW
+            db, output_case_ids, review=card.type == WorkflowCardType.REVIEW, since=card.created_at
         )
 
-    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.REVIEW):
+    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.REVIEW, WorkflowCardType.LLM, WorkflowCardType.CRITERION):
         # Split materializes one Dataset per part (part_0, part_1, ...);
         # Review materializes one per decision (approved, rejected) -- the
         # "rejected" one is what a feedback edge back into an Annotation
-        # card is drawn from. Same plural shape for both.
+        # card is drawn from; LLM materializes one per "create a dataset"
+        # request in its chat session (created_1, created_2, ...);
+        # Criterion always materializes exactly "included"/"excluded",
+        # via evaluate_criterion -- same handle-keyed shape as Review's
+        # approved/rejected. Same plural shape for all four.
         children = _materialized_children(db, card.id)
         result["materialized_card_ids"] = {c.materialized_source_handle: str(c.id) for c in children}
-        if card.type == WorkflowCardType.REVIEW:
-            # Backs the small named-output markers on the Review node
-            # itself (approved/rejected case counts), each child's own
-            # stored case list is already a plain "manual" snapshot.
+        if card.type in (WorkflowCardType.REVIEW, WorkflowCardType.CRITERION):
+            # Backs the small named-output markers on the node itself
+            # (approved/rejected or included/excluded case counts), each
+            # child's own stored case list is already a plain "manual"
+            # snapshot.
             result["materialized_counts"] = {
                 c.materialized_source_handle: len(c.config.get("case_ids", [])) for c in children
             }
     elif card.type == WorkflowCardType.ANNOTATION:
         children = _materialized_children(db, card.id)
         result["materialized_card_id"] = str(children[0].id) if children else None
+
+    if card.type in (WorkflowCardType.LLM, WorkflowCardType.CRITERION):
+        # The node's own "N cases connected" summary -- computed fresh
+        # every time rather than cached, since this card is never Run
+        # (see _NO_RUN_TYPES); its "input" edges may change at any time.
+        # Builder has no connected data at all (scoped to the whole
+        # study instead), so it gets no such count.
+        result["llm_connected_case_count"] = len(_llm_connected_case_ids(db, card))
 
     if card.type == WorkflowCardType.DATASET and card.materialized_source_card_id:
         source = cards_by_id.get(card.materialized_source_card_id) or db.get(
@@ -577,23 +652,44 @@ def _case_status(entry, review: bool) -> str:
 def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
     """The Annotation/Review card's case scope, each case's title
     alongside its status (see `_case_status`) -- shared by list_my_jobs
-    and get_workflow_card_cases (the Study page's per-row expand). For a
-    Review card, each case also carries `pending_annotation_id`: the id
-    of its latest Annotation record if that record is still SUBMITTED
-    (awaiting a decision) -- null otherwise. Backs the Study page's
-    Approve/Reject buttons, which need the actual annotation id to
-    decide on, not just its status."""
+    and get_workflow_card_cases (the Study page's per-row expand). Every
+    case also carries `latest_annotation_id`: the id of its single most
+    recent Annotation record regardless of status, or null if it has
+    none -- backs the Study page's "Delete annotation" action. For a
+    Review card, each case additionally carries `pending_annotation_id`:
+    the same id but only while that record is still SUBMITTED (awaiting
+    a decision) -- null otherwise. Backs the Approve/Reject buttons,
+    which need the actual annotation id to decide on, not just its
+    status."""
     case_ids = card.output_case_ids or []
     if not case_ids:
         return []
     cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
     review = card.type == WorkflowCardType.REVIEW
-    latest_per_case = _latest_annotation_per_case(db, case_ids)
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=card.created_at)
 
     result = []
     for c in cases:
         entry = latest_per_case.get(c.id)
-        case = {"id": str(c.id), "title": c.title, "status": _case_status(entry, review)}
+        # A Review card's own list is scoped to cases actually awaiting
+        # (or already given) a decision -- one that's never had anything
+        # submitted is stale scope left over from before its last
+        # annotation was deleted, or from a Review wired straight to a
+        # Dataset instead of through Annotation's materialized
+        # "(annotated)" child. Either way there's nothing here for a
+        # reviewer to act on, so it drops out immediately (a live filter,
+        # not something waiting on a Run) rather than sitting there
+        # mislabeled "Not annotated" as if it just hadn't been reached
+        # yet. It still shows correctly wherever its Annotation job's own
+        # list is drawn from -- this only narrows the Review side.
+        if review and entry is None:
+            continue
+        case = {
+            "id": str(c.id),
+            "title": c.title,
+            "status": _case_status(entry, review),
+            "latest_annotation_id": str(entry[0]) if entry else None,
+        }
         if review:
             case["pending_annotation_id"] = str(entry[0]) if entry and entry[1] == AnnotationStatus.SUBMITTED else None
         result.append(case)
@@ -751,6 +847,22 @@ def _resolve_output(db: Session, card: WorkflowCard, visiting: set) -> list[str]
     return list(card.output_case_ids)
 
 
+def _llm_connected_case_ids(db: Session, card: WorkflowCard) -> list[str]:
+    """Every case reachable from an LLM or Criterion card's real "input"
+    edges, unioned and deduped -- "which databases are connected via
+    MCP" for the Clinical Trial Assistant, or "which cases this
+    criterion judges" for a Criterion sub-agent. Same union shape as
+    the ANNOTATION/UNION branches of _run_one_card, just resolved on
+    demand (neither card type is ever Run -- see _NO_RUN_TYPES -- so
+    there's no cached `output_case_ids` to read instead)."""
+    incoming = db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="input").all()
+    all_ids: list[str] = []
+    for edge in incoming:
+        source = _card_or_404(db, edge.source_card_id)
+        all_ids.extend(_resolve_output(db, source, set()))
+    return _dedupe_sorted(all_ids)
+
+
 def _single_incoming_edge(db: Session, card: WorkflowCard) -> WorkflowEdge:
     """The card's one *data-flow* incoming edge -- filtered to the
     "input" handle explicitly so a Surface card's "surface_config" edge
@@ -864,15 +976,82 @@ def run_workflow_card(
         except HTTPException:
             pass
 
+    # A feedback-loop board (Review's rejected branch back into
+    # Annotation) means the cascade above can change something `card`
+    # itself reads from -- e.g. Running Review after a fresh reject
+    # ripples into Annotation, which then excludes that case from its
+    # materialized "(annotated)" child, which is exactly what Review's
+    # own scope was just computed from. Left alone, `card` would come
+    # back from this endpoint already one step stale again, with
+    # nothing prompting a second Run. Settle it here instead: a real
+    # board only has a card or two in any one feedback loop, so this
+    # converges within a couple of extra passes; the cap is just to
+    # guarantee termination, not because more passes are expected.
+    for _ in range(3):
+        if not _card_is_stale(db, card):
+            break
+        _run_one_card(db, card)
+        for downstream in _downstream_cards(db, card):
+            try:
+                _cascade_run(db, downstream, {card.id})
+            except HTTPException:
+                pass
+
     db.refresh(card)
     return _serialize_card(db, card, {card.id: card}, {})
+
+
+@router.post("/workflow-cards/{card_id}/llm-chat")
+async def llm_chat(
+    card_id: uuid.UUID,
+    body: LlmChatIn,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """A real chat session for any of the Clinical Trial module's three
+    AI card types (LLM, Builder, Criterion) -- a small local model
+    (served by Ollama) driven through a real MCP server's tools (see
+    run_llm_turn / services/mcp-server), each card type exposing its
+    own system prompt and its own filtered subset of tools. The model
+    itself decides whether a message warrants calling a board-mutating
+    tool (create_dataset, create_dataset_card, add_criterion,
+    evaluate_criterion -- each materializing or wiring up real cards,
+    exactly the way Split materializes a part or Review materializes a
+    decision branch) versus just answering in text."""
+    card = _card_or_404(db, card_id)
+    require_study_role(db, str(card.study_id), user, allowed_roles=_WRITE_ROLES)
+    if card.type not in (WorkflowCardType.LLM, WorkflowCardType.BUILDER, WorkflowCardType.CRITERION):
+        raise HTTPException(status_code=422, detail="Not a chat-capable card")
+
+    history = list(card.config.get("messages", []))
+    new_messages, board_changed = await run_llm_turn(card, history, body.message)
+
+    card.config = {**card.config, "messages": history + new_messages}
+    db.commit()
+    db.refresh(card)
+    return {"board_changed": board_changed, **_serialize_card(db, card, {card.id: card}, {})}
 
 
 def _run_one_card(db: Session, card: WorkflowCard) -> None:
     """The actual per-type Run logic, shared by the direct
     run_workflow_card endpoint and _cascade_run's downstream ripple.
     Commits and stamps last_run_at itself; does not serialize a
-    response (callers that need one call _serialize_card afterward)."""
+    response (callers that need one call _serialize_card afterward).
+
+    Every materialized Dataset child this Run creates or refreshes is
+    stamped with the same `now` too (see `_is_stale`'s docstring on why a
+    child that's never been "run" itself can never make anything
+    downstream of it look stale) -- otherwise a card whose only input is
+    a materialized child (the overwhelmingly common case: almost nothing
+    in a real board connects straight to a Split/Annotation/Review card)
+    can never be flagged stale no matter how much its actual case
+    membership has changed, e.g. after a reviewer's decision quietly
+    moves a case out of the materialized "(annotated)" dataset a Review
+    card reads from -- the case's own status updates immediately
+    (annotation-service owns that independently), but nothing here knew
+    to mark the Review card as needing a re-run until now."""
+    now = datetime.now(timezone.utc)
+
     if card.type in _NO_RUN_TYPES:
         raise HTTPException(status_code=422, detail=f"Nothing to run for a {card.type.value} card")
 
@@ -918,6 +1097,7 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
                         config={"mode": "manual", "case_ids": case_ids},
                         materialized_source_card_id=card.id,
                         materialized_source_handle=handle,
+                        last_run_at=now,
                     )
                 )
             else:
@@ -928,6 +1108,7 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
                 # delete_workflow_card having no "still has data" guard).
                 child.title = name
                 child.config = {**child.config, "mode": "manual", "case_ids": case_ids}
+                child.last_run_at = now
 
         card.config = {**card.config, "seed": seed}
         card.output_case_ids = output
@@ -975,7 +1156,7 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
             # Annotation record -- not every case the card happens to be
             # assigned, which would include ones no one has actually
             # annotated yet.
-            case_ids = _annotated_case_ids(db, card.output_case_ids, review=False)
+            case_ids = _annotated_case_ids(db, card.output_case_ids, review=False, since=card.created_at)
             children = _materialized_children(db, card.id)
             title = f"{card.title} (annotated)"
             if not children:
@@ -991,11 +1172,13 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
                         config={"mode": "manual", "case_ids": case_ids},
                         materialized_source_card_id=card.id,
                         materialized_source_handle="output",
+                        last_run_at=now,
                     )
                 )
             else:
                 children[0].title = title
                 children[0].config = {**children[0].config, "mode": "manual", "case_ids": case_ids}
+                children[0].last_run_at = now
 
     elif card.type == WorkflowCardType.REVIEW:
         # Pure pass-through of the resolved input -- the "work" this Run
@@ -1016,8 +1199,8 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
         # its own decision outputs" the way there is for Annotation.
         existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
         branches = {
-            "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED]),
-            "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED]),
+            "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED], since=card.created_at),
+            "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED], since=card.created_at),
         }
         for index, (handle, case_ids) in enumerate(branches.items()):
             title = f"{card.title} ({handle})"
@@ -1035,14 +1218,54 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
                         config={"mode": "manual", "case_ids": case_ids},
                         materialized_source_card_id=card.id,
                         materialized_source_handle=handle,
+                        last_run_at=now,
                     )
                 )
             else:
                 child.title = title
                 child.config = {**child.config, "mode": "manual", "case_ids": case_ids}
+                child.last_run_at = now
 
-    card.last_run_at = datetime.now(timezone.utc)
+    elif card.type == WorkflowCardType.CRITERION:
+        # "Run" here is a convenience shortcut for the same thing typing
+        # a message into this card's own chat session would do -- a
+        # fixed canned instruction through the exact same model + MCP
+        # tool loop (see llm_client.run_llm_turn), appended to the
+        # card's own transcript so it shows up if the session is opened
+        # afterward. Unlike every branch above, this one genuinely calls
+        # out to a local model over MCP (not a deterministic recompute),
+        # so failures (Ollama/mcp-server down) come back as a normal
+        # assistant message in the transcript rather than an exception --
+        # run_llm_turn already handles that itself. asyncio.run() is
+        # safe here because this whole endpoint is a sync `def`, so
+        # FastAPI executes it in a worker thread with no event loop of
+        # its own to conflict with.
+        history = list(card.config.get("messages", []))
+        new_messages, _ = asyncio.run(
+            run_llm_turn(
+                card, history, "Look at every case connected to your input, and evaluate this criterion now."
+            )
+        )
+        card.config = {**card.config, "messages": history + new_messages}
+
+    card.last_run_at = now
     db.commit()
+
+
+def _card_is_stale(db: Session, card: WorkflowCard) -> bool:
+    """The same staleness check `_serialize_card` computes for the whole
+    board, for one card in isolation -- lets `run_workflow_card` notice
+    when its own downstream cascade has looped back and changed
+    something this card reads from (see `_cascade_run`'s docstring: its
+    cycle protection deliberately doesn't re-run a card twice within one
+    cascade, so the card that was actually asked to run can come out of
+    that cascade already stale again)."""
+    edges = db.query(WorkflowEdge).filter_by(target_card_id=card.id).all()
+    for edge in edges:
+        source = db.get(WorkflowCard, edge.source_card_id)
+        if source and _is_stale(card.last_run_at, source.last_run_at):
+            return True
+    return False
 
 
 def _downstream_cards(db: Session, card: WorkflowCard) -> list[WorkflowCard]:
@@ -1070,8 +1293,18 @@ def _cascade_run(db: Session, card: WorkflowCard, visited: set[uuid.UUID]) -> No
     can reach back to that same Annotation card. `visited` stops the
     cascade there rather than looping -- that card just doesn't get a
     second Run within the same cascade; a rejection surfaces on its next
-    explicit Run."""
-    if card.id in visited or card.type in _NO_RUN_TYPES:
+    explicit Run.
+
+    CRITERION is deliberately excluded here even though it's now a
+    RUNNABLE_TYPES card (see _run_one_card): unlike every other Run
+    branch, its "Run" is a real model call (several seconds, real
+    Ollama/GPU load), not a cheap deterministic recompute -- silently
+    firing one on every downstream ripple (e.g. every single case a
+    batch import adds, via _cascade_new_case) would be slow and
+    surprising. A Criterion only ever evaluates when its own Run is
+    clicked (or its own chat is used) directly, never as a side effect
+    of some other card's Run."""
+    if card.id in visited or card.type in _NO_RUN_TYPES or card.type == WorkflowCardType.CRITERION:
         return
     visited = visited | {card.id}
     _run_one_card(db, card)

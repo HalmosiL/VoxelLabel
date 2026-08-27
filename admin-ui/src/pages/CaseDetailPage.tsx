@@ -13,6 +13,7 @@ import {
   CaseSummary,
   ClinicalDataItem,
   getCase,
+  getClinicalDataFileUrl,
   getPixelDataUrl,
   ImagingStudy,
   Instance,
@@ -29,7 +30,7 @@ import ImagingStudyModal from "../components/ImagingStudyModal";
 import Modal from "../components/Modal";
 import SectionHeader from "../components/SectionHeader";
 import Thumbnail from "../components/Thumbnail";
-import { DocumentIcon } from "../components/icons";
+import { DocumentIcon, PencilIcon } from "../components/icons";
 
 /** Appends `&jobId=<id>` when this Case page was reached via a My Jobs
  * link -- lets ct-annotator fetch and enforce that job's Surface-card
@@ -470,6 +471,17 @@ function DocumentsSection({ caseId }: { caseId: string }) {
 
   useEffect(refresh, [caseId]);
 
+  async function viewFile(item: ClinicalDataItem) {
+    if (!item.has_file) {
+      // Nothing to view -- fall back to the edit modal, same as before,
+      // so clicking a metadata-only item still does something useful.
+      setOpenItem(item);
+      return;
+    }
+    const { url } = await getClinicalDataFileUrl(item.id);
+    window.open(url, "_blank");
+  }
+
   return (
     <div className="card">
       <SectionHeader
@@ -487,13 +499,27 @@ function DocumentsSection({ caseId }: { caseId: string }) {
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
           {items.map((item) => (
-            <button key={item.id} onClick={() => setOpenItem(item)} className="text-left">
-              <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-lg bg-gray-100 p-2">
-                <DocumentIcon className="h-8 w-8 text-gray-400" />
-                <span className="badge-blue">{item.type}</span>
-              </div>
-              <p className="mt-1.5 truncate text-xs font-medium text-gray-700">{item.title}</p>
-            </button>
+            <div key={item.id} className="group relative text-left">
+              <button onClick={() => viewFile(item)} className="w-full text-left" title={item.has_file ? "Click to view the file" : "No file attached"}>
+                <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-lg bg-gray-100 p-2">
+                  <DocumentIcon className="h-8 w-8 text-gray-400" />
+                  <span className="badge-blue">{item.type}</span>
+                </div>
+                <p className="mt-1.5 truncate text-xs font-medium text-gray-700">{item.title}</p>
+              </button>
+              {/* Editing metadata/tags/consent is a separate, deliberate
+                  action from viewing the file -- the click itself
+                  opens/views the file (see viewFile), so editing gets
+                  its own small affordance instead of taking over the
+                  primary click. */}
+              <button
+                onClick={() => setOpenItem(item)}
+                className="absolute right-1 top-1 hidden h-6 w-6 items-center justify-center rounded-full bg-white/90 text-gray-500 shadow-sm hover:text-gray-800 group-hover:flex"
+                title="Edit document"
+              >
+                <PencilIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
           ))}
         </div>
       )}

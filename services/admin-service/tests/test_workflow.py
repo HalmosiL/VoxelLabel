@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.workflow import (
+    _case_status,
     _cumulative_ratios,
     _dedupe_sorted,
     _is_stale,
@@ -20,7 +21,7 @@ from app.api.workflow import (
     _split_case_ids,
     _split_parts,
 )
-from shared_models.models import WorkflowCardType
+from shared_models.models import AnnotationStatus, WorkflowCardType
 
 
 def test_cumulative_ratios_two_equal_parts() -> None:
@@ -155,6 +156,42 @@ def test_is_stale_false_when_source_never_ran() -> None:
     assert _is_stale(card_last_run_at=None, source_last_run_at=None) is False
 
 
+def _entry(status: AnnotationStatus):
+    return ("annotation-id", status, datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+
+def test_case_status_pending_when_no_annotation_exists() -> None:
+    assert _case_status(None, review=False) == "pending"
+    assert _case_status(None, review=True) == "pending"
+
+
+def test_case_status_rejected_takes_priority_for_both_card_types() -> None:
+    entry = _entry(AnnotationStatus.REJECTED)
+    assert _case_status(entry, review=False) == "rejected"
+    assert _case_status(entry, review=True) == "rejected"
+
+
+def test_case_status_submitted_is_done_for_annotation_but_pending_for_review() -> None:
+    """A Review card doesn't consider a case "done" until *it* has
+    decided -- a bare SUBMITTED (awaiting that decision) stays "pending"
+    there even though the annotator's own job already counts it done."""
+    entry = _entry(AnnotationStatus.SUBMITTED)
+    assert _case_status(entry, review=False) == "done"
+    assert _case_status(entry, review=True) == "pending"
+
+
+def test_case_status_approved_is_done_for_both_card_types() -> None:
+    entry = _entry(AnnotationStatus.APPROVED)
+    assert _case_status(entry, review=False) == "done"
+    assert _case_status(entry, review=True) == "done"
+
+
+def test_case_status_draft_only_is_pending_for_both_card_types() -> None:
+    entry = _entry(AnnotationStatus.DRAFT)
+    assert _case_status(entry, review=False) == "pending"
+    assert _case_status(entry, review=True) == "pending"
+
+
 class _FakeCard:
     def __init__(self, type_: WorkflowCardType) -> None:
         self.type = type_
@@ -182,3 +219,9 @@ def test_output_count_split_n_way_shape() -> None:
 def test_output_count_none_when_never_run() -> None:
     card = _FakeCard(WorkflowCardType.UNION)
     assert _output_count(card, None) is None
+
+
+# _detect_create_dataset_intent/_mock_llm_reply (the keyword-matched
+# mock) were removed once the Clinical Trial module got a real model +
+# MCP server -- see test_llm_client.py for the real chat loop's own
+# pure-function tests.

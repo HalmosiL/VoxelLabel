@@ -8,6 +8,8 @@ signing needs no network call, so it's safe to point at a host this
 container itself can't reach. Same reasoning as data-service's
 OBJECT_STORAGE_ENDPOINT -- see services/data-service/app/storage.py.
 """
+import mimetypes
+
 import boto3
 
 from app.core.config import settings
@@ -28,7 +30,16 @@ _public_client = boto3.client(
 
 
 def upload_clinical_data_file(storage_key: str, data: bytes) -> None:
-    _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data)
+    # Without a real ContentType, MinIO/S3 serves the object as
+    # application/octet-stream regardless of what it actually is -- a
+    # browser then downloads a PDF instead of rendering it inline when
+    # a user clicks to view it (see CaseDetailPage's DocumentsSection).
+    # Guessed from the key's own extension, same one the upload kept it
+    # under (see create_clinical_data_item); None (can't guess, or no
+    # extension) falls back to boto3's own default, same as before.
+    content_type, _ = mimetypes.guess_type(storage_key)
+    extra_args = {"ContentType": content_type} if content_type else {}
+    _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data, **extra_args)
 
 
 def delete_object(storage_key: str) -> None:

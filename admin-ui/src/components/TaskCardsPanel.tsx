@@ -2,10 +2,11 @@ import { Fragment, ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { KeycloakUser, listKeycloakUsers } from "../api/adminApi";
-import { reviewAnnotation } from "../api/annotationApi";
+import { deleteAnnotation, reviewAnnotation } from "../api/annotationApi";
 import {
   getWorkflowBoard,
   getWorkflowCardCases,
+  runWorkflowCard,
   updateWorkflowCard,
   WorkflowCard,
   WorkflowCardCase,
@@ -15,7 +16,7 @@ import Avatar from "./Avatar";
 import EmptyState from "./EmptyState";
 import { QuestionMarkCircleIcon } from "./icons";
 import SectionHeader from "./SectionHeader";
-import { CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "./workflow/statusStyle";
+import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "./workflow/statusStyle";
 
 /** Table view of every Annotation or Review card on this study's
  * workflow board -- a dedicated section per job-producing card type
@@ -228,11 +229,39 @@ function CardCaseList({
     return <p className="hint py-2">No cases in scope yet -- run this card on the workflow board.</p>;
   }
 
+  // A decision (or a deletion undoing one) changes which cases belong in
+  // this card's own materialized approved/rejected (or annotated)
+  // children, but that recompute only happens on a Run -- without this,
+  // the card's own case list silently keeps showing a just-decided case
+  // until someone notices the "stale" badge and re-runs it by hand.
+  // Best-effort: the decision/deletion itself already succeeded, so a
+  // failed refresh here isn't surfaced as an error, just left for the
+  // stale badge to catch on the board.
+  async function refreshCard() {
+    await runWorkflowCard(cardId).catch(() => undefined);
+  }
+
   async function handleDecision(annotationId: string, decision: "approve" | "reject") {
     setDecidingId(annotationId);
     setError(null);
     try {
       await reviewAnnotation(annotationId, decision);
+      await refreshCard();
+      onReviewed();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDecidingId(null);
+    }
+  }
+
+  async function handleDelete(annotationId: string) {
+    if (!window.confirm("Delete this annotation? The case reverts to not annotated. This cannot be undone.")) return;
+    setDecidingId(annotationId);
+    setError(null);
+    try {
+      await deleteAnnotation(annotationId);
+      await refreshCard();
       onReviewed();
     } catch (err) {
       setError(String(err));
@@ -246,7 +275,8 @@ function CardCaseList({
       {error && <p className="alert-error mb-2">{error}</p>}
       <ul className="flex flex-col gap-1">
         {cases.map((c) => {
-          const caseStyle = CASE_STATUS_STYLE[c.status];
+          const caseStyle =
+            cardType === "review" && c.pending_annotation_id ? AWAITING_REVIEW_STYLE : CASE_STATUS_STYLE[c.status];
           return (
             <li key={c.id} className="flex items-center justify-between gap-3 py-0.5">
               <Link
@@ -273,6 +303,15 @@ function CardCaseList({
                       Reject
                     </button>
                   </>
+                )}
+                {c.latest_annotation_id && (
+                  <button
+                    onClick={() => handleDelete(c.latest_annotation_id!)}
+                    disabled={decidingId === c.latest_annotation_id}
+                    className="text-xs font-medium text-red-600 hover:text-red-700"
+                  >
+                    Delete annotation
+                  </button>
                 )}
                 <span className={caseStyle.badge}>
                   <span className={`badge-dot ${caseStyle.dot}`} />

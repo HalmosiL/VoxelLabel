@@ -96,6 +96,30 @@ class WorkflowCardType(str, enum.Enum):
     # which MPR panes are visible -- exposing tools/show_3d checkboxes
     # for it would just be dead UI.
     REVIEW_SURFACE = "review_surface"
+    # The Clinical Trial module: a small local model (served by Ollama)
+    # connected, via a real MCP server (services/mcp-server), to
+    # whichever Dataset(s) are wired into its "input" -- its
+    # "config.messages" is the real chat transcript, and a session can
+    # spawn a brand-new, ordinary Dataset card as a named materialized
+    # child (see _materialized_children), exactly like Split's parts or
+    # Review's approved/rejected branches. See app/llm_client.py's
+    # run_llm_turn and app/api/workflow.py's llm_chat.
+    LLM = "llm"
+    # Same module, a different role: plans a study's CONSORT-style
+    # eligibility pipeline and builds it on the real board -- no input/
+    # output of its own (scoped to the whole Study, not to connected
+    # data), its tools create Dataset and CRITERION cards and wire them
+    # together. See llm_client.py's BUILDER branch.
+    BUILDER = "builder"
+    # One eligibility criterion, judged case by case by the same small
+    # model -- "config.criterion" holds the one natural-language rule it
+    # applies. Structurally like REVIEW (one real input, no real output,
+    # always materializes two named children) but the two branches are
+    # "included"/"excluded" rather than "approved"/"rejected". Chaining
+    # criterion cards one after another (each wired from the previous
+    # one's "included" child) is what makes the board itself read as a
+    # CONSORT flow diagram.
+    CRITERION = "criterion"
 
 
 class Study(Base):
@@ -517,6 +541,41 @@ class DatasetSnapshotItem(Base):
     annotation_version_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("annotations.id"), primary_key=True
     )
+
+
+class PipelineTemplate(Base):
+    """A reusable, ready-made pipeline (a small set of workflow cards +
+    the edges between them) that can be dropped onto any Study's board
+    at once -- the Store panel on the workflow board (see admin-ui's
+    PipelineStore). Global, not scoped to a Study, since the whole point
+    is reusing the same pipeline shape across studies.
+
+    `cards`/`edges` mirror admin-ui's own PipelineTemplate shape exactly
+    (a list of {key, type, title, x, y, width, height, config} dicts and
+    {source_key, source_handle, target_key, target_handle} dicts) --
+    `key` is a local reference scoped to this one template, not a real
+    WorkflowCard id, resolved fresh into real ids each time it's
+    inserted (see admin-service's own insert-time logic, which mirrors
+    the frontend's built-in templates in pipelineTemplates.ts). Kept as
+    opaque JSONB rather than normalized tables since nothing ever
+    queries into one template's own cards/edges except "give me the
+    whole thing to insert" -- the same reasoning as WorkflowCard.config.
+    """
+
+    __tablename__ = "pipeline_templates"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    cards: Mapped[list] = mapped_column(JSONB, nullable=False)
+    edges: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # The Keycloak subject that saved this template -- lets its own
+    # author delete it without needing the global "admin" realm role
+    # (see delete_pipeline_template); nullable because a future
+    # platform-seeded template (inserted directly, not through the API)
+    # has no such author.
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AuditLog(Base):
