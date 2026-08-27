@@ -130,9 +130,10 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         // sub-agent judges connected cases against.
         defaultConfig: { criterion: "", messages: [] },
         defaultWidth: 220,
-        // Taller than a plain chat card -- also needs room for the
-        // always-shown included/excluded named-output rows.
-        defaultHeight: 160,
+        // Taller than a plain chat card -- also needs room for its own
+        // criterion text (up to 2 lines) plus the always-shown
+        // included/excluded named-output rows.
+        defaultHeight: 200,
       },
       {
         type: "annotation_surface",

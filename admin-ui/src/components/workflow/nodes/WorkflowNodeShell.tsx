@@ -28,7 +28,14 @@ export default function WorkflowNodeShell({
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
             {icon}
           </span>
-          <p className="min-w-0 flex-1 break-words text-sm font-semibold text-gray-900">{title}</p>
+          {/* line-clamp (not just break-words) so an extremely long
+              title ends in its own "…" instead of wrapping to several
+              lines and pushing the card's other content down into
+              whatever the outer overflow-hidden happens to cut off
+              next, with no indication anything was hidden. */}
+          <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold text-gray-900" title={title}>
+            {title}
+          </p>
           {stale && <span className="badge-gray flex-shrink-0 text-[10px]">stale</span>}
         </div>
         {children}

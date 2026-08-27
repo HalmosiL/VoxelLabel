@@ -524,7 +524,11 @@ def add_criterion(study_id: str, source_card_id: str, source_handle: str, title:
             position_x=source.position_x + 260,
             position_y=source.position_y,
             width=220.0,
-            height=110.0,
+            # Tall enough for its own criterion text (up to 2 lines,
+            # line-clamped) plus the always-shown included/excluded
+            # named-output rows -- matches admin-ui's own default
+            # Criterion card height (CardLibrarySidebar/pipelineTemplates.ts).
+            height=200.0,
             config={"criterion": criterion, "messages": []},
         )
         db.add(card)

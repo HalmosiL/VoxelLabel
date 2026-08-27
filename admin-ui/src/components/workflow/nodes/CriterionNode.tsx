@@ -33,7 +33,9 @@ function CriterionNode({ data, selected }: NodeProps<CardNode>) {
       <div className="mt-2 flex flex-col gap-1 text-xs text-gray-600">
         <span className="badge-blue self-start">MCP</span>
         {criterionText ? (
-          <p className="line-clamp-2 italic text-gray-500">"{criterionText}"</p>
+          <p className="line-clamp-2 italic text-gray-500" title={criterionText}>
+            "{criterionText}"
+          </p>
         ) : (
           <p className="text-gray-400">no criterion set yet</p>
         )}
