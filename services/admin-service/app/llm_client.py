@@ -274,7 +274,7 @@ def _summarize_tool_result(name: str, data: dict, is_error: bool, raw_error_text
 # A cheap, deterministic heuristic (English + Hungarian) for "this
 # message wants a dataset-wide summary/analysis" -- used to force at
 # least one real content-reading tool call before accepting an answer
-# (see run_llm_turn's content_tool_called guard). Needed because a small
+# (see run_llm_turn's required_tool_names guard). Needed because a small
 # model asked for a "detailed summary" will sometimes skip straight to
 # fabricating plausible-sounding findings instead of actually calling
 # read_all_documents -- confirmed live: qwen3:1.7b invented conditions
@@ -346,17 +346,36 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
     # accepted immediately, same as before.
     any_tool_called = False
     forced_tool_use_attempted = False
-    # A second, separate guard on top of the generic one above: a
-    # summary/analysis request specifically must have actually read some
-    # real document content (not just list_cases/list_connected_data
-    # metadata) before a final answer is accepted -- see
-    # _looks_like_summary_request's own comment for why this can't be
-    # left to the model's judgment. Only meaningful for the LLM role;
-    # Builder never reads documents at all, and Criterion's own
-    # "haven't evaluated yet" flow already forces this in practice.
-    needs_content_grounding = card.type.value == "llm" and _looks_like_summary_request(user_message)
-    content_tool_called = False
-    forced_content_read_attempted = False
+    # A second, separate guard on top of the generic one above: some
+    # card-type/message combinations have one specific tool that
+    # actually has to be called before a final answer means anything --
+    # not just *a* tool, but *the* one that does the real work. Confirmed
+    # live twice now: a Criterion turn that only calls list_cases and
+    # then stops (never calling evaluate_criterion) produces an empty
+    # "final answer" instead of an actual decision; an LLM summary
+    # request that only calls list_connected_data does the same instead
+    # of ever reading real document content. Neither can be left to the
+    # model's own judgment about whether it's "done" -- it doesn't
+    # reliably have that judgment at this size.
+    required_tool_names: set[str] | None = None
+    required_tool_nudge = ""
+    if card.type.value == "criterion":
+        required_tool_names = {"evaluate_criterion"}
+        required_tool_nudge = (
+            "You must actually call evaluate_criterion before answering -- don't stop after just "
+            "listing/reading cases. Look at the connected cases (list_cases, then get_case_details/"
+            "read_document/read_all_documents as needed), decide which satisfy the criterion, then call "
+            f'evaluate_criterion(card_id="{card_id}", included_case_ids=[...]) with that decision.'
+        )
+    elif card.type.value == "llm" and _looks_like_summary_request(user_message):
+        required_tool_names = {"read_document", "read_all_documents"}
+        required_tool_nudge = (
+            "You haven't actually read any document's real content yet -- call "
+            f'read_all_documents now (card_id="{card_id}") before answering. A summary has to be grounded '
+            "in what the reports actually say, not a plausible-sounding guess."
+        )
+    required_tool_called = False
+    forced_required_tool_attempted = False
 
     try:
         async with Client(settings.mcp_server_url) as mcp_client:
@@ -397,20 +416,27 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
                                 "num_gpu": 99,
                                 # The model's default context (as low as
                                 # 2048-4096 depending on the Modelfile)
-                                # doesn't leave much room once a few
-                                # read_document calls' worth of report
-                                # text plus a long summary answer are all
-                                # in flight at once -- this model is
-                                # small enough that a bigger KV cache
-                                # still comfortably fits a 4GB card.
-                                "num_ctx": 8192,
-                                # A generous cap for a real detailed
-                                # summary, not Ollama's own default
-                                # (which some model configs set quite
-                                # low) -- not unlimited, so one runaway
-                                # generation can't eat the whole
-                                # remaining context budget.
-                                "num_predict": 2048,
+                                # doesn't leave much room once list_cases'
+                                # own JSON for a few dozen cases, a long
+                                # "thinking" trace, and a real answer are
+                                # all in flight at once -- confirmed live:
+                                # a Criterion turn over 30 cases correctly
+                                # reasoned its way to "call evaluate_
+                                # criterion with these included_case_ids"
+                                # entirely within `thinking`, then produced
+                                # *no* tool call at all, almost certainly
+                                # because the context/output budget ran
+                                # out right as it needed to actually emit
+                                # that call. This model is small enough
+                                # that a much bigger KV cache still
+                                # comfortably fits a 4GB card.
+                                "num_ctx": 16384,
+                                # Generous cap for a real detailed summary
+                                # or a long per-case reasoning trace before
+                                # the actual tool call -- not unlimited, so
+                                # one runaway generation can't eat the
+                                # whole remaining context budget.
+                                "num_predict": 4096,
                             },
                         },
                     )
@@ -438,20 +464,10 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
                                 }
                             )
                             continue
-                        if needs_content_grounding and not content_tool_called and not forced_content_read_attempted:
-                            forced_content_read_attempted = True
+                        if required_tool_names and not required_tool_called and not forced_required_tool_attempted:
+                            forced_required_tool_attempted = True
                             ollama_messages.append(message)
-                            ollama_messages.append(
-                                {
-                                    "role": "user",
-                                    "content": (
-                                        "You haven't actually read any document's real content yet -- call "
-                                        f'read_all_documents now (card_id="{card_id}") before answering. A '
-                                        "summary has to be grounded in what the reports actually say, not a "
-                                        "plausible-sounding guess."
-                                    ),
-                                }
-                            )
+                            ollama_messages.append({"role": "user", "content": required_tool_nudge})
                             continue
                         new_messages.append(
                             {
@@ -479,8 +495,8 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
                         result_data = _tool_result_data(result)
                         if name in _BOARD_MUTATING_TOOLS and not result.is_error:
                             board_changed = True
-                        if name in ("read_document", "read_all_documents") and not result.is_error:
-                            content_tool_called = True
+                        if required_tool_names and name in required_tool_names and not result.is_error:
+                            required_tool_called = True
                         summary = _summarize_tool_result(
                             name, result_data, result.is_error, _tool_error_text(result) if result.is_error else ""
                         )

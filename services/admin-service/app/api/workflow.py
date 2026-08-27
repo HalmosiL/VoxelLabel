@@ -440,6 +440,90 @@ def get_workflow_board(
     }
 
 
+@router.get("/studies/{study_id}/consort-export")
+def get_consort_export(
+    study_id: uuid.UUID,
+    root_card_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Walks a CONSORT-style eligibility chain starting at `root_card_id`
+    (the whole study population, as a plain Dataset card) and following
+    each Criterion's "included" branch into the next Criterion -- the
+    real per-stage case counts a publication-ready CONSORT flow diagram
+    needs (see admin-ui's ConsortExportPage), derived live from the
+    board rather than hand-maintained anywhere.
+
+    Stops at the first point that isn't itself another Criterion (a
+    Dataset with nothing chained onward -- the final eligible cohort),
+    or at a Criterion that hasn't been evaluated yet (its "included"
+    child doesn't exist, so there's nothing further to walk into --
+    that criterion's own row still reports `evaluated: false` rather
+    than being silently dropped, so the export honestly shows the
+    pipeline is still in progress instead of pretending it ends there).
+    """
+    require_study_role(db, str(study_id), user, allowed_roles=_READ_ROLES)
+    root = _card_or_404(db, root_card_id)
+    if str(root.study_id) != str(study_id):
+        raise HTTPException(status_code=422, detail="Card does not belong to this study")
+    if root.type != WorkflowCardType.DATASET:
+        raise HTTPException(status_code=422, detail="root_card_id must be a Dataset card (the starting population)")
+
+    root_count = len(_dataset_output_ids(db, root))
+    stages = []
+    visited: set[uuid.UUID] = {root.id}
+    current = root
+
+    while True:
+        # The next Criterion is whatever's wired onto `current`'s real
+        # "output" -- true for the root Dataset itself, and for every
+        # subsequent step too, since an "included" child is always a
+        # plain (materialized) Dataset card, same as the root.
+        edge = (
+            db.query(WorkflowEdge)
+            .filter_by(source_card_id=current.id, source_handle="output", target_handle="input")
+            .first()
+        )
+        if edge is None or edge.target_card_id in visited:
+            break
+        next_card = db.get(WorkflowCard, edge.target_card_id)
+        if next_card is None or next_card.type != WorkflowCardType.CRITERION:
+            break
+        visited.add(next_card.id)
+
+        children = {c.materialized_source_handle: c for c in _materialized_children(db, next_card.id)}
+        included = children.get("included")
+        excluded = children.get("excluded")
+        stages.append(
+            {
+                "criterion_card_id": str(next_card.id),
+                "title": next_card.title,
+                "criterion_text": next_card.config.get("criterion", ""),
+                "input_count": len(_dataset_output_ids(db, current)),
+                "included_count": len(included.config.get("case_ids", [])) if included else None,
+                "excluded_count": len(excluded.config.get("case_ids", [])) if excluded else None,
+                "evaluated": included is not None,
+            }
+        )
+        if included is None:
+            break
+        current = included
+
+    # The most current known cohort size -- the last *evaluated* stage's
+    # included_count, not necessarily the literal last stage (which may
+    # be an as-yet-unevaluated Criterion at the end of the chain, in
+    # which case the cohort is still whatever the stage before it left).
+    final_count = root_count
+    for stage in stages:
+        if stage["evaluated"]:
+            final_count = stage["included_count"]
+    return {
+        "root": {"card_id": str(root.id), "title": root.title, "case_count": root_count},
+        "stages": stages,
+        "final_count": final_count,
+    }
+
+
 @router.post("/studies/{study_id}/workflow/cards", status_code=201)
 def create_workflow_card(
     study_id: uuid.UUID,

@@ -144,6 +144,30 @@ export function getWorkflowBoard(studyId: string): Promise<WorkflowBoard> {
   return apiFetch(base, `/admin/studies/${studyId}/workflow`);
 }
 
+export interface ConsortStage {
+  criterion_card_id: string;
+  title: string;
+  criterion_text: string;
+  input_count: number;
+  included_count: number | null;
+  excluded_count: number | null;
+  evaluated: boolean;
+}
+
+export interface ConsortExport {
+  root: { card_id: string; title: string; case_count: number };
+  stages: ConsortStage[];
+  final_count: number;
+}
+
+/** Walks the eligibility chain from `rootCardId` (a Dataset representing
+ * the whole study population) through each chained Criterion's
+ * "included" branch -- the real per-stage case counts a CONSORT flow
+ * diagram needs, derived live from the board (see ConsortExportPage). */
+export function getConsortExport(studyId: string, rootCardId: string): Promise<ConsortExport> {
+  return apiFetch(base, `/admin/studies/${studyId}/consort-export?root_card_id=${rootCardId}`);
+}
+
 export function createWorkflowCard(studyId: string, input: WorkflowCardInput): Promise<WorkflowCard> {
   return apiFetch(base, `/admin/studies/${studyId}/workflow/cards`, {
     method: "POST",

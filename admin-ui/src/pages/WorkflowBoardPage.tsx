@@ -50,6 +50,7 @@ import {
   TEMPLATE_DRAG_DATA_FORMAT,
 } from "../components/workflow/pipelineTemplates";
 import SaveTemplateModal from "../components/workflow/SaveTemplateModal";
+import ConsortExportPage from "../components/workflow/ConsortExportPage";
 import { isValidConnection } from "../components/workflow/handleRules";
 import AnnotationNode from "../components/workflow/nodes/AnnotationNode";
 import AnnotationSurfaceNode from "../components/workflow/nodes/AnnotationSurfaceNode";
@@ -305,6 +306,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   });
   const [insertingTemplateId, setInsertingTemplateId] = useState<string | null>(null);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [showConsortExport, setShowConsortExport] = useState(false);
   // Bumped after a template save succeeds so PipelineStore refetches
   // even if the Store tab (and so PipelineStore itself) was already
   // mounted when the save happened -- see its own prop comment.
@@ -798,6 +800,9 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowConsortExport(true)} className="btn-secondary btn-sm">
+            CONSORT export
+          </button>
           <button
             onClick={() => setSavingTemplate(true)}
             disabled={selectedNodes.length === 0}
@@ -947,6 +952,8 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onSave={handleSaveTemplate}
           />
         )}
+
+        {showConsortExport && <ConsortExportPage studyId={studyId} onClose={() => setShowConsortExport(false)} />}
       </div>
     </div>
   );
