@@ -25,32 +25,32 @@ export default function SaveTemplateModal({
   }
 
   return (
-    <Modal title="Mentés Store-ba" onClose={onClose}>
+    <Modal title="Save to Store" onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="hint">
-          A kijelölt {cardCount} kártya (és a köztük lévő kapcsolatok) új, újrafelhasználható sablonként kerül a
-          Store-ba -- bárki behúzhatja majd bármelyik study board-jára.
+          The selected {cardCount} card(s) (and the connections between them) will become a new, reusable template in
+          the Store -- anyone will be able to drag it onto any study's board.
         </p>
         <label className="field">
-          <span className="label">Cím</span>
+          <span className="label">Title</span>
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus required />
         </label>
         <label className="field">
-          <span className="label">Leírás</span>
+          <span className="label">Description</span>
           <textarea
             className="input"
             rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Mire jó ez a pipeline?"
+            placeholder="What is this pipeline good for?"
           />
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn-secondary btn-sm">
-            Mégse
+            Cancel
           </button>
           <button type="submit" className="btn-secondary btn-sm" disabled={!title.trim()}>
-            Mentés
+            Save
           </button>
         </div>
       </form>

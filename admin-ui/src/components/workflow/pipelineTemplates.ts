@@ -138,9 +138,9 @@ export function pipelineTemplateToCreateInput(template: {
 export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   {
     id: "basic-annotation",
-    title: "Alap annotációs pipeline",
+    title: "Basic annotation pipeline",
     description:
-      "A legegyszerűbb munkafolyamat: az összes eset egyenesen annotálásra, majd felülvizsgálatra kerül. Jó kiindulópont egy új study-hoz.",
+      "The simplest workflow: every case goes straight to annotation, then review. A good starting point for a new study.",
     cards: [
       { key: "dataset", type: "dataset", title: "All Cases", x: 0, y: 0, width: 200, height: 90, config: { mode: "all_cases" } },
       {
@@ -162,9 +162,9 @@ export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   },
   {
     id: "train-test-split",
-    title: "Train / Test szétosztás",
+    title: "Train / Test split",
     description:
-      "Az eseteket véletlenszerűen, adott arányban két részre osztja (alapból 80/20) -- pl. gépi tanuláshoz vagy két párhuzamos annotálási körhöz.",
+      "Randomly divides cases into two parts at a given ratio (80/20 by default) -- e.g. for machine learning, or two parallel annotation rounds.",
     cards: [
       { key: "dataset", type: "dataset", title: "All Cases", x: 0, y: 0, width: 200, height: 90, config: { mode: "all_cases" } },
       {
@@ -187,9 +187,9 @@ export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   },
   {
     id: "review-feedback-loop",
-    title: "Felülvizsgálat visszacsatolással",
+    title: "Review with feedback loop",
     description:
-      "A Review kártya elutasított esetei automatikusan visszakerülnek az Annotation kártyához újra-annotálásra -- így egy elutasítás nem vész el, hanem visszakerül a sorba.",
+      "The Review card's rejected cases automatically flow back to the Annotation card for re-annotation -- so a rejection is never lost, it just goes back into the queue.",
     cards: [
       { key: "dataset", type: "dataset", title: "All Cases", x: 0, y: 0, width: 200, height: 90, config: { mode: "all_cases" } },
       {
@@ -218,9 +218,9 @@ export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   },
   {
     id: "consort-eligibility",
-    title: "CONSORT beválasztási pipeline",
+    title: "CONSORT eligibility pipeline",
     description:
-      "Kiindulási populáció egy AI-vezérelt beválasztási kritérium kártyával, plusz egy Pipeline Builder, amivel tovább bővítheted a láncot chat-en keresztül -- a board maga lesz a CONSORT folyamatábra.",
+      "A starting population with one AI-driven eligibility Criterion card, plus a Pipeline Builder you can use to extend the chain further by chatting -- the board itself becomes the CONSORT flow diagram.",
     cards: [
       { key: "dataset", type: "dataset", title: "All Cases", x: 0, y: 0, width: 200, height: 90, config: { mode: "all_cases" } },
       {
@@ -239,9 +239,9 @@ export const PIPELINE_TEMPLATES: PipelineTemplate[] = [
   },
   {
     id: "clinical-trial-assistant",
-    title: "Clinical Trial Assistant szűrés",
+    title: "Clinical Trial Assistant filtering",
     description:
-      "Kösd az eseteidet egy AI asszisztenshez, amivel természetes nyelven beszélgetve kérdezhetsz a kapcsolt adatokról, vagy kérhetsz belőle szűrt, kritériumok szerinti adathalmazt.",
+      "Connect your cases to an AI assistant you can chat with in plain language to ask questions about the connected data, or ask it to build a filtered dataset based on your own criteria.",
     cards: [
       { key: "dataset", type: "dataset", title: "All Cases", x: 0, y: 0, width: 200, height: 90, config: { mode: "all_cases" } },
       {

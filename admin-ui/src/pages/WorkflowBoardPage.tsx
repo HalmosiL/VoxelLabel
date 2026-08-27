@@ -93,7 +93,7 @@ const EDGE_TYPES = { flow: FlowEdge };
 // insertTemplateAt) -- deterministic, synchronous recomputes only.
 // Split/Review are what actually need this (their named materialized
 // children, e.g. Review's approved/rejected, are the whole point of a
-// template like "Felülvizsgálat visszacsatolással"); Filter/Union/
+// template like "Review with feedback loop"); Filter/Union/
 // Annotation are included too since they're just as cheap and a card
 // downstream of one may need its output_case_ids populated to Run in
 // turn. Never Criterion/LLM/Builder -- those call out to a real local
@@ -517,7 +517,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
    * relative positions instead of copied real nodes. `origin` is
    * wherever the template's own (0,0) should land in flow space -- the
    * drop point for a drag (see handleDrop), or the current viewport's
-   * center for the Store's "Beszúrás" button (see handleInsertTemplate). */
+   * center for the Store's "Insert" button (see handleInsertTemplate). */
   async function insertTemplateAt(template: PipelineTemplate, origin: { x: number; y: number }) {
     setInsertingTemplateId(template.id);
     history.record(nodes, realEdges);
@@ -552,7 +552,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       // the order it's listed (source before target, by construction --
       // see PIPELINE_TEMPLATES) -- this is what actually materializes
       // Split's parts / Review's approved-rejected, so a template like
-      // "Felülvizsgálat visszacsatolással" produces its real named
+      // "Review with feedback loop" produces its real named
       // children immediately instead of only once someone happens to
       // click Run later. AI-driven cards (Criterion, LLM, Builder) are
       // deliberately excluded -- evaluating a criterion is a real model
@@ -601,7 +601,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     }
   }
 
-  /** The Store's "Beszúrás" button -- centers the template on whatever's
+  /** The Store's "Insert" button -- centers the template on whatever's
    * currently in view, for a click-only insert with no drag involved. */
   function handleInsertTemplate(template: PipelineTemplate) {
     insertTemplateAt(
@@ -644,7 +644,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     window.addEventListener("mouseup", onMouseUp);
   }
 
-  /** The toolbar's "Mentés Store-ba" flow -- snapshots the current
+  /** The toolbar's "Save to Store" flow -- snapshots the current
    * selection (cards, relative to the selection's own top-left corner,
    * plus whichever real edges run between two selected cards) into a
    * new template, the reverse of insertTemplateAt. */
@@ -807,9 +807,9 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onClick={() => setSavingTemplate(true)}
             disabled={selectedNodes.length === 0}
             className="btn-secondary btn-sm"
-            title={selectedNodes.length === 0 ? "Jelölj ki legalább egy kártyát" : "A kijelölt kártyák mentése új Store sablonként"}
+            title={selectedNodes.length === 0 ? "Select at least one card" : "Save the selected cards as a new Store template"}
           >
-            Mentés Store-ba
+            Save to Store
           </button>
           <button
             onClick={() => history.undo(nodes, realEdges, applySnapshot)}
@@ -880,7 +880,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           <div
             onMouseDown={startStoreSidebarResize}
             className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200/70 transition-colors hover:bg-brand-400 active:bg-brand-500"
-            title="Húzd az oldalsáv átméretezéséhez"
+            title="Drag to resize the sidebar"
           />
         )}
 

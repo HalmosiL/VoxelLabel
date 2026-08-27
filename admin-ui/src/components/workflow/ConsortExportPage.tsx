@@ -84,8 +84,8 @@ function StageBox({
 
 function ExcludedBox({ y, stage }: { y: number; stage: ConsortStage }) {
   const label = stage.evaluated
-    ? `Kizárva (n = ${stage.excluded_count})`
-    : "Kritérium még nincs kiértékelve";
+    ? `Excluded (n = ${stage.excluded_count})`
+    : "Criterion not evaluated yet";
   return (
     <g>
       <line
@@ -178,7 +178,7 @@ function ConsortDiagram({ data, svgRef }: { data: ConsortExport; svgRef: React.R
               <StageBox
                 x={MAIN_X}
                 y={nextY}
-                title={`${stage.title} — bevonva`}
+                title={`${stage.title} — included`}
                 count={stage.included_count ?? 0}
                 highlight={finalBoxIndex === i}
               />
@@ -221,14 +221,14 @@ export default function ConsortExportPage({ studyId, onClose }: { studyId: strin
       <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
         <div>
           <p className="section-title">CONSORT export</p>
-          <p className="hint">A kiválasztott kiindulási Dataset-től a beválasztási lánc valós esetszámaival.</p>
+          <p className="hint">The eligibility chain from your chosen starting Dataset, with real case counts.</p>
         </div>
         <div className="flex items-center gap-2">
           <label className="field">
-            <span className="label">Kiindulási populáció</span>
+            <span className="label">Starting population</span>
             <select className="input" value={rootCardId ?? ""} onChange={(e) => setRootCardId(e.target.value || null)}>
               <option value="" disabled>
-                Válassz egy Dataset kártyát…
+                Choose a Dataset card…
               </option>
               {candidates.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -242,7 +242,7 @@ export default function ConsortExportPage({ studyId, onClose }: { studyId: strin
             disabled={!data}
             className="btn-secondary btn-sm self-end"
           >
-            Letöltés PNG-ként
+            Download as PNG
           </button>
           <button
             onClick={onClose}
@@ -264,9 +264,9 @@ export default function ConsortExportPage({ studyId, onClose }: { studyId: strin
 
       <div className="min-h-0 flex-1 overflow-auto bg-gray-50 p-8">
         {!rootCardId && candidates.length === 0 && !error && (
-          <p className="hint">Ehhez a study-hoz nincs olyan Dataset kártya, amihez nem fut be él -- hozz létre egyet a kiindulási populációként.</p>
+          <p className="hint">This study has no Dataset card with no incoming edge -- create one to serve as the starting population.</p>
         )}
-        {!rootCardId && candidates.length > 1 && <p className="hint">Válassz egy kiindulási Dataset kártyát fent.</p>}
+        {!rootCardId && candidates.length > 1 && <p className="hint">Choose a starting Dataset card above.</p>}
         {data && <ConsortDiagram data={data} svgRef={svgRef} />}
       </div>
     </div>,

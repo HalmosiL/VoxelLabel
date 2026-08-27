@@ -261,7 +261,7 @@ function TemplateCard({
       draggable
       onDragStart={handleDragStart}
       className="card relative cursor-grab !p-3 active:cursor-grabbing"
-      title="Húzd a board-ra, hogy pontosan oda kerüljön, ahova ejted"
+      title="Drag onto the board to place it exactly where you drop it"
     >
       {onDelete && (
         <button
@@ -270,7 +270,7 @@ function TemplateCard({
             onDelete(template);
           }}
           className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-gray-400 shadow-sm hover:text-red-600"
-          title="Sablon törlése"
+          title="Delete template"
         >
           <TrashIcon className="h-3.5 w-3.5" />
         </button>
@@ -283,7 +283,7 @@ function TemplateCard({
         disabled={inserting === template.id}
         className="btn-secondary btn-sm mt-2 self-start"
       >
-        {inserting === template.id ? "Beszúrás…" : "Beszúrás"}
+        {inserting === template.id ? "Inserting…" : "Insert"}
       </button>
     </div>
   );
@@ -296,7 +296,7 @@ export default function PipelineStore({
 }: {
   onInsert: (template: PipelineTemplate) => void;
   inserting: string | null;
-  // Bumped by WorkflowBoardPage right after a "Mentés Store-ba" save
+  // Bumped by WorkflowBoardPage right after a "Save to Store" save
   // succeeds, so a newly-saved template shows up immediately even if
   // the Store tab was already open (and so never remounted/refetched
   // on its own) when the save happened.
@@ -315,7 +315,7 @@ export default function PipelineStore({
   useEffect(refresh, [refreshSignal]);
 
   function handleDelete(template: PipelineTemplate) {
-    if (!window.confirm(`Törlöd a(z) "${template.title}" sablont? Ez nem vonható vissza.`)) return;
+    if (!window.confirm(`Delete the "${template.title}" template? This cannot be undone.`)) return;
     deletePipelineTemplate(template.id)
       .then(() => setCustomTemplates((ts) => ts.filter((t) => t.id !== template.id)))
       .catch((err) => setError(String(err)));
@@ -328,9 +328,9 @@ export default function PipelineStore({
       <div>
         <p className="section-title">Store</p>
         <p className="hint">
-          Előre elkészített pipeline-ok -- húzd a board-ra oda, ahova szeretnéd, vagy kattints a Beszúrásra a jelenlegi
-          nézet közepére helyezéshez. Egy kijelölt kártyacsoportot a fenti "Mentés Store-ba" gombbal magad is
-          hozzáadhatsz.
+          Ready-made pipelines -- drag one onto the board wherever you'd like it, or click Insert to place it in the
+          center of the current view. Add your own by selecting a group of cards and using the "Save to Store" button
+          above.
         </p>
       </div>
       {error && <p className="alert-error text-xs">{error}</p>}
@@ -341,7 +341,7 @@ export default function PipelineStore({
       </div>
       {customTemplates.length > 0 && (
         <div className="flex flex-col gap-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Saját sablonok</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">My templates</p>
           {customTemplates.map((template) => (
             <TemplateCard
               key={template.id}
