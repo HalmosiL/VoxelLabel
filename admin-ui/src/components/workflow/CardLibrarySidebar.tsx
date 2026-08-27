@@ -111,8 +111,12 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         // Tall enough for a 2-line title plus its own connected-count
         // row *and* the "N datasets created" row once that's non-zero
         // (a very ordinary state once the session has actually been
-        // used) -- 100 was too tight for that combination.
-        defaultHeight: 130,
+        // used) -- 100, then 130, both proved too tight in practice
+        // (confirmed live: even the *default*, un-edited title left the
+        // last row clipped at 120/130) -- this leaves real margin
+        // instead of a razor-thin fit that breaks on small rendering
+        // differences (line-height rounding, font fallback, ...).
+        defaultHeight: 160,
       },
       {
         type: "builder",
@@ -124,9 +128,10 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         defaultConfig: { messages: [] },
         defaultWidth: 220,
         // Tall enough for a 2-line title plus its own MCP badge and
-        // description rows -- 100 was tight enough that a wrapped title
-        // alone could push the description into the overflow-hidden clip.
-        defaultHeight: 120,
+        // (2-line-clamped) description rows, with real margin -- 100,
+        // then 120, both still clipped the description's last line in
+        // practice, confirmed live even with the plain default title.
+        defaultHeight: 150,
       },
       {
         type: "criterion",

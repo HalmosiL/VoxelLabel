@@ -21,7 +21,7 @@ function BuilderNode({ selected, data }: NodeProps<CardNode>) {
     <WorkflowNodeShell selected={selected} icon={<WrenchIcon className="h-4 w-4" />} title={card.title} stale={card.stale}>
       <div className="mt-2 flex flex-col gap-1 text-xs text-gray-600">
         <span className="badge-blue self-start">MCP</span>
-        <span>Helps plan and construct the eligibility pipeline</span>
+        <span className="line-clamp-2">Helps plan and construct the eligibility pipeline</span>
       </div>
     </WorkflowNodeShell>
   );
