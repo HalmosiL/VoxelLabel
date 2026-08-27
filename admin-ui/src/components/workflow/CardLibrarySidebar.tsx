@@ -108,7 +108,11 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         // An empty transcript is the only state a fresh session needs.
         defaultConfig: { messages: [] },
         defaultWidth: 220,
-        defaultHeight: 100,
+        // Tall enough for a 2-line title plus its own connected-count
+        // row *and* the "N datasets created" row once that's non-zero
+        // (a very ordinary state once the session has actually been
+        // used) -- 100 was too tight for that combination.
+        defaultHeight: 130,
       },
       {
         type: "builder",
@@ -119,7 +123,10 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         // other state a fresh session needs beyond its own transcript.
         defaultConfig: { messages: [] },
         defaultWidth: 220,
-        defaultHeight: 100,
+        // Tall enough for a 2-line title plus its own MCP badge and
+        // description rows -- 100 was tight enough that a wrapped title
+        // alone could push the description into the overflow-hidden clip.
+        defaultHeight: 120,
       },
       {
         type: "criterion",
