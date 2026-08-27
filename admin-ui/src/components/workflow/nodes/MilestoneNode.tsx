@@ -13,7 +13,7 @@ function MilestoneNode({ data, selected }: NodeProps<CardNode>) {
     <>
       <NodeResizer isVisible={selected} minWidth={140} minHeight={48} />
       <div
-        className={`flex h-full w-full items-start gap-2 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-2.5 shadow-sm ${
+        className={`flex h-full w-full items-start gap-2 overflow-hidden rounded-2xl border border-brand-200 bg-brand-50 px-4 py-2.5 shadow-sm ${
           selected ? "ring-2 ring-brand-500" : ""
         }`}
       >

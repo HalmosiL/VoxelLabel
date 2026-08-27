@@ -23,7 +23,7 @@ export default function WorkflowNodeShell({
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={200} minHeight={70} />
-      <div className={`card relative h-full w-full !p-3 ${selected ? "ring-2 ring-brand-500" : ""}`}>
+      <div className={`card relative h-full w-full overflow-hidden !p-3 ${selected ? "ring-2 ring-brand-500" : ""}`}>
         <div className="flex items-start gap-2">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
             {icon}
