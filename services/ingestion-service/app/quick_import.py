@@ -110,7 +110,11 @@ def run_quick_import(study_id: str, staging_keys: list[str]) -> dict:
         for staging_key in staging_keys:
             try:
                 raw = download_staged_file(staging_key)
-                dataset = pydicom.dcmread(io.BytesIO(raw))
+                # force=True: see app/pipeline.py::ingest_dicom's own
+                # comment -- some real-world exports omit the optional
+                # preamble/"DICM" magic; the REQUIRED_TAGS check right
+                # below still rejects anything that isn't actually DICOM.
+                dataset = pydicom.dcmread(io.BytesIO(raw), force=True)
 
                 missing = [tag for tag in REQUIRED_TAGS if tag not in dataset]
                 if not hasattr(dataset, "PatientID"):

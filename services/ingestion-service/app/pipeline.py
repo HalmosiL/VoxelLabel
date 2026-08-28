@@ -34,7 +34,13 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
     exist -- identity resolution happens once at case-creation time in
     admin-service, not on every upload.
     """
-    dataset = pydicom.dcmread(io.BytesIO(download_staged_file(staging_key)))
+    # force=True: some real-world DICOM exports omit the optional 128-byte
+    # preamble + "DICM" magic bytes pydicom otherwise insists on -- the
+    # dataset itself is still perfectly valid, so refusing to read it
+    # would reject real files for no reason. This does not weaken the
+    # REQUIRED_TAGS check right below: a file that's genuinely not DICOM
+    # at all still won't have those tags and gets rejected there instead.
+    dataset = pydicom.dcmread(io.BytesIO(download_staged_file(staging_key)), force=True)
 
     missing = [tag for tag in REQUIRED_TAGS if tag not in dataset]
     if missing:

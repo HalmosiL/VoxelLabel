@@ -123,7 +123,11 @@ def _export_one_series(db: Session, series: Series, imaging_study: ImagingStudy,
     spacing_xy = None
     slice_thickness = 1.0
     for i, instance in enumerate(instances):
-        dataset = pydicom.dcmread(io.BytesIO(download_object(instance.object_storage_key)))
+        # force=True for consistency with app/pipeline.py's own read --
+        # these files were already validated at ingest time, but a
+        # preamble-less file that made it through the earlier force=True
+        # read there would otherwise fail again here for no reason.
+        dataset = pydicom.dcmread(io.BytesIO(download_object(instance.object_storage_key)), force=True)
         slope = float(getattr(dataset, "RescaleSlope", 1.0))
         intercept = float(getattr(dataset, "RescaleIntercept", 0.0))
         slices.append(dataset.pixel_array.astype(np.float32) * slope + intercept)
