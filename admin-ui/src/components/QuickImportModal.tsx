@@ -37,9 +37,57 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
     setFiles(candidates);
   }
 
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
+  /** Recursively reads one dropped filesystem entry -- a plain File for a
+   * dropped file, or every file nested (at any depth) under a dropped
+   * folder. `readEntries()` on a directory reader only returns entries in
+   * batches and must be called repeatedly until it returns an empty
+   * batch (a real DOM API quirk, not a bug) -- looping here is what
+   * actually collects a large folder's full contents instead of silently
+   * truncating it to the first batch. */
+  function readEntry(entry: FileSystemEntry): Promise<File[]> {
+    return new Promise((resolve) => {
+      if (entry.isFile) {
+        (entry as FileSystemFileEntry).file((file) => resolve([file]), () => resolve([]));
+        return;
+      }
+      if (!entry.isDirectory) {
+        resolve([]);
+        return;
+      }
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      const collected: FileSystemEntry[] = [];
+      const readBatch = () => {
+        reader.readEntries(async (batch) => {
+          if (batch.length === 0) {
+            const nested = await Promise.all(collected.map(readEntry));
+            resolve(nested.flat());
+            return;
+          }
+          collected.push(...batch);
+          readBatch();
+        }, () => resolve([]));
+      };
+      readBatch();
+    });
+  }
+
+  async function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragOver(false);
+
+    // A dropped *folder* only ever surfaces its actual contents through
+    // DataTransferItem's own filesystem-entry API -- dataTransfer.files
+    // for a folder drop is empty or meaningless in every browser that
+    // supports webkitGetAsEntry, so that path must be tried first, with
+    // a plain-files fallback only for a browser/drop that doesn't
+    // support it (a flat multi-file drag always works either way).
+    const items = event.dataTransfer.items;
+    const entries = items ? Array.from(items).map((item) => item.webkitGetAsEntry?.()).filter((e): e is FileSystemEntry => e != null) : [];
+    if (entries.length > 0) {
+      const results = await Promise.all(entries.map(readEntry));
+      addFiles(results.flat());
+      return;
+    }
     if (event.dataTransfer.files.length > 0) addFiles(event.dataTransfer.files);
   }
 
@@ -169,7 +217,7 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
               ))}
             </ul>
             {result.errors.length > 0 && (
-              <details className="text-xs text-gray-500">
+              <details open className="text-xs text-gray-500">
                 <summary className="cursor-pointer">{result.errors.length} error(s)</summary>
                 <ul className="mt-1 flex flex-col gap-1">
                   {result.errors.map((e, i) => (
