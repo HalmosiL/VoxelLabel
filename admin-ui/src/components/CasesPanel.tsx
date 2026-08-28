@@ -6,12 +6,14 @@ import { CaseSummary, listCases, listPatients, PatientSummary } from "../api/dat
 import EmptyState from "./EmptyState";
 import { TrashIcon } from "./icons";
 import Modal from "./Modal";
+import QuickImportModal from "./QuickImportModal";
 import SectionHeader from "./SectionHeader";
 
 export default function CasesPanel({ studyId }: { studyId: string }) {
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   function refresh() {
     listCases(studyId)
@@ -39,9 +41,14 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
       <SectionHeader
         title="Cases"
         action={
-          <button onClick={() => setCreateOpen(true)} className="btn-secondary btn-sm">
-            New case
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setImportOpen(true)} className="btn-secondary btn-sm">
+              Quick import
+            </button>
+            <button onClick={() => setCreateOpen(true)} className="btn-secondary btn-sm">
+              New case
+            </button>
+          </div>
         }
       />
       {error && <p className="alert-error mt-3">{error}</p>}
@@ -110,6 +117,9 @@ export default function CasesPanel({ studyId }: { studyId: string }) {
             refresh();
           }}
         />
+      )}
+      {importOpen && (
+        <QuickImportModal studyId={studyId} onClose={() => setImportOpen(false)} onImported={refresh} />
       )}
     </div>
   );

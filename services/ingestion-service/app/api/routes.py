@@ -1,4 +1,5 @@
-"""HTTP API for DICOM ingestion: upload, job status, and PyTorch exports."""
+"""HTTP API for DICOM ingestion: upload, job status, PyTorch exports, and
+quick import."""
 import json
 import uuid
 
@@ -9,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Case, WorkflowCard, WorkflowCardType
+from shared_models.models import Case, Study, WorkflowCard, WorkflowCardType
 
 from app.storage import download_object, presigned_export_url, upload_staged_file
-from app.tasks import celery_app, export_pytorch_dataset, ingest_dicom_file
+from app.tasks import celery_app, export_pytorch_dataset, ingest_dicom_file, quick_import_batch
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 
@@ -46,6 +47,52 @@ async def upload_dicom(
 
     ingest_dicom_file.delay(job_id=job_id, case_id=case_id, staging_key=staging_key)
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/studies/{study_id}/quick-import")
+async def quick_import(
+    study_id: str,
+    files: list[UploadFile],
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Drop a whole folder/zip's worth of loose DICOM files -- any mix of
+    patients and studies -- and get back fully ingested Cases with no
+    manual "create a case first" step (see app/quick_import.py for the
+    grouping/matching rules). Returns immediately; poll
+    GET /ingestion/quick-imports/{import_id} for the outcome (which
+    cases were created vs. matched, how many instances landed, and any
+    per-file errors)."""
+    require_study_role(db, study_id, user, allowed_roles=["data_manager", "admin"])
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    if not files:
+        raise HTTPException(status_code=422, detail="No files given")
+
+    import_id = str(uuid.uuid4())
+    staging_keys = []
+    for file in files:
+        staging_key = f"_staging/{import_id}/{uuid.uuid4()}.dcm"
+        upload_staged_file(staging_key, await file.read())
+        staging_keys.append(staging_key)
+
+    quick_import_batch.apply_async(kwargs={"study_id": study_id, "staging_keys": staging_keys}, task_id=import_id)
+    return {"import_id": import_id, "status": "queued", "file_count": len(staging_keys)}
+
+
+@router.get("/quick-imports/{import_id}")
+def get_quick_import(import_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Polls one quick-import batch's status/result via Celery's own
+    AsyncResult -- no durable object-storage marker needed here (unlike
+    the PyTorch export's manifest.json) since this is a short-lived,
+    actively-watched foreground action, not something checked back on
+    a day later."""
+    result = AsyncResult(import_id, app=celery_app)
+    if result.state == "SUCCESS":
+        return {"status": "completed", **result.result}
+    if result.state == "FAILURE":
+        return {"status": "failed", "error": str(result.result)}
+    return {"status": (result.state or "PENDING").lower()}
 
 
 class PytorchExportIn(BaseModel):

@@ -7,6 +7,7 @@ import io
 import uuid
 
 import pydicom
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from shared_models.database import SessionLocal
@@ -43,71 +44,103 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
     try:
         case = db.get(Case, case_id)
         dataset = apply_deidentification_profile(dataset, study_id=str(case.study_id))
-
-        existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
-        if existing is not None:
-            delete_staged_file(staging_key)
-            return {"job_id": job_id, "status": "duplicate", "instance_id": str(existing.id)}
-
-        storage_key = f"{dataset.StudyInstanceUID}/{dataset.SeriesInstanceUID}/{dataset.SOPInstanceUID}.dcm"
-        upload_pixel_data(storage_key, dataset)
-
-        imaging_study = _get_or_create_imaging_study(db, dataset, case)
-        series = _get_or_create_series(db, dataset, imaging_study)
-
-        instance_id = uuid.uuid4()
-        thumbnail_key = None
-        try:
-            thumbnail_key = f"thumbnails/{instance_id}.png"
-            upload_thumbnail(thumbnail_key, generate_thumbnail(dataset))
-        except ThumbnailGenerationError:
-            # A preview image is a nice-to-have, not a requirement for a
-            # successful ingest (e.g. an unsupported transfer syntax
-            # pydicom can't decode without an extra codec plugin).
-            thumbnail_key = None
-
-        instance = Instance(
-            id=instance_id,
-            series_id=series.id,
-            sop_instance_uid=dataset.SOPInstanceUID,
-            instance_number=getattr(dataset, "InstanceNumber", None),
-            object_storage_key=storage_key,
-            thumbnail_key=thumbnail_key,
-            rows=getattr(dataset, "Rows", None),
-            columns=getattr(dataset, "Columns", None),
-        )
-        db.add(instance)
+        result = _ingest_one_instance(db, case, dataset)
         db.commit()
         delete_staged_file(staging_key)
-        return {"job_id": job_id, "status": "completed", "instance_id": str(instance.id)}
+        return {"job_id": job_id, **result}
     finally:
         db.close()
 
 
+def _ingest_one_instance(db: Session, case: Case, dataset) -> dict:
+    """Given an already-resolved Case and a parsed (and de-identified)
+    dataset, uploads its pixel data + thumbnail and inserts its Instance
+    row -- idempotent by SOPInstanceUID. Shared by the single-file upload
+    path above and the multi-file quick-import batch path
+    (app/quick_import.py), so "what actually happens to one DICOM file"
+    stays in exactly one place. Caller owns the transaction (commit) and
+    any staged-file cleanup -- a quick-import batch commits once per
+    resolved case, not once per instance.
+    """
+    existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
+    if existing is not None:
+        return {"status": "duplicate", "instance_id": str(existing.id)}
+
+    storage_key = f"{dataset.StudyInstanceUID}/{dataset.SeriesInstanceUID}/{dataset.SOPInstanceUID}.dcm"
+    upload_pixel_data(storage_key, dataset)
+
+    imaging_study = _get_or_create_imaging_study(db, dataset, case)
+    series = _get_or_create_series(db, dataset, imaging_study)
+
+    instance_id = uuid.uuid4()
+    thumbnail_key = None
+    try:
+        thumbnail_key = f"thumbnails/{instance_id}.png"
+        upload_thumbnail(thumbnail_key, generate_thumbnail(dataset))
+    except ThumbnailGenerationError:
+        # A preview image is a nice-to-have, not a requirement for a
+        # successful ingest (e.g. an unsupported transfer syntax
+        # pydicom can't decode without an extra codec plugin).
+        thumbnail_key = None
+
+    instance = Instance(
+        id=instance_id,
+        series_id=series.id,
+        sop_instance_uid=dataset.SOPInstanceUID,
+        instance_number=getattr(dataset, "InstanceNumber", None),
+        object_storage_key=storage_key,
+        thumbnail_key=thumbnail_key,
+        rows=getattr(dataset, "Rows", None),
+        columns=getattr(dataset, "Columns", None),
+    )
+    db.add(instance)
+    db.flush()
+    return {"status": "completed", "instance_id": str(instance.id)}
+
+
 def _get_or_create_imaging_study(db: Session, dataset, case: Case) -> ImagingStudy:
     imaging_study = db.query(ImagingStudy).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
-    if imaging_study is None:
-        imaging_study = ImagingStudy(
-            case_id=case.id,
-            study_instance_uid=dataset.StudyInstanceUID,
-            modality=getattr(dataset, "Modality", None),
-            description=getattr(dataset, "StudyDescription", None),
-        )
-        db.add(imaging_study)
+    if imaging_study is not None:
+        return imaging_study
+
+    imaging_study = ImagingStudy(
+        case_id=case.id,
+        study_instance_uid=dataset.StudyInstanceUID,
+        modality=getattr(dataset, "Modality", None),
+        description=getattr(dataset, "StudyDescription", None),
+    )
+    db.add(imaging_study)
+    try:
         db.flush()
+    except IntegrityError:
+        # Another worker won the race and inserted this same
+        # study_instance_uid first (its own unique constraint) -- this is
+        # the fix for a known bug (see project memory, 2026-08-22 entry):
+        # concurrent uploads for a brand-new series used to raise
+        # uncaught here and silently drop the losing instance. Roll back
+        # this half-done insert and use the winner's row instead.
+        db.rollback()
+        imaging_study = db.query(ImagingStudy).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
     return imaging_study
 
 
 def _get_or_create_series(db: Session, dataset, imaging_study: ImagingStudy) -> Series:
     series = db.query(Series).filter_by(series_instance_uid=dataset.SeriesInstanceUID).first()
-    if series is None:
-        series = Series(
-            imaging_study_id=imaging_study.id,
-            series_instance_uid=dataset.SeriesInstanceUID,
-            series_number=getattr(dataset, "SeriesNumber", None),
-            body_part=getattr(dataset, "BodyPartExamined", None),
-            series_description=getattr(dataset, "SeriesDescription", None),
-        )
-        db.add(series)
+    if series is not None:
+        return series
+
+    series = Series(
+        imaging_study_id=imaging_study.id,
+        series_instance_uid=dataset.SeriesInstanceUID,
+        series_number=getattr(dataset, "SeriesNumber", None),
+        body_part=getattr(dataset, "BodyPartExamined", None),
+        series_description=getattr(dataset, "SeriesDescription", None),
+    )
+    db.add(series)
+    try:
         db.flush()
+    except IntegrityError:
+        # Same race as _get_or_create_imaging_study, one level down.
+        db.rollback()
+        series = db.query(Series).filter_by(series_instance_uid=dataset.SeriesInstanceUID).first()
     return series

@@ -66,6 +66,48 @@ export function getPytorchExport(exportId: string): Promise<PytorchExportStatus>
   return apiFetch(API.ingestion, `/ingestion/exports/${exportId}`);
 }
 
+export interface QuickImportResultCase {
+  case_id: string;
+  title: string;
+  created: boolean;
+  instance_count: number;
+}
+
+export interface QuickImportError {
+  file: string;
+  error: string;
+}
+
+export type QuickImportStatus =
+  | { status: "pending" | "started" | "retry" }
+  | { status: "failed"; error: string }
+  | { status: "completed"; cases: QuickImportResultCase[]; instances_ingested: number; errors: QuickImportError[] };
+
+/** Uploads a whole batch of loose DICOM files (any mix of patients/
+ * studies) in one request -- the server groups them by (PatientID,
+ * StudyInstanceUID) and creates/matches a Case for each group itself,
+ * no manual case-creation step needed (see
+ * services/ingestion-service/app/quick_import.py). Returns immediately
+ * with an id to poll via getQuickImport. */
+export async function quickImport(studyId: string, files: File[]): Promise<{ import_id: string; status: string; file_count: number }> {
+  const formData = new FormData();
+  for (const file of files) formData.append("files", file);
+
+  const response = await fetch(`${API.ingestion}/ingestion/studies/${studyId}/quick-import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${keycloak.token}` },
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await response.text());
+  }
+  return response.json();
+}
+
+export function getQuickImport(importId: string): Promise<QuickImportStatus> {
+  return apiFetch(API.ingestion, `/ingestion/quick-imports/${importId}`);
+}
+
 export async function uploadDicom(caseId: string, file: File): Promise<{ job_id: string; status: string }> {
   const formData = new FormData();
   formData.append("file", file);

@@ -4,6 +4,7 @@ from celery import Celery
 from app.core.config import settings
 from app.pipeline import ingest_dicom
 from app.pytorch_export import build_pytorch_export
+from app.quick_import import run_quick_import
 
 celery_app = Celery("ingestion", broker=settings.redis_url, backend=settings.redis_url)
 
@@ -34,3 +35,17 @@ def export_pytorch_dataset(self, export_id: str, case_ids: list[str]) -> dict:
     without a dedicated database table for job status.
     """
     return build_pytorch_export(export_id=export_id, case_ids=case_ids)
+
+
+@celery_app.task(name="ingestion.quick_import_batch", bind=True)
+def quick_import_batch(self, study_id: str, staging_keys: list[str]) -> dict:
+    """Runs one quick-import batch (see app/quick_import.py) -- every
+    staged file processed sequentially in this single task, deliberately
+    never fanned out across workers (see that module's own docstring for
+    why). Not retried as a whole: a per-file failure is already captured
+    in the returned "errors" list rather than raising, so a task-level
+    retry would only be useful for a failure between files (e.g. losing
+    the DB connection entirely), which is rare enough not to warrant the
+    complexity of resuming a partially-done batch.
+    """
+    return run_quick_import(study_id=study_id, staging_keys=staging_keys)
