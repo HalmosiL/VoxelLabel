@@ -166,6 +166,20 @@ def list_instances(
     series = db.get(Series, series_id)
     require_study_role(db, str(series.imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
+    # series.instances (the bare relationship) has no defined order --
+    # explicitly ordered here so the gallery always reads top-to-bottom/
+    # left-to-right in real anatomical slice order, not upload/insertion
+    # order (which quick-import in particular has no reason to match,
+    # since it processes whatever order a folder picker/glob happens to
+    # hand it). Nulls last: an instance with no InstanceNumber at all
+    # (rare, but the column is nullable) still shows up, just at the end
+    # rather than sorting arbitrarily among the real ones.
+    instances = (
+        db.query(Instance)
+        .filter_by(series_id=series_id)
+        .order_by(Instance.instance_number.asc().nulls_last())
+        .all()
+    )
     return [
         {
             "id": str(i.id),
@@ -173,7 +187,7 @@ def list_instances(
             "instance_number": i.instance_number,
             "thumbnail_url": presigned_thumbnail_url(i.thumbnail_key) if i.thumbnail_key else None,
         }
-        for i in series.instances
+        for i in instances
     ]
 
 
