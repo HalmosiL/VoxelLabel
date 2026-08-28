@@ -32,6 +32,7 @@ export interface Series {
 export interface CaseSeries extends Series {
   imaging_study_id: string;
   imaging_study_description: string | null;
+  instance_count: number;
 }
 
 export interface Instance {

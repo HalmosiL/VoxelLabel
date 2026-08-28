@@ -131,6 +131,7 @@ def list_case_series(
                     "imaging_study_id": str(imaging_study.id),
                     "imaging_study_description": imaging_study.description,
                     "thumbnail_url": _thumbnail_url_for_series(series),
+                    "instance_count": len(series.instances),
                 }
             )
     return result

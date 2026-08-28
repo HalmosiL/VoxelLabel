@@ -335,6 +335,9 @@ function SeriesSection({ caseId, studyId, jobId }: { caseId: string; studyId: st
                   {s.series_description ?? s.series_instance_uid}
                 </p>
                 <p className="truncate text-xs text-gray-400">{s.imaging_study_description}</p>
+                <p className="text-xs text-gray-400">
+                  {s.instance_count} image{s.instance_count === 1 ? "" : "s"}
+                </p>
               </button>
               <a
                 href={viewerUrl(s.id, studyId, jobId)}
@@ -429,7 +432,10 @@ function SeriesInstancesModal({
           </button>
         </form>
 
-        <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
+        <p className="hint">
+          {instances.length} instance{instances.length === 1 ? "" : "s"} in this series.
+        </p>
+        <div className="flex max-h-96 flex-col gap-2 overflow-y-auto">
           {instances.length === 0 && <p className="hint">No instances.</p>}
           {instances.map((i) => (
             <div key={i.id} className="flex items-center gap-3 rounded-lg border border-gray-100 p-2">
