@@ -10,6 +10,12 @@ class Settings:
     )
     redis_url: str = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     object_storage_endpoint: str = os.environ.get("OBJECT_STORAGE_ENDPOINT", "http://localhost:9000")
+    # The browser-reachable endpoint, used only to sign PyTorch export
+    # download URLs (see app/storage.py's _public_client) -- distinct from
+    # object_storage_endpoint since that one is the container-internal
+    # address (e.g. "http://minio:9000"), unreachable from a user's own
+    # machine. Same split admin-service's own config already has.
+    object_storage_public_endpoint: str = os.environ.get("OBJECT_STORAGE_PUBLIC_ENDPOINT", "http://localhost:9000")
     object_storage_bucket: str = os.environ.get("OBJECT_STORAGE_BUCKET", "ct-pixel-data")
     object_storage_access_key: str = os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
     object_storage_secret_key: str = os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin")

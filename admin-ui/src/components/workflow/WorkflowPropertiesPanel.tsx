@@ -5,6 +5,7 @@ import { KeycloakUser } from "../../api/adminApi";
 import { CaseSummary } from "../../api/dataApi";
 import { SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
 import { RUNNABLE_TYPES } from "./handleRules";
+import PytorchExportModal from "./PytorchExportModal";
 import { TASK_STATUS_STYLE } from "./statusStyle";
 
 interface PanelProps {
@@ -71,6 +72,7 @@ export default function WorkflowPropertiesPanel({
         {card.type === "dataset" && (
           <DatasetFields
             card={card}
+            studyId={studyId}
             cases={cases}
             onPatch={onPatch}
             onRun={onRun}
@@ -224,6 +226,7 @@ function RunButton({ card, onRun, running, label }: { card: WorkflowCard; onRun:
 
 function DatasetFields({
   card,
+  studyId,
   cases,
   onPatch,
   onRun,
@@ -231,14 +234,17 @@ function DatasetFields({
   hasIncomingEdge,
 }: {
   card: WorkflowCard;
+  studyId: string;
   cases: CaseSummary[];
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
   onRun: (cardId: string) => void;
   running: boolean;
   hasIncomingEdge: boolean;
 }) {
+  const [exporting, setExporting] = useState(false);
   const mode = (card.config.mode as string) ?? "all_cases";
   const manualIds = new Set((card.config.case_ids as string[] | undefined) ?? []);
+  const exportCaseIds = mode === "manual" ? Array.from(manualIds) : cases.map((c) => c.id);
 
   function setMode(next: "all_cases" | "manual") {
     if (next === "manual") {
@@ -288,6 +294,16 @@ function DatasetFields({
         </button>
       </div>
       <p className="hint">{count} case{count === 1 ? "" : "s"} in this dataset.</p>
+      <button
+        onClick={() => setExporting(true)}
+        disabled={exportCaseIds.length === 0}
+        className="btn-secondary btn-sm self-start"
+      >
+        Export for PyTorch
+      </button>
+      {exporting && (
+        <PytorchExportModal studyId={studyId} caseIds={exportCaseIds} onClose={() => setExporting(false)} />
+      )}
       {mode === "manual" && (
         <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-lg border border-gray-100 p-2">
           {cases.map((c) => (

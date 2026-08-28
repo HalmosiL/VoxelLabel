@@ -48,6 +48,10 @@ services:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
       REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      # Only this API container actually signs PyTorch export URLs (see
+      # app/storage.py's presigned_export_url) -- needs the
+      # browser-reachable host, not the internal one above.
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
       KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
     ports:
