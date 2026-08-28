@@ -96,18 +96,26 @@ def _resolve_or_create_case(db: Session, study_id: str, dataset) -> tuple[Case, 
     return case, True
 
 
-def run_quick_import(study_id: str, staging_keys: list[str]) -> dict:
+def run_quick_import(study_id: str, staging_keys: list[str], on_progress=None) -> dict:
     """Processes every staged file for one quick-import batch, in order.
     Never raises for a single bad file -- each file's own outcome (or
     error) is recorded and the rest of the batch still runs, since one
     corrupt file in a folder of hundreds shouldn't sink the whole import.
+
+    `on_progress(index, total, filename)`, if given, is called after
+    each file (whether it succeeded, was a duplicate, or errored) --
+    the Celery task wires this to `self.update_state` so a caller
+    polling GET /ingestion/quick-imports/{id} can show real "N of M"
+    progress instead of an indeterminate spinner for what can be a
+    multi-hundred-file, multi-minute batch.
     """
     db: Session = SessionLocal()
     cases: dict[str, dict] = {}  # case_id -> {"title", "created", "instance_count"}
     errors: list[dict] = []
+    total = len(staging_keys)
 
     try:
-        for staging_key in staging_keys:
+        for index, staging_key in enumerate(staging_keys):
             try:
                 raw = download_staged_file(staging_key)
                 # force=True: see app/pipeline.py::ingest_dicom's own
@@ -164,6 +172,13 @@ def run_quick_import(study_id: str, staging_keys: list[str]) -> dict:
                     delete_staged_file(staging_key)
                 except Exception:
                     pass
+            finally:
+                # Runs for every file regardless of outcome (success,
+                # duplicate-skip via `continue` above, or the except
+                # block) -- Python still runs a try's `finally` before a
+                # `continue` actually moves the loop on.
+                if on_progress is not None:
+                    on_progress(index + 1, total, staging_key)
 
         return {
             "cases": [{"case_id": cid, **info} for cid, info in cases.items()],

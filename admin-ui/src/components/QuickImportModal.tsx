@@ -16,6 +16,8 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
   const [status, setStatus] = useState<"idle" | "uploading" | "running" | "failed" | "completed">("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Extract<QuickImportStatus, { status: "completed" }> | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ sent: number; total: number } | null>(null);
+  const [processingProgress, setProcessingProgress] = useState<Extract<QuickImportStatus, { status: "progress" }> | null>(null);
   const pollRef = useRef<number | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const filesInputRef = useRef<HTMLInputElement>(null);
@@ -94,8 +96,9 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
   async function handleUpload() {
     setStatus("uploading");
     setError(null);
+    setUploadProgress({ sent: 0, total: files.reduce((sum, f) => sum + f.size, 0) });
     try {
-      const res = await quickImport(studyId, files);
+      const res = await quickImport(studyId, files, (sent, total) => setUploadProgress({ sent, total }));
       poll(res.import_id);
     } catch (err) {
       setError(String(err));
@@ -115,6 +118,7 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
           setError(res.error);
           setStatus("failed");
         } else {
+          if (res.status === "progress") setProcessingProgress(res);
           pollRef.current = window.setTimeout(() => poll(importId), POLL_INTERVAL_MS);
         }
       })
@@ -190,10 +194,29 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
         )}
 
         {busy && (
-          <p className="hint">
-            {status === "uploading" ? "Uploading…" : "Processing…"} This window can be closed; the import keeps
-            running in the background.
-          </p>
+          <div className="flex flex-col gap-2">
+            {status === "uploading" && uploadProgress && (
+              <>
+                <p className="hint">
+                  Uploading… {formatBytes(uploadProgress.sent)} / {formatBytes(uploadProgress.total)}
+                </p>
+                <ProgressBar fraction={uploadProgress.total > 0 ? uploadProgress.sent / uploadProgress.total : 0} />
+              </>
+            )}
+            {status === "running" && (
+              <>
+                <p className="hint">
+                  {processingProgress
+                    ? `Processing ${processingProgress.current} / ${processingProgress.total} -- ${processingProgress.filename.split("/").pop()}`
+                    : "Processing…"}
+                </p>
+                {processingProgress && (
+                  <ProgressBar fraction={processingProgress.current / processingProgress.total} />
+                )}
+              </>
+            )}
+            <p className="hint text-gray-400">This window can be closed; the import keeps running in the background.</p>
+          </div>
         )}
 
         {status === "failed" && <p className="alert-error">Import failed: {error}</p>}
@@ -238,4 +261,18 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
       </div>
     </Modal>
   );
+}
+
+function ProgressBar({ fraction }: { fraction: number }) {
+  const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+      <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${percent}%` }} />
+    </div>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

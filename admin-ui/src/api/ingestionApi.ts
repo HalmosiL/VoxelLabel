@@ -80,6 +80,7 @@ export interface QuickImportError {
 
 export type QuickImportStatus =
   | { status: "pending" | "started" | "retry" }
+  | { status: "progress"; current: number; total: number; filename: string }
   | { status: "failed"; error: string }
   | { status: "completed"; cases: QuickImportResultCase[]; instances_ingested: number; errors: QuickImportError[] };
 
@@ -88,20 +89,36 @@ export type QuickImportStatus =
  * StudyInstanceUID) and creates/matches a Case for each group itself,
  * no manual case-creation step needed (see
  * services/ingestion-service/app/quick_import.py). Returns immediately
- * with an id to poll via getQuickImport. */
-export async function quickImport(studyId: string, files: File[]): Promise<{ import_id: string; status: string; file_count: number }> {
+ * with an id to poll via getQuickImport.
+ *
+ * Uses XMLHttpRequest, not fetch, specifically for `upload.onprogress`
+ * -- fetch has no equivalent event for tracking bytes actually sent, so
+ * there'd be no way to show real upload progress for what can be a
+ * multi-hundred-megabyte request otherwise. */
+export function quickImport(
+  studyId: string,
+  files: File[],
+  onUploadProgress?: (sentBytes: number, totalBytes: number) => void
+): Promise<{ import_id: string; status: string; file_count: number }> {
   const formData = new FormData();
   for (const file of files) formData.append("files", file);
 
-  const response = await fetch(`${API.ingestion}/ingestion/studies/${studyId}/quick-import`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${keycloak.token}` },
-    body: formData,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API.ingestion}/ingestion/studies/${studyId}/quick-import`);
+    xhr.setRequestHeader("Authorization", `Bearer ${keycloak.token}`);
+    if (onUploadProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onUploadProgress(event.loaded, event.total);
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+      else reject(new ApiError(xhr.status, xhr.responseText));
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.send(formData);
   });
-  if (!response.ok) {
-    throw new ApiError(response.status, await response.text());
-  }
-  return response.json();
 }
 
 export function getQuickImport(importId: string): Promise<QuickImportStatus> {

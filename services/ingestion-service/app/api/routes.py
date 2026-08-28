@@ -92,6 +92,10 @@ def get_quick_import(import_id: str, user: CurrentUser = Depends(get_current_use
         return {"status": "completed", **result.result}
     if result.state == "FAILURE":
         return {"status": "failed", "error": str(result.result)}
+    if result.state == "PROGRESS" and isinstance(result.info, dict):
+        # Set by quick_import_batch's own on_progress callback -- "N of
+        # M files" progress for a batch that can take a while.
+        return {"status": "progress", **result.info}
     return {"status": (result.state or "PENDING").lower()}
 
 

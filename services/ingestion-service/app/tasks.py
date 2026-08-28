@@ -48,4 +48,12 @@ def quick_import_batch(self, study_id: str, staging_keys: list[str]) -> dict:
     the DB connection entirely), which is rare enough not to warrant the
     complexity of resuming a partially-done batch.
     """
-    return run_quick_import(study_id=study_id, staging_keys=staging_keys)
+
+    def on_progress(current: int, total: int, filename: str) -> None:
+        # Surfaced by GET /ingestion/quick-imports/{id} while this task
+        # is still running, via AsyncResult.info -- lets a multi-hundred-
+        # file batch show real "N of M" progress instead of a bare
+        # spinner for however long it takes.
+        self.update_state(state="PROGRESS", meta={"current": current, "total": total, "filename": filename})
+
+    return run_quick_import(study_id=study_id, staging_keys=staging_keys, on_progress=on_progress)
