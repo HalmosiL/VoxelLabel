@@ -313,7 +313,12 @@ function DatasetFields({
         Export for PyTorch
       </button>
       {exporting && (
-        <PytorchExportModal studyId={studyId} caseIds={exportCaseIds} onClose={() => setExporting(false)} />
+        <PytorchExportModal
+          studyId={studyId}
+          cardId={card.id}
+          caseCount={exportCaseIds.length}
+          onClose={() => setExporting(false)}
+        />
       )}
       {mode === "manual" && (
         <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-lg border border-gray-100 p-2">

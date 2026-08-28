@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Case
+from shared_models.models import Case, WorkflowCard, WorkflowCardType
 
 from app.storage import download_object, presigned_export_url, upload_staged_file
 from app.tasks import celery_app, export_pytorch_dataset, ingest_dicom_file
@@ -50,7 +50,30 @@ async def upload_dicom(
 
 class PytorchExportIn(BaseModel):
     study_id: str
-    case_ids: list[str]
+    # Exactly one of the two: either the caller already knows the exact
+    # case list (e.g. admin-ui's own DatasetFields, which has to resolve
+    # a card's Manual-pick/All-cases mode anyway to show it), or it just
+    # names the Dataset card and lets this route resolve it -- letting
+    # any outside caller ask "what's in this dataset" by naming the
+    # dataset itself, without having to duplicate that resolution logic.
+    case_ids: list[str] | None = None
+    card_id: str | None = None
+
+
+def _resolve_dataset_card_case_ids(db: Session, card_id: str, study_id: str) -> list[str]:
+    """Same mode/case_ids convention admin-service's own workflow.py uses
+    for a Dataset card (_dataset_output_ids) -- duplicated here rather
+    than imported since ingestion-service and admin-service are separate
+    deployable services with their own dependencies, no shared code path
+    between them beyond shared_models itself."""
+    card = db.get(WorkflowCard, card_id)
+    if card is None or str(card.study_id) != study_id:
+        raise HTTPException(status_code=404, detail="Dataset card not found in this study")
+    if card.type != WorkflowCardType.DATASET:
+        raise HTTPException(status_code=422, detail="card_id must reference a Dataset card")
+    if card.config.get("mode") == "manual":
+        return list(card.config.get("case_ids", []))
+    return [str(c.id) for c in db.query(Case).filter_by(study_id=study_id).all()]
 
 
 @router.post("/exports")
@@ -67,11 +90,15 @@ def create_pytorch_export(
     hold this role in.
     """
     require_study_role(db, body.study_id, user, allowed_roles=["data_manager", "admin"])
-    if not body.case_ids:
-        raise HTTPException(status_code=422, detail="case_ids must not be empty")
+    if bool(body.case_ids) == bool(body.card_id):
+        raise HTTPException(status_code=422, detail="Provide exactly one of case_ids or card_id")
 
-    cases = db.query(Case).filter(Case.id.in_(body.case_ids)).all()
-    if len(cases) != len(set(body.case_ids)):
+    case_ids = body.case_ids or _resolve_dataset_card_case_ids(db, body.card_id, body.study_id)
+    if not case_ids:
+        raise HTTPException(status_code=422, detail="No cases to export")
+
+    cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
+    if len(cases) != len(set(case_ids)):
         raise HTTPException(status_code=404, detail="One or more cases not found")
     if any(str(c.study_id) != body.study_id for c in cases):
         raise HTTPException(status_code=422, detail="All cases must belong to study_id")
@@ -80,7 +107,7 @@ def create_pytorch_export(
     # task_id=export_id is what lets the GET route below poll this run via
     # Celery's own AsyncResult, with no dedicated database table for job
     # status.
-    export_pytorch_dataset.apply_async(kwargs={"export_id": export_id, "case_ids": body.case_ids}, task_id=export_id)
+    export_pytorch_dataset.apply_async(kwargs={"export_id": export_id, "case_ids": case_ids}, task_id=export_id)
     return {"export_id": export_id, "status": "queued"}
 
 

@@ -41,11 +41,16 @@ class ManifestDataset(Dataset):
  * what actually gets built. */
 export default function PytorchExportModal({
   studyId,
-  caseIds,
+  cardId,
+  caseCount,
   onClose,
 }: {
   studyId: string;
-  caseIds: string[];
+  cardId: string;
+  // Only for the "N case(s)" progress copy -- the actual export always
+  // resolves the card's case list server-side (see createPytorchExport),
+  // so this can't drift from what's really exported.
+  caseCount: number;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<"queued" | "running" | "failed" | "completed">("queued");
@@ -78,7 +83,7 @@ export default function PytorchExportModal({
       }
     }
 
-    createPytorchExport(studyId, caseIds)
+    createPytorchExport(studyId, { cardId })
       .then((res) => poll(res.export_id))
       .catch((err) => {
         if (!cancelled) {
@@ -91,7 +96,7 @@ export default function PytorchExportModal({
       cancelled = true;
       if (pollRef.current !== null) window.clearTimeout(pollRef.current);
     };
-  }, [studyId, caseIds]);
+  }, [studyId, cardId]);
 
   function downloadManifest() {
     if (!manifest) return;
@@ -108,9 +113,8 @@ export default function PytorchExportModal({
       <div className="flex flex-col gap-4">
         {(status === "queued" || status === "running") && (
           <p className="hint">
-            Decoding {caseIds.length} case{caseIds.length === 1 ? "" : "s"} into real-HU-value numpy arrays and
-            uploading them -- this can take a while for a large cohort. This window can be closed; the export keeps
-            running.
+            Decoding {caseCount} case{caseCount === 1 ? "" : "s"} into real-HU-value numpy arrays and uploading
+            them -- this can take a while for a large cohort. This window can be closed; the export keeps running.
           </p>
         )}
         {status === "failed" && <p className="alert-error">Export failed: {error}</p>}

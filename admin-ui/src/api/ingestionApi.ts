@@ -40,13 +40,25 @@ export type PytorchExportStatus =
   | { status: "failed"; error: string }
   | { status: "completed"; manifest: PytorchExportManifest };
 
-/** Kicks off an async PyTorch-ready export of the given cases (see
+/** Kicks off an async PyTorch-ready export of a dataset (see
  * services/ingestion-service/app/pytorch_export.py) -- returns
- * immediately with an id to poll via getPytorchExport. */
-export function createPytorchExport(studyId: string, caseIds: string[]): Promise<{ export_id: string; status: string }> {
+ * immediately with an id to poll via getPytorchExport. Pass `cardId` to
+ * name a Dataset card directly (the case list is resolved server-side,
+ * from whatever that card's Manual pick/All cases mode currently holds
+ * in the database -- the source of truth, not whatever the client last
+ * happened to render); pass `caseIds` only when the caller already has
+ * an explicit list with no corresponding card. */
+export function createPytorchExport(
+  studyId: string,
+  target: { cardId: string } | { caseIds: string[] }
+): Promise<{ export_id: string; status: string }> {
   return apiFetch(API.ingestion, "/ingestion/exports", {
     method: "POST",
-    body: JSON.stringify({ study_id: studyId, case_ids: caseIds }),
+    body: JSON.stringify({
+      study_id: studyId,
+      card_id: "cardId" in target ? target.cardId : undefined,
+      case_ids: "caseIds" in target ? target.caseIds : undefined,
+    }),
   });
 }
 
