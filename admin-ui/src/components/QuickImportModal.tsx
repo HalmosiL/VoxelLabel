@@ -36,7 +36,36 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
     // per-file, but filtering the obvious non-candidates here keeps
     // that error list from being dominated by junk.
     const candidates = Array.from(list).filter((f) => !f.name.includes(".") || f.name.toLowerCase().endsWith(".dcm"));
-    setFiles(candidates);
+    // Appended, not replaced: a native folder picker only ever lets you
+    // choose *one* folder per invocation (a real browser limitation, not
+    // fixable from here) -- clicking "Choose folder" again for a second,
+    // third, etc. folder needs to add to the running selection, not
+    // silently throw away everything picked so far. Deduped by name+size
+    // (File has no stable id) so re-picking the same folder twice by
+    // mistake doesn't double the batch.
+    setFiles((prev) => {
+      const seen = new Set(prev.map(fileKey));
+      return [...prev, ...candidates.filter((f) => !seen.has(fileKey(f)))];
+    });
+  }
+
+  function fileKey(f: File): string {
+    return `${(f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name}:${f.size}`;
+  }
+
+  /** Every selected file's top-level source -- the folder name for a
+   * folder-picker/drop selection (via webkitRelativePath), or "Files"
+   * for anything picked through the plain multi-file input, which
+   * carries no path at all. Purely for the "what have I picked so far"
+   * summary below the dropzone. */
+  function groupedSources(list: File[]): { name: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const f of list) {
+      const relPath = (f as File & { webkitRelativePath?: string }).webkitRelativePath;
+      const name = relPath ? relPath.split("/")[0] : "Files";
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return Array.from(counts, ([name, count]) => ({ name, count }));
   }
 
   /** Recursively reads one dropped filesystem entry -- a plain File for a
@@ -136,9 +165,9 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
         {status === "idle" && (
           <>
             <p className="hint">
-              Drop a folder (or select files) of loose DICOM files -- any mix of patients and studies. Each patient
-              is matched or registered automatically, and each distinct study becomes its own Case, titled from its
-              own DICOM tags. No manual case creation needed.
+              Drop one or more folders at once (or select files) of loose DICOM files -- any mix of patients and
+              studies. Each patient is matched or registered automatically, and each distinct study becomes its own
+              Case, titled from its own DICOM tags. No manual case creation needed.
             </p>
             <div
               onDragOver={(e) => {
@@ -151,9 +180,7 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
                 dragOver ? "border-brand-400 bg-brand-50/50" : "border-gray-200"
               }`}
             >
-              <p className="text-sm text-gray-500">
-                {files.length > 0 ? `${files.length} file(s) selected` : "Drag files here"}
-              </p>
+              <p className="text-sm text-gray-500">{files.length > 0 ? `${files.length} file(s) selected` : "Drag files here"}</p>
               <div className="mt-2 flex gap-2">
                 <button type="button" onClick={() => folderInputRef.current?.click()} className="btn-secondary btn-sm">
                   Choose folder
@@ -162,6 +189,10 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
                   Choose files
                 </button>
               </div>
+              <p className="text-xs text-gray-400">
+                A folder picker only takes one folder at a time -- click "Choose folder" again for each additional
+                one, they'll add up.
+              </p>
               <input
                 ref={folderInputRef}
                 type="file"
@@ -172,16 +203,43 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
                 // @ts-expect-error -- not in the DOM typings
                 webkitdirectory=""
                 className="hidden"
-                onChange={(e) => e.target.files && addFiles(e.target.files)}
+                onChange={(e) => {
+                  if (e.target.files) addFiles(e.target.files);
+                  // Reset so picking the exact same folder again still
+                  // fires this handler -- an <input>'s change event
+                  // otherwise won't re-fire when its value doesn't
+                  // actually change.
+                  e.target.value = "";
+                }}
               />
               <input
                 ref={filesInputRef}
                 type="file"
                 multiple
                 className="hidden"
-                onChange={(e) => e.target.files && addFiles(e.target.files)}
+                onChange={(e) => {
+                  if (e.target.files) addFiles(e.target.files);
+                  e.target.value = "";
+                }}
               />
             </div>
+
+            {files.length > 0 && (
+              <div className="flex flex-col gap-1.5 rounded-lg border border-gray-100 p-2.5">
+                {groupedSources(files).map((g) => (
+                  <div key={g.name} className="flex items-center justify-between text-xs text-gray-600">
+                    <span className="truncate">{g.name}</span>
+                    <span className="flex-shrink-0 text-gray-400">
+                      {g.count} file{g.count === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setFiles([])} className="self-start text-xs text-gray-400 underline hover:text-gray-600">
+                  Clear selection
+                </button>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <button type="button" onClick={onClose} className="btn-secondary">
                 Cancel
