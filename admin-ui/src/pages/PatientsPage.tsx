@@ -1,20 +1,25 @@
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { createPatient } from "../api/adminApi";
 import { listPatients, PatientSummary } from "../api/dataApi";
 import EmptyState from "../components/EmptyState";
+import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [showNewPatient, setShowNewPatient] = useState(false);
 
-  useEffect(() => {
+  function refresh() {
     listPatients()
       .then(setPatients)
       .catch((err) => setError(String(err)));
-  }, []);
+  }
+
+  useEffect(refresh, []);
 
   const filtered = patients.filter((p) => p.pseudonym_id.toLowerCase().includes(search.trim().toLowerCase()));
 
@@ -26,15 +31,31 @@ export default function PatientsPage() {
       />
       {error && <p className="alert-error">{error}</p>}
 
-      <label className="field w-80">
-        <span className="label">Search by patient ID</span>
-        <input
-          className="input"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Paste or type a patient pseudonym ID…"
+      <div className="flex items-end justify-between gap-4">
+        <label className="field w-80">
+          <span className="label">Search by patient ID</span>
+          <input
+            className="input"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Paste or type a patient pseudonym ID…"
+          />
+        </label>
+        <button onClick={() => setShowNewPatient(true)} className="btn-primary self-end">
+          New patient
+        </button>
+      </div>
+
+      {showNewPatient && (
+        <NewPatientModal
+          onClose={() => setShowNewPatient(false)}
+          onCreated={() => {
+            setShowNewPatient(false);
+            refresh();
+          }}
+          onError={setError}
         />
-      </label>
+      )}
 
       <div className="table-wrap">
         <table>
@@ -52,7 +73,7 @@ export default function PatientsPage() {
                   <EmptyState
                     message={
                       patients.length === 0
-                        ? "No patients yet -- create a case to add one."
+                        ? "No patients yet -- create one directly, or add a case to register one."
                         : "No patients match your search."
                     }
                   />
@@ -80,6 +101,62 @@ export default function PatientsPage() {
         </table>
       </div>
     </div>
+  );
+}
+
+function NewPatientModal({
+  onClose,
+  onCreated,
+  onError,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [externalPatientId, setExternalPatientId] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await createPatient(externalPatientId.trim());
+      onCreated();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="New patient" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <p className="hint">
+          Register a patient before they have any case or imaging data yet. Their real identifier is pseudonymized
+          immediately and never stored in the clear -- the same identifier used later when creating a case for them
+          resolves back to this same patient, not a duplicate.
+        </p>
+        <label className="field">
+          <span className="label">Patient identifier (e.g. MRN)</span>
+          <input
+            className="input"
+            value={externalPatientId}
+            onChange={(e) => setExternalPatientId(e.target.value)}
+            autoFocus
+            required
+          />
+        </label>
+        <div className="mt-2 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-secondary">
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary" disabled={saving || !externalPatientId.trim()}>
+            {saving ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

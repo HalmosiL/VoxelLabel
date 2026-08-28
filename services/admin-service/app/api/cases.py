@@ -16,6 +16,7 @@ from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap
 
 from app.api.imaging import _delete_instance
+from app.api.studies import _require_global_admin
 from app.api.workflow import _cascade_new_case
 from app.storage import delete_object
 
@@ -39,6 +40,29 @@ def _get_or_create_patient(db: Session, external_patient_id: str) -> Patient:
     db.flush()
     db.add(PatientIdentityMap(patient_id=patient.id, external_id_hash=external_id_hash))
     return patient
+
+
+@router.post("/patients")
+def create_patient(
+    external_patient_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Registers a patient from their real-world identifier (e.g. an MRN)
+    with no case yet -- for pre-registering someone before their first
+    study/case exists. Reuses the exact same pseudonymization path
+    (_get_or_create_patient) case-creation already goes through, so a
+    patient registered here and later referenced with the same
+    external_patient_id at case-creation time resolves to this same
+    pseudonym instead of a duplicate.
+
+    Global admin only, same as the cross-study Patients list/profile
+    pages (GET /data/patients) -- a patient with no case yet has no
+    study to scope an ordinary study-role check against."""
+    _require_global_admin(user)
+    patient = _get_or_create_patient(db, external_patient_id)
+    db.commit()
+    return {"id": str(patient.id), "pseudonym_id": patient.pseudonym_id}
 
 
 @router.post("/studies/{study_id}/cases")

@@ -65,6 +65,15 @@ export function createStudy(name: string, description: string): Promise<{ id: st
   return apiFetch(base, `/admin/studies?${qs}`, { method: "POST" });
 }
 
+/** Registers a patient from a real-world identifier (e.g. an MRN) with
+ * no case yet -- for pre-registering someone before their first study/
+ * case exists. The same identifier used later at case-creation time
+ * resolves back to this same pseudonymized patient, not a duplicate. */
+export function createPatient(externalPatientId: string): Promise<{ id: string; pseudonym_id: string }> {
+  const qs = new URLSearchParams({ external_patient_id: externalPatientId });
+  return apiFetch(base, `/admin/patients?${qs}`, { method: "POST" });
+}
+
 export function updateStudy(
   studyId: string,
   name: string,
