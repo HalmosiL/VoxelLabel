@@ -51,6 +51,11 @@ export default function CaseDetailPage() {
   const [caseInfo, setCaseInfo] = useState<CaseSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  // Bumped after a DICOM upload so the Series section (a sibling
+  // component with its own independent fetch, no other way to hear
+  // about an upload that happened inside ImagingStudiesSection) knows
+  // to refetch too -- see ImagingStudiesSection's own onUploaded call.
+  const [imagingRefreshSignal, setImagingRefreshSignal] = useState(0);
 
   function refreshCase() {
     if (caseId) getCase(caseId).then(setCaseInfo).catch((err) => setError(String(err)));
@@ -66,8 +71,8 @@ export default function CaseDetailPage() {
 
       <CaseInfoCard caseInfo={caseInfo} onEdit={() => setEditModalOpen(true)} />
       <CommentBox caseId={caseId} initialComment={caseInfo.comment} onSaved={refreshCase} />
-      <ImagingStudiesSection caseId={caseId} />
-      <SeriesSection caseId={caseId} studyId={caseInfo.study_id} jobId={jobId} />
+      <ImagingStudiesSection caseId={caseId} onUploaded={() => setImagingRefreshSignal((n) => n + 1)} />
+      <SeriesSection caseId={caseId} studyId={caseInfo.study_id} jobId={jobId} refreshSignal={imagingRefreshSignal} />
       <DocumentsSection caseId={caseId} />
 
       {editModalOpen && (
@@ -228,7 +233,7 @@ function CommentBox({ caseId, initialComment, onSaved }: { caseId: string; initi
   );
 }
 
-function ImagingStudiesSection({ caseId }: { caseId: string }) {
+function ImagingStudiesSection({ caseId, onUploaded }: { caseId: string; onUploaded: () => void }) {
   const [imagingStudies, setImagingStudies] = useState<ImagingStudy[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
@@ -246,7 +251,23 @@ function ImagingStudiesSection({ caseId }: { caseId: string }) {
     setUploadStatus("Uploading…");
     try {
       const result = await uploadDicom(caseId, file);
-      setUploadStatus(`Queued as job ${result.job_id}. Refresh in a moment to see it.`);
+      setUploadStatus(`Queued as job ${result.job_id}. Processing…`);
+      // Ingestion runs async in a Celery worker -- there's no job-status
+      // endpoint for this legacy single-file path (unlike quick-import)
+      // to poll, so this refreshes a couple of times on a delay instead
+      // of making the user remember to hit Refresh themselves. Local
+      // ingestion has consistently finished in well under a second all
+      // session; two attempts a few seconds apart give real margin
+      // without a full polling mechanism.
+      window.setTimeout(() => {
+        refresh();
+        onUploaded();
+      }, 1500);
+      window.setTimeout(() => {
+        refresh();
+        onUploaded();
+        setUploadStatus(null);
+      }, 4000);
     } catch (err) {
       setUploadStatus(null);
       setError(String(err));
@@ -307,7 +328,20 @@ function ImagingStudiesSection({ caseId }: { caseId: string }) {
   );
 }
 
-function SeriesSection({ caseId, studyId, jobId }: { caseId: string; studyId: string; jobId: string | null }) {
+function SeriesSection({
+  caseId,
+  studyId,
+  jobId,
+  refreshSignal,
+}: {
+  caseId: string;
+  studyId: string;
+  jobId: string | null;
+  // Bumped by the parent after a DICOM upload -- this section has no
+  // other way to learn that ImagingStudiesSection (a sibling, its own
+  // independent fetch) just added new imaging whose series belong here.
+  refreshSignal: number;
+}) {
   const [series, setSeries] = useState<CaseSeries[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [openSeriesId, setOpenSeriesId] = useState<string | null>(null);
@@ -316,11 +350,11 @@ function SeriesSection({ caseId, studyId, jobId }: { caseId: string; studyId: st
     listCaseSeries(caseId).then(setSeries).catch((err) => setError(String(err)));
   }
 
-  useEffect(refresh, [caseId]);
+  useEffect(refresh, [caseId, refreshSignal]);
 
   return (
     <div className="card">
-      <SectionHeader title="Series" />
+      <SectionHeader title="Series" action={<button onClick={refresh} className="btn-secondary btn-sm">Refresh</button>} />
       {error && <p className="alert-error mt-3">{error}</p>}
 
       {series.length === 0 ? (
