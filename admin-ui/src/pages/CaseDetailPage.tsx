@@ -418,7 +418,7 @@ function SeriesInstancesModal({
   }
 
   return (
-    <Modal title="Series instances" onClose={onClose}>
+    <Modal title="Series instances" onClose={onClose} maxWidthClassName="max-w-3xl">
       <div className="flex flex-col gap-4">
         {error && <p className="alert-error">{error}</p>}
 
@@ -435,17 +435,16 @@ function SeriesInstancesModal({
         <p className="hint">
           {instances.length} instance{instances.length === 1 ? "" : "s"} in this series.
         </p>
-        <div className="flex max-h-96 flex-col gap-2 overflow-y-auto">
-          {instances.length === 0 && <p className="hint">No instances.</p>}
+        {instances.length === 0 && <EmptyState message="No instances." />}
+        <div className="grid max-h-96 grid-cols-2 gap-4 overflow-y-auto sm:grid-cols-3 md:grid-cols-4">
           {instances.map((i) => (
-            <div key={i.id} className="flex items-center gap-3 rounded-lg border border-gray-100 p-2">
-              <div className="h-12 w-12 flex-shrink-0">
-                <Thumbnail url={i.thumbnail_url} />
-              </div>
-              <div className="flex-1 truncate text-xs text-gray-600">
-                #{i.instance_number ?? "?"} {i.sop_instance_uid}
-              </div>
-              <button onClick={() => openPixelData(i.id)} className="btn-secondary btn-sm flex-shrink-0">
+            <div key={i.id}>
+              <Thumbnail url={i.thumbnail_url} label={`#${i.instance_number ?? "?"}`} />
+              <p className="mt-1.5 truncate text-xs font-medium text-gray-700">#{i.instance_number ?? "?"}</p>
+              <p className="truncate text-xs text-gray-400" title={i.sop_instance_uid}>
+                {i.sop_instance_uid}
+              </p>
+              <button onClick={() => openPixelData(i.id)} className="btn-secondary btn-sm mt-1.5 w-full">
                 Download
               </button>
             </div>
