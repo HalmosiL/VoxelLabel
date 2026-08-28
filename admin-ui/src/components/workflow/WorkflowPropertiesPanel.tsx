@@ -250,6 +250,17 @@ function DatasetFields({
     if (next === "manual") {
       onPatch(card.id, { config: { mode: "manual", case_ids: Array.from(manualIds) } });
     } else {
+      // Switching away from a real Manual pick selection is easy to click
+      // by accident, and immediately overwrites this card's saved case
+      // list (e.g. what Export for PyTorch or Run would use) with "every
+      // case in the study" -- confirm first rather than silently
+      // discarding a curated selection.
+      if (mode === "manual" && manualIds.size > 0) {
+        const ok = window.confirm(
+          `Switch to "All cases"? This replaces your ${manualIds.size}-case manual selection with every case in the study.`
+        );
+        if (!ok) return;
+      }
       onPatch(card.id, { config: { mode: "all_cases" } });
     }
   }
