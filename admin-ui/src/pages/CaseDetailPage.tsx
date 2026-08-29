@@ -35,11 +35,13 @@ import { DocumentIcon, PencilIcon } from "../components/icons";
 /** Appends `&jobId=<id>` when this Case page was reached via a My Jobs
  * link -- lets ct-annotator fetch and enforce that job's Surface-card
  * restriction. Absent (a plain visit) means an unrestricted viewer.
- * Also passes this Case page's own URL as `returnUrl`, so the viewer's
- * "Back" arrow (opened in a new tab, so there's no browser history to
- * go back to) can return here instead of to ct-annotator's own picker. */
-function viewerUrl(seriesId: string, studyId: string, jobId: string | null): string {
-  const url = `${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}`;
+ * Also passes `caseId` (this case's own id -- lets the viewer's Prev/
+ * Next case arrows find their place in the job's case list) and this
+ * Case page's own URL as `returnUrl`, so the viewer's "Back" arrow
+ * (opened in a new tab, so there's no browser history to go back to)
+ * can return here instead of to ct-annotator's own picker. */
+function viewerUrl(seriesId: string, studyId: string, caseId: string, jobId: string | null): string {
+  const url = `${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}&caseId=${caseId}`;
   const withJob = jobId ? `${url}&jobId=${jobId}` : url;
   return `${withJob}&returnUrl=${encodeURIComponent(window.location.href)}`;
 }
@@ -374,7 +376,7 @@ function SeriesSection({
                 </p>
               </button>
               <a
-                href={viewerUrl(s.id, studyId, jobId)}
+                href={viewerUrl(s.id, studyId, caseId, jobId)}
                 target="_blank"
                 rel="noreferrer"
                 className="btn-secondary btn-sm mt-1.5 block w-full text-center"
@@ -391,6 +393,7 @@ function SeriesSection({
           seriesId={openSeriesId}
           series={series.find((s) => s.id === openSeriesId) ?? null}
           studyId={studyId}
+          caseId={caseId}
           jobId={jobId}
           onClose={() => setOpenSeriesId(null)}
           onChanged={() => {
@@ -407,6 +410,7 @@ function SeriesInstancesModal({
   seriesId,
   series,
   studyId,
+  caseId,
   jobId,
   onClose,
   onChanged,
@@ -414,6 +418,7 @@ function SeriesInstancesModal({
   seriesId: string;
   series: CaseSeries | null;
   studyId: string;
+  caseId: string;
   jobId: string | null;
   onClose: () => void;
   onChanged: () => void;
@@ -486,7 +491,7 @@ function SeriesInstancesModal({
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
-          <a href={viewerUrl(seriesId, studyId, jobId)} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+          <a href={viewerUrl(seriesId, studyId, caseId, jobId)} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
             Open in Viewer
           </a>
           <button onClick={handleDelete} className="btn-danger btn-sm">
