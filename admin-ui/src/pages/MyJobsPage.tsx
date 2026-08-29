@@ -23,23 +23,30 @@ export default function MyJobsPage() {
   // case waiting on them -- the assignment itself never goes away, but
   // a job with nothing pending has nothing to show for right now, so it
   // drops out of the active list rather than sitting there as dead
-  // weight. It reappears the moment a case lands back in its scope
-  // (e.g. a rejected case fed back through the workflow board's
-  // feedback loop) -- unless the assignee manually marks it "Done"
-  // again afterward, which always wins: that's a deliberate, explicit
-  // "I'm not touching this anymore" from the person doing the work, so
-  // it's respected even over a case sitting there rejected. Short of
-  // that override, what counts as "pending" depends on the job type:
-  // for a Review card, a "rejected" case is already decided -- the
-  // reviewer made their call, and it's now the annotator's case to
-  // redo, not theirs to keep watching -- so only a still-undecided
-  // "pending" case keeps a Review job active. For an Annotation card,
-  // "rejected" means the annotator has work to do again, so it keeps
-  // that job active the same as an untouched case would.
-  const needsAttention = (job: MyJob) => {
-    if (job.status === "done") return false;
-    return job.cases.some((c) => (job.card_type === "review" ? c.status === "pending" : c.status !== "done"));
-  };
+  // weight.
+  //
+  // A manual "Done" is deliberately NOT an absolute override here, even
+  // though it reads that way: this is exactly what makes the workflow
+  // board's feedback loop (a Review card's "(rejected)" branch wired
+  // back into an Annotation card's input) actually visible again once
+  // it fires. If Done silently beat a real rejected/pending case, an
+  // annotator who'd already marked their job Done would never see it
+  // reappear when the reviewer sends a case back -- the loop would
+  // exist on the board but do nothing anyone would notice. So Done only
+  // suppresses a job that genuinely has nothing outstanding; a job with
+  // real pending work always shows regardless of what its status badge
+  // says (that badge itself becomes stale the moment new work lands --
+  // it isn't corrected here, just no longer trusted for hiding).
+  //
+  // What counts as real pending work depends on the job type: for a
+  // Review card, a "rejected" case is already decided -- the reviewer
+  // made their call, and it's now the annotator's case to redo, not
+  // theirs to keep watching -- so only a still-undecided "pending" case
+  // keeps a Review job active. For an Annotation card, "rejected" means
+  // the annotator has work to do again, so it keeps that job active the
+  // same as an untouched case would.
+  const needsAttention = (job: MyJob) =>
+    job.cases.some((c) => (job.card_type === "review" ? c.status === "pending" : c.status !== "done"));
   const pending = jobs?.filter(needsAttention) ?? null;
   const sorted = pending
     ? [...pending].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99))
