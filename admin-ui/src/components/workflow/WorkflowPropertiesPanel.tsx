@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { KeycloakUser } from "../../api/adminApi";
 import { CaseSummary } from "../../api/dataApi";
 import { SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
+import { TrashIcon } from "../icons";
 import { RUNNABLE_TYPES } from "./handleRules";
 import PytorchExportModal from "./PytorchExportModal";
 import { TASK_STATUS_STYLE } from "./statusStyle";
@@ -732,6 +733,16 @@ const SURFACE_PANE_OPTIONS: { value: string; label: string }[] = [
   { value: "coronal", label: "Coronal" },
 ];
 
+// Same 8-color rotation ct-annotator's own "New label" input auto-assigns
+// from, so a label pre-defined here looks exactly like one an annotator
+// would have created themselves.
+const SURFACE_LABEL_COLOR_PALETTE = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
+
+interface SurfaceLabel {
+  name: string;
+  color: string;
+}
+
 function AnnotationSurfaceFields({
   card,
   onPatch,
@@ -742,6 +753,8 @@ function AnnotationSurfaceFields({
   const tools = new Set((card.config.tools as string[] | undefined) ?? []);
   const panes = new Set((card.config.panes as string[] | undefined) ?? []);
   const show3d = card.config.show_3d !== false;
+  const surfaceLabels = (card.config.labels as SurfaceLabel[] | undefined) ?? [];
+  const [newLabelName, setNewLabelName] = useState("");
 
   function toggleTool(value: string) {
     const next = new Set(tools);
@@ -755,6 +768,24 @@ function AnnotationSurfaceFields({
     if (next.has(value)) next.delete(value);
     else next.add(value);
     onPatch(card.id, { config: { ...card.config, panes: Array.from(next) } });
+  }
+
+  function addSurfaceLabel(event: FormEvent) {
+    event.preventDefault();
+    const name = newLabelName.trim();
+    if (!name) return;
+    const color = SURFACE_LABEL_COLOR_PALETTE[surfaceLabels.length % SURFACE_LABEL_COLOR_PALETTE.length];
+    onPatch(card.id, { config: { ...card.config, labels: [...surfaceLabels, { name, color }] } });
+    setNewLabelName("");
+  }
+
+  function recolorSurfaceLabel(index: number, color: string) {
+    const next = surfaceLabels.map((l, i) => (i === index ? { ...l, color } : l));
+    onPatch(card.id, { config: { ...card.config, labels: next } });
+  }
+
+  function removeSurfaceLabel(index: number) {
+    onPatch(card.id, { config: { ...card.config, labels: surfaceLabels.filter((_, i) => i !== index) } });
   }
 
   return (
@@ -789,6 +820,44 @@ function AnnotationSurfaceFields({
         />
         3D view
       </label>
+      <div className="flex flex-col gap-1.5 border-t border-gray-100 pt-3">
+        <span className="label">Pre-defined labels</span>
+        <p className="hint">
+          Every annotator on this job starts with these labels already there (e.g. "Nodule") -- they just add
+          instances under them while annotating, instead of each typing their own label name. Only applies to a
+          series with no saved annotation yet.
+        </p>
+        {surfaceLabels.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {surfaceLabels.map((l, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={l.color}
+                  onChange={(e) => recolorSurfaceLabel(i, e.target.value)}
+                  className="h-5 w-5 flex-shrink-0 cursor-pointer rounded border-none bg-transparent p-0"
+                  title="Change color"
+                />
+                <span className="flex-1 truncate text-xs text-gray-700">{l.name}</span>
+                <button onClick={() => removeSurfaceLabel(i)} className="text-gray-400 hover:text-red-600" title="Remove label">
+                  <TrashIcon className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form onSubmit={addSurfaceLabel} className="flex gap-1.5">
+          <input
+            className="input flex-1"
+            value={newLabelName}
+            onChange={(e) => setNewLabelName(e.target.value)}
+            placeholder="e.g. Nodule"
+          />
+          <button type="submit" className="btn-secondary btn-sm" disabled={!newLabelName.trim()}>
+            Add
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

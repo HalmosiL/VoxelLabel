@@ -117,6 +117,14 @@ _UNRESTRICTED_SURFACE_CONFIG = {
     "tools": ["paint", "erase", "fill", "polygon", "auto", "histogram"],
     "panes": ["sagittal", "coronal", "axial"],
     "show_3d": True,
+    # No pre-defined labels by default -- an annotator types their own
+    # "New label" name in ct-annotator, exactly as before this field
+    # existed. An Annotation Surface can pre-populate this list (e.g.
+    # "Nodule") so every annotator on a study creates instances under
+    # the same, consistently-named/colored label instead of each typing
+    # their own. Review jobs never see labels (nothing to paint), so
+    # this is never forced/overridden the way tools/show_3d are below.
+    "labels": [],
 }
 
 
@@ -646,7 +654,19 @@ def get_surface_config(
     reviewMode), so a REVIEW_SURFACE card only ever configures `panes`.
     This keeps the response shape identical for both job types, so
     ct-annotator's own SurfaceConfig handling doesn't need to know which
-    kind of Surface card produced it.
+    kind of Surface card produced it. `labels` is never forced off for a
+    Review job the way tools/show_3d are -- it's simply whatever the
+    Surface card holds (empty for a REVIEW_SURFACE, since one is never
+    given a reason to set it), harmless either way since Review has no
+    painting tools to create instances with regardless.
+
+    `labels` ([{name, color}, ...]) lets an Annotation Surface
+    pre-populate ct-annotator's own label list (see ViewerPage's
+    segmentation-volume-loading effect) so every annotator on a study
+    creates instances under the same, consistently-named/colored label
+    (e.g. "Nodule") instead of each typing their own -- only applied
+    when a series has no saved labels yet, never overwriting an
+    annotator's own already-in-progress work.
 
     `card_type` (the underlying job's own type, "annotation" or
     "review") rides along in every response so ct-annotator can tell a
@@ -668,6 +688,7 @@ def get_surface_config(
             "tools": surface.config.get("tools", _UNRESTRICTED_SURFACE_CONFIG["tools"]),
             "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
             "show_3d": surface.config.get("show_3d", True),
+            "labels": surface.config.get("labels", []),
         }
 
     if is_review:
