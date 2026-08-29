@@ -25,17 +25,21 @@ export default function MyJobsPage() {
   // drops out of the active list rather than sitting there as dead
   // weight. It reappears the moment a case lands back in its scope
   // (e.g. a rejected case fed back through the workflow board's
-  // feedback loop).
-  //
-  // What counts as "pending" depends on the job type, though: for a
-  // Review card, a "rejected" case is already decided -- the reviewer
-  // made their call, and it's now the annotator's case to redo, not
-  // theirs to keep watching -- so only a still-undecided "pending" case
-  // keeps a Review job active. For an Annotation card, "rejected" means
-  // the annotator has work to do again, so it keeps that job active the
-  // same as an untouched case would.
-  const needsAttention = (job: MyJob) =>
-    job.cases.some((c) => (job.card_type === "review" ? c.status === "pending" : c.status !== "done"));
+  // feedback loop) -- unless the assignee manually marks it "Done"
+  // again afterward, which always wins: that's a deliberate, explicit
+  // "I'm not touching this anymore" from the person doing the work, so
+  // it's respected even over a case sitting there rejected. Short of
+  // that override, what counts as "pending" depends on the job type:
+  // for a Review card, a "rejected" case is already decided -- the
+  // reviewer made their call, and it's now the annotator's case to
+  // redo, not theirs to keep watching -- so only a still-undecided
+  // "pending" case keeps a Review job active. For an Annotation card,
+  // "rejected" means the annotator has work to do again, so it keeps
+  // that job active the same as an untouched case would.
+  const needsAttention = (job: MyJob) => {
+    if (job.status === "done") return false;
+    return job.cases.some((c) => (job.card_type === "review" ? c.status === "pending" : c.status !== "done"));
+  };
   const pending = jobs?.filter(needsAttention) ?? null;
   const sorted = pending
     ? [...pending].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99))
