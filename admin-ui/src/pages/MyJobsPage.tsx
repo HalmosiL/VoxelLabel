@@ -21,13 +21,22 @@ export default function MyJobsPage() {
 
   // A job only needs the assignee's attention while it actually has a
   // case waiting on them -- the assignment itself never goes away, but
-  // a job with nothing pending (everything in its scope already
-  // annotated/reviewed, or nothing in scope yet) has nothing to show
-  // for right now, so it drops out of the active list rather than
-  // sitting there as dead weight. It reappears the moment a case lands
-  // back in its scope (e.g. a rejected case fed back through the
-  // workflow board's feedback loop).
-  const pending = jobs?.filter((job) => job.cases.some((c) => c.status !== "done")) ?? null;
+  // a job with nothing pending has nothing to show for right now, so it
+  // drops out of the active list rather than sitting there as dead
+  // weight. It reappears the moment a case lands back in its scope
+  // (e.g. a rejected case fed back through the workflow board's
+  // feedback loop).
+  //
+  // What counts as "pending" depends on the job type, though: for a
+  // Review card, a "rejected" case is already decided -- the reviewer
+  // made their call, and it's now the annotator's case to redo, not
+  // theirs to keep watching -- so only a still-undecided "pending" case
+  // keeps a Review job active. For an Annotation card, "rejected" means
+  // the annotator has work to do again, so it keeps that job active the
+  // same as an untouched case would.
+  const needsAttention = (job: MyJob) =>
+    job.cases.some((c) => (job.card_type === "review" ? c.status === "pending" : c.status !== "done"));
+  const pending = jobs?.filter(needsAttention) ?? null;
   const sorted = pending
     ? [...pending].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99))
     : null;
