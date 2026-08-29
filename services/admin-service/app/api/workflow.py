@@ -373,8 +373,9 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         "stale": stale,
     }
     if card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW) and output_case_ids:
+        is_review = card.type == WorkflowCardType.REVIEW
         result["annotation_progress"] = _annotation_progress(
-            db, output_case_ids, review=card.type == WorkflowCardType.REVIEW, since=card.created_at
+            db, output_case_ids, review=is_review, since=None if is_review else card.created_at
         )
 
     if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.REVIEW, WorkflowCardType.LLM, WorkflowCardType.CRITERION):
@@ -771,7 +772,15 @@ def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
         return []
     cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
     review = card.type == WorkflowCardType.REVIEW
-    latest_per_case = _latest_annotation_per_case(db, case_ids, since=card.created_at)
+    # A Review card's whole job is to consume an upstream Annotation
+    # card's already-submitted work -- which by definition predates this
+    # Review card's own creation -- so the "since" cutoff (see
+    # `_latest_annotation_per_case`'s docstring) must not apply here, or
+    # every case a Review card is wired to right after Annotation
+    # finished would show as never annotated. It stays for Annotation,
+    # where it protects against a *different* new card of the same type
+    # falsely taking credit for unrelated old work on a shared case pool.
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at)
 
     result = []
     for c in cases:
@@ -1303,9 +1312,14 @@ def _run_one_card(db: Session, card: WorkflowCard) -> None:
         # to exist immediately -- there's no meaningful "Review without
         # its own decision outputs" the way there is for Annotation.
         existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
+        # No `since` cutoff here (unlike Annotation's own materialize_dataset
+        # branch, below) -- a decision made on a case is a decision made,
+        # regardless of whether it happened before or after this Review
+        # card was wired in. See the comment in _cases_with_annotated_status
+        # for why Review can't use its own created_at as a cutoff at all.
         branches = {
-            "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED], since=card.created_at),
-            "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED], since=card.created_at),
+            "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED]),
+            "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED]),
         }
         for index, (handle, case_ids) in enumerate(branches.items()):
             title = f"{card.title} ({handle})"
