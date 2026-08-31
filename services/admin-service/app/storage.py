@@ -38,6 +38,16 @@ def upload_clinical_data_file(storage_key: str, data: bytes) -> None:
     # under (see create_clinical_data_item); None (can't guess, or no
     # extension) falls back to boto3's own default, same as before.
     content_type, _ = mimetypes.guess_type(storage_key)
+    # A bare "text/plain" with no charset leaves the browser to guess
+    # the encoding when rendering it inline (ct-annotator's Documents
+    # panel does exactly that, in an <iframe>) -- files created by this
+    # platform are always written as UTF-8 (every upload here comes
+    # through Python's own text handling, never a raw byte-for-byte
+    # passthrough of some other tool's output), so declaring it avoids
+    # non-ASCII text (e.g. Hungarian accented characters) rendering as
+    # mojibake purely because the browser guessed Latin-1 instead.
+    if content_type == "text/plain":
+        content_type = "text/plain; charset=utf-8"
     extra_args = {"ContentType": content_type} if content_type else {}
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data, **extra_args)
 
