@@ -159,40 +159,27 @@ def update_case(
     }
 
 
-@router.delete("/cases/{case_id}", status_code=204)
-def delete_case(
-    case_id: str,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-) -> None:
-    """Deletes a case and everything under it: imaging studies -> series
-    -> instances (cascaded the same way delete_imaging_study already
-    does, reusing its own _delete_instance so pixel data/thumbnails in
-    object storage get cleaned up too) and clinical data items. Not the
-    "still has data, remove first" guard delete_study uses for its
-    cases -- that guard exists specifically so removing the *sensitive
-    data itself* stays a deliberate, separate action from deleting the
-    organizational Study container around it; a case IS that data, so
-    cascading here (behind its own explicit delete + confirm dialog on
-    the frontend) is that separate, deliberate action.
+def _delete_case_cascade(db: Session, case: Case) -> None:
+    """Deletes everything under a case: imaging studies -> series ->
+    instances (cascaded the same way delete_imaging_study already does,
+    reusing its own _delete_instance so pixel data/thumbnails in object
+    storage get cleaned up too), clinical data items, and the case row
+    itself. Does not commit -- shared by delete_case (one case, its own
+    commit) and delete_study's force-delete (many cases, one commit for
+    the whole batch plus the study row).
 
     Any case_id left dangling in a workflow card's manual case list or
     output_case_ids is not cleaned up -- board scratch space already
     tolerates staleness the same way elsewhere (see
     delete_workflow_card's own docstring)."""
-    case = db.get(Case, case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
-
-    for imaging_study in db.query(ImagingStudy).filter_by(case_id=case_id).all():
+    for imaging_study in db.query(ImagingStudy).filter_by(case_id=case.id).all():
         for series in imaging_study.series:
             for instance in series.instances:
                 _delete_instance(db, instance)
             db.delete(series)
         db.delete(imaging_study)
 
-    for item in db.query(ClinicalDataItem).filter_by(case_id=case_id).all():
+    for item in db.query(ClinicalDataItem).filter_by(case_id=case.id).all():
         if item.object_storage_key:
             delete_object(item.object_storage_key)
         for tag in item.tags:
@@ -202,4 +189,26 @@ def delete_case(
         db.delete(item)
 
     db.delete(case)
+
+
+@router.delete("/cases/{case_id}", status_code=204)
+def delete_case(
+    case_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Deletes a case and everything under it (see _delete_case_cascade).
+    Not the "still has data, remove first" guard delete_study uses for
+    its cases -- that guard exists specifically so removing the
+    *sensitive data itself* stays a deliberate, separate action from
+    deleting the organizational Study container around it; a case IS
+    that data, so cascading here (behind its own explicit delete +
+    confirm dialog on the frontend) is that separate, deliberate
+    action."""
+    case = db.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
+
+    _delete_case_cascade(db, case)
     db.commit()

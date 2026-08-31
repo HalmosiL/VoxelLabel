@@ -9,6 +9,7 @@ import {
   updateStudy,
   uploadStudyCoverImage,
 } from "../api/adminApi";
+import { ApiError } from "../api/client";
 import Modal from "../components/Modal";
 
 type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | null;
@@ -31,8 +32,32 @@ export default function StudiesPage() {
     try {
       await deleteStudy(study.id);
       refresh();
+      return;
     } catch (err) {
-      setError(String(err));
+      if (!(err instanceof ApiError) || err.status !== 409) {
+        setError(String(err));
+        return;
+      }
+      // Study still has cases -- deleteStudy's own 409 message already
+      // says how many. Force-deleting is a second, explicit confirm (on
+      // top of the one above) since it's no longer just the study
+      // container being removed -- every case's real imaging data and
+      // documents go with it.
+      let detail = err.body;
+      try {
+        detail = JSON.parse(err.body).detail ?? detail;
+      } catch {
+        // Not JSON -- show the raw body as-is.
+      }
+      if (!window.confirm(`${detail}\n\nDelete the study AND all its cases (imaging data, documents, everything)? This cannot be undone.`)) {
+        return;
+      }
+      try {
+        await deleteStudy(study.id, true);
+        refresh();
+      } catch (err2) {
+        setError(String(err2));
+      }
     }
   }
 

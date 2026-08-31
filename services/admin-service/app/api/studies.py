@@ -100,25 +100,43 @@ def update_study(
 @router.delete("/{study_id}", status_code=204)
 def delete_study(
     study_id: str,
+    force: bool = False,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> None:
     """Deletes a study and its membership grants. Refuses to delete a
-    study that still has cases -- cases carry real (pseudonymized)
-    patient data, so removing them has to be a deliberate, separate
-    action, not a side effect of deleting the study they're grouped
-    under."""
+    study that still has cases unless `force=true` is explicitly passed
+    -- cases carry real (pseudonymized) patient data, so removing them
+    has to be a deliberate action the caller opted into, not a silent
+    side effect of deleting the study they're grouped under. With
+    `force`, cascades the exact same per-case delete cases.py's own
+    delete_case uses (imaging studies/series/instances, clinical data
+    items, all with their object-storage cleanup) across every case in
+    the study, then the study itself, as one transaction.
+
+    Imported from cases.py inside the function body, not at module
+    load time: cases.py already imports _require_global_admin from
+    this module, so importing back from cases.py up here would be a
+    circular import at load time -- by the time this function actually
+    runs, both modules are fully loaded, so the import just works."""
     _require_global_admin(user)
     study = db.get(Study, study_id)
     if study is None:
         raise HTTPException(status_code=404, detail="Study not found")
 
-    case_count = db.query(Case).filter_by(study_id=study_id).count()
-    if case_count > 0:
+    cases = db.query(Case).filter_by(study_id=study_id).all()
+    if cases and not force:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot delete: this study still has {case_count} case(s). Remove them first.",
+            detail=f"Cannot delete: this study still has {len(cases)} case(s). Remove them first, "
+            "or delete with force to remove them along with the study.",
         )
+
+    if cases:
+        from app.api.cases import _delete_case_cascade
+
+        for case in cases:
+            _delete_case_cascade(db, case)
 
     db.query(StudyMembership).filter_by(study_id=study_id).delete()
     db.delete(study)

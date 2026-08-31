@@ -83,8 +83,12 @@ export function updateStudy(
   return apiFetch(base, `/admin/studies/${studyId}?${qs}`, { method: "PATCH" });
 }
 
-export function deleteStudy(studyId: string): Promise<void> {
-  return apiFetch(base, `/admin/studies/${studyId}`, { method: "DELETE" });
+/** Refused with a 409 (case count in the message) if the study still
+ * has cases, unless `force` -- which cascades the exact same delete
+ * each case's own "Delete case" action does (imaging data, clinical
+ * documents, everything) across all of them, then the study itself. */
+export function deleteStudy(studyId: string, force = false): Promise<void> {
+  return apiFetch(base, `/admin/studies/${studyId}${force ? "?force=true" : ""}`, { method: "DELETE" });
 }
 
 export function uploadStudyCoverImage(studyId: string, file: File): Promise<{ id: string; cover_image_url: string }> {
