@@ -130,15 +130,29 @@
 
 /* React Flow's own default connection handles (the small dots on each
    workflow card) render at ~6x6px -- fine to look at, fiddly to
-   actually grab and drag an edge from. Sized up here globally (not per
-   node type -- every card's Handle already goes through this same
-   .react-flow__handle class) rather than overridden per Handle, so
-   every card's connectors grow consistently, including any added
-   later. Outside the @layer blocks above since this targets a
+   actually grab and drag an edge from. Rather than just growing the
+   visible dot (tried first, still felt fiddly, and starts looking
+   heavy once several sit close together on one card edge), the dot
+   stays modest and an invisible ::before pseudo-element extends the
+   real clickable/draggable area well past it -- the same "small target,
+   big hit zone" trick most node editors (Figma, Blender, n8n, ...) use.
+   Global, not per node type, since every card's Handle already goes
+   through this one shared class -- any card type added later gets it
+   for free. Outside the @layer blocks above since this targets a
    third-party library class, not a Tailwind component of this app's
-   own. */
+   own. Needs WorkflowNodeShell's card div to NOT clip overflow, or the
+   part of this hit-zone sticking out past the card edge -- exactly the
+   point of it -- would be cut off; see that component's own comment. */
 .react-flow__handle {
-  width: 12px;
-  height: 12px;
-  border-width: 2px;
+  width: 8px;
+  height: 8px;
+}
+.react-flow__handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
 }

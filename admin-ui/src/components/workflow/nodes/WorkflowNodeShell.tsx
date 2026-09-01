@@ -23,7 +23,14 @@ export default function WorkflowNodeShell({
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={200} minHeight={70} />
-      <div className={`card relative h-full w-full overflow-hidden !p-3 ${selected ? "ring-2 ring-brand-500" : ""}`}>
+      {/* No overflow-hidden here (on purpose, unlike the version this
+          replaced): each Handle's invisible larger hit-zone (see
+          .react-flow__handle::before in styles.css) sticks out past the
+          card's own edge, which is exactly the point -- clipping it
+          there would defeat it. The one thing overflow-hidden used to
+          guard against, an overlong title, is already contained by
+          line-clamp-2/break-words below on its own. */}
+      <div className={`card relative h-full w-full !p-3 ${selected ? "ring-2 ring-brand-500" : ""}`}>
         <div className="flex items-start gap-2">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
             {icon}
