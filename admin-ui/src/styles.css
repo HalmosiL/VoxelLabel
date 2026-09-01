@@ -127,3 +127,18 @@
     @apply flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white;
   }
 }
+
+/* React Flow's own default connection handles (the small dots on each
+   workflow card) render at ~6x6px -- fine to look at, fiddly to
+   actually grab and drag an edge from. Sized up here globally (not per
+   node type -- every card's Handle already goes through this same
+   .react-flow__handle class) rather than overridden per Handle, so
+   every card's connectors grow consistently, including any added
+   later. Outside the @layer blocks above since this targets a
+   third-party library class, not a Tailwind component of this app's
+   own. */
+.react-flow__handle {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
