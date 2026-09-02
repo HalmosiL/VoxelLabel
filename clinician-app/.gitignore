@@ -1,0 +1,6 @@
+node_modules/
+release/
+# Per-machine, hand-edited after install -- config.js auto-writes a
+# template on first run when this is missing. Not something to ship or
+# track as "the" config; the one in this working copy is dev-only.
+config.json

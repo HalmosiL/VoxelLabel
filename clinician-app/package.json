@@ -1,0 +1,47 @@
+{
+  "name": "voxellabel-clinician",
+  "productName": "VoxelLabel",
+  "version": "0.1.0",
+  "description": "Downloadable single-user desktop shell for VoxelLabel: log in once, see only your own Annotation/Review jobs, open the viewer directly.",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "org.voxellabel.clinician",
+    "productName": "VoxelLabel",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "session-store.js",
+      "config.js",
+      "no-config.html"
+    ],
+    "extraResources": [
+      {
+        "from": "../admin-ui/dist",
+        "to": "admin-ui"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.medical"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Science"
+    }
+  }
+}
