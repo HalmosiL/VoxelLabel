@@ -19,7 +19,10 @@ class Settings:
     object_storage_bucket: str = os.environ.get("OBJECT_STORAGE_BUCKET", "ct-pixel-data")
     object_storage_access_key: str = os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
     object_storage_secret_key: str = os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin")
-    cors_allowed_origins: tuple = tuple(os.environ.get("ADMIN_UI_ORIGINS", "http://localhost:5173").split(","))
+    # Origins allowed to call this API directly from a browser (admin-ui
+    # itself, plus the clinician-app Electron shell's own local static
+    # server -- see clinician-app/main.js's STATIC_SERVER_PORT).
+    cors_allowed_origins: tuple = tuple(os.environ.get("ADMIN_UI_ORIGINS", "http://localhost:5173,http://127.0.0.1:45678").split(","))
 
 
 settings = Settings()

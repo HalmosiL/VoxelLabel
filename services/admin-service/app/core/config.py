@@ -9,8 +9,10 @@ class Settings:
         "DATABASE_URL", "postgresql+psycopg://ctplatform:ctplatform@localhost:5432/ctplatform"
     )
     # Origins allowed to call this API directly from a browser (the admin-ui
-    # dev server / deployment). Comma-separated.
-    cors_allowed_origins: tuple = tuple(os.environ.get("ADMIN_UI_ORIGINS", "http://localhost:5173").split(","))
+    # dev server / deployment, plus the clinician-app Electron shell's own
+    # local static server -- see clinician-app/main.js's STATIC_SERVER_PORT).
+    # Comma-separated.
+    cors_allowed_origins: tuple = tuple(os.environ.get("ADMIN_UI_ORIGINS", "http://localhost:5173,http://127.0.0.1:45678").split(","))
     # Real uploads happen here (unlike data-service, which only signs
     # presigned URLs) -- must be reachable from inside this container, so
     # the internal hostname, not the browser-facing one.

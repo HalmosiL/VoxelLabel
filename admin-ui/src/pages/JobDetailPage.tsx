@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { listMyJobs, MyJob } from "../api/workflowApi";
 import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
+import { isClinicianApp } from "../config";
 import EmptyState from "../components/EmptyState";
 
 /** Full-page view of a single job assigned to the calling user -- reuses
@@ -64,9 +65,17 @@ export default function JobDetailPage() {
           <p className="section-title">
             {annotatedCount} of {job.cases.length} case{job.cases.length === 1 ? "" : "s"} annotated
           </p>
-          <Link to={`/studies/${job.study_id}/workflow`} className="text-xs font-medium text-brand-600 hover:text-brand-700">
-            Open workflow board
-          </Link>
+          {/* The workflow board is study-wide structure/editing surface --
+              outside what the clinician shell reduces the app to (just
+              this one person's own jobs), so it's hidden there even
+              though nothing stops a direct URL visit from working (the
+              backend's own role checks are the real boundary, same as
+              every other clinician-mode UI reduction). */}
+          {!isClinicianApp && (
+            <Link to={`/studies/${job.study_id}/workflow`} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+              Open workflow board
+            </Link>
+          )}
         </div>
 
         <div className="table-wrap mt-4">

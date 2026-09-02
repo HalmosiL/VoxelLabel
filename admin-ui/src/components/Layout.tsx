@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import Avatar from "./Avatar";
+import { isClinicianApp } from "../config";
 import keycloak from "../keycloak";
 
 const navGroups = [
@@ -22,8 +23,17 @@ const navGroups = [
   },
 ];
 
+// The clinician-app desktop shell is for one person's own work only --
+// everything else (Studies, Patients, the whole Configuration group) is
+// admin-ui surface a doctor never needs and would just be clutter/a
+// confusing dead end (its own role checks would refuse them anyway).
+// This is a UX reduction, not the access control -- see config.ts's
+// isClinicianApp docstring.
+const clinicianNavGroups = [{ label: "Workspace", items: [navGroups[0].items[0]] }];
+
 export default function Layout() {
   const username = (keycloak.tokenParsed?.preferred_username as string) ?? "user";
+  const groups = isClinicianApp ? clinicianNavGroups : navGroups;
 
   return (
     <div className="flex min-h-screen">
@@ -34,12 +44,12 @@ export default function Layout() {
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight text-gray-900">VoxelLabel</div>
-            <div className="text-xs leading-tight text-gray-400">Admin</div>
+            <div className="text-xs leading-tight text-gray-400">{isClinicianApp ? "My Jobs" : "Admin"}</div>
           </div>
         </div>
 
         <nav className="flex flex-1 flex-col gap-5 px-3 pt-2">
-          {navGroups.map((group) => (
+          {groups.map((group) => (
             <div key={group.label}>
               <div className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                 {group.label}
@@ -78,7 +88,14 @@ export default function Layout() {
           <Avatar id={username} />
           <span className="flex-1 truncate text-sm font-medium text-gray-700">{username}</span>
           <button
-            onClick={() => keycloak.logout()}
+            onClick={() => {
+              // Drop the persisted session first -- otherwise the next
+              // launch would silently restore it and undo this logout.
+              // Falls back to an already-resolved promise in the normal
+              // browser deployment, where clinicianSession is undefined.
+              const cleared = window.clinicianSession?.clearSession() ?? Promise.resolve();
+              cleared.finally(() => keycloak.logout());
+            }}
             title="Log out"
             className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
           >

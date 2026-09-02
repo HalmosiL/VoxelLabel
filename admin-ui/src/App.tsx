@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import Layout from "./components/Layout";
+import { isClinicianApp } from "./config";
 import AnnotationTypesPage from "./pages/AnnotationTypesPage";
 import CaseDetailPage from "./pages/CaseDetailPage";
 import DeidentificationProfilesPage from "./pages/DeidentificationProfilesPage";
@@ -18,7 +19,7 @@ export default function App() {
     <Routes>
       <Route path="/studies/:studyId/workflow" element={<WorkflowBoardPage />} />
       <Route element={<Layout />}>
-        <Route path="/" element={<Navigate to="/studies" replace />} />
+        <Route path="/" element={<Navigate to={isClinicianApp ? "/my-jobs" : "/studies"} replace />} />
         <Route path="/my-jobs" element={<MyJobsPage />} />
         <Route path="/my-jobs/:cardId" element={<JobDetailPage />} />
         <Route path="/studies" element={<StudiesPage />} />
