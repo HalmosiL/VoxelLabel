@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { addClinicalDataConsent, addClinicalDataTag, deleteClinicalDataItem, updateClinicalDataItem } from "../api/adminApi";
 import { ClinicalDataItem, getClinicalDataFileUrl } from "../api/dataApi";
 import Modal from "./Modal";
+import { describeApiError } from "../api/client";
 
 export default function DocumentModal({
   item,
@@ -29,7 +30,7 @@ export default function DocumentModal({
       await updateClinicalDataItem(item.id, { type, title, itemDate });
       onChanged();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -40,7 +41,7 @@ export default function DocumentModal({
       await deleteClinicalDataItem(item.id);
       onDeleted();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -51,7 +52,7 @@ export default function DocumentModal({
       setTagLabel("");
       onChanged();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -62,7 +63,7 @@ export default function DocumentModal({
       setConsentType("");
       onChanged();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 

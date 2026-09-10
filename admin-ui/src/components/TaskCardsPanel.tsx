@@ -1,7 +1,7 @@
 import { Fragment, ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { KeycloakUser, listKeycloakUsers } from "../api/adminApi";
+import { KeycloakUser, listStudyMembers, memberLabel } from "../api/adminApi";
 import { deleteAnnotation, reviewAnnotation } from "../api/annotationApi";
 import {
   getWorkflowBoard,
@@ -17,6 +17,7 @@ import EmptyState from "./EmptyState";
 import { QuestionMarkCircleIcon } from "./icons";
 import SectionHeader from "./SectionHeader";
 import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "./workflow/statusStyle";
+import { describeApiError } from "../api/client";
 
 /** Table view of every Annotation or Review card on this study's
  * workflow board -- a dedicated section per job-producing card type
@@ -50,9 +51,11 @@ export default function TaskCardsPanel({
   useEffect(() => {
     getWorkflowBoard(studyId)
       .then((board) => setCards(board.cards.filter((c) => c.type === cardType)))
-      .catch((err) => setError(String(err)));
-    listKeycloakUsers()
-      .then(setUsers)
+      .catch((err) => setError(describeApiError(err)));
+    listStudyMembers(studyId)
+      .then((members) =>
+        setUsers(members.map((m) => ({ id: m.user_id, username: memberLabel(m), email: m.email ?? null, is_admin: false })))
+      )
       .catch(() => setUsers([]));
   }, [studyId, cardType]);
 
@@ -60,7 +63,7 @@ export default function TaskCardsPanel({
     setLoadingId(cardId);
     getWorkflowCardCases(cardId)
       .then((cases) => setCasesByCard((prev) => ({ ...prev, [cardId]: cases })))
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(describeApiError(err)))
       .finally(() => setLoadingId(null));
   }
 
@@ -76,13 +79,13 @@ export default function TaskCardsPanel({
   function handleAssign(card: WorkflowCard, userId: string) {
     const config = { ...card.config, assigned_user_id: userId || null };
     setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, config } : c)));
-    updateWorkflowCard(card.id, { config }).catch((err) => setError(String(err)));
+    updateWorkflowCard(card.id, { config }).catch((err) => setError(describeApiError(err)));
   }
 
   function handleStatusChange(card: WorkflowCard, status: string) {
     const config = { ...card.config, status };
     setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, config } : c)));
-    updateWorkflowCard(card.id, { config }).catch((err) => setError(String(err)));
+    updateWorkflowCard(card.id, { config }).catch((err) => setError(describeApiError(err)));
   }
 
   return (
@@ -249,7 +252,7 @@ function CardCaseList({
       await refreshCard();
       onReviewed();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     } finally {
       setDecidingId(null);
     }
@@ -264,7 +267,7 @@ function CardCaseList({
       await refreshCard();
       onReviewed();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     } finally {
       setDecidingId(null);
     }

@@ -1,7 +1,6 @@
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { KeycloakUser } from "../../api/adminApi";
 import { CaseSummary } from "../../api/dataApi";
 import { SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
 import { TrashIcon } from "../icons";
@@ -9,11 +8,22 @@ import { RUNNABLE_TYPES } from "./handleRules";
 import PytorchExportModal from "./PytorchExportModal";
 import { TASK_STATUS_STYLE } from "./statusStyle";
 
+export interface Assignee {
+  id: string;
+  label: string;
+}
+
 interface PanelProps {
   card: WorkflowCard | null;
   selectedCount: number;
   cases: CaseSummary[];
-  keycloakUsers: KeycloakUser[];
+  // This study's members -- the only people a job can be assigned to.
+  assignees: Assignee[];
+  // Read-only board (viewer/annotator/reviewer): every field is disabled
+  // except the status of a job card assigned to `meSubject` (the
+  // backend's own self-service carve-out), which stays editable.
+  readOnly: boolean;
+  meSubject: string | null;
   studyId: string;
   hasIncomingEdge: boolean;
   onClose: () => void;
@@ -30,7 +40,9 @@ export default function WorkflowPropertiesPanel({
   card,
   selectedCount,
   cases,
-  keycloakUsers,
+  assignees,
+  readOnly,
+  meSubject,
   studyId,
   hasIncomingEdge,
   onClose,
@@ -51,9 +63,11 @@ export default function WorkflowPropertiesPanel({
             ×
           </button>
         </div>
-        <button onClick={onBulkDelete} className="btn-danger btn-sm self-start">
-          Delete selected
-        </button>
+        {!readOnly && (
+          <button onClick={onBulkDelete} className="btn-danger btn-sm self-start">
+            Delete selected
+          </button>
+        )}
       </aside>
     );
   }
@@ -68,6 +82,36 @@ export default function WorkflowPropertiesPanel({
           the same instance and text fields would keep showing the
           previously-selected card's stale value. */}
       <div key={card.id} className="contents">
+        {readOnly && (
+          <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+            Read-only -- your role in this study doesn't allow editing the board.
+          </p>
+        )}
+        {/* A disabled <fieldset> disables every form control and button
+            inside it at once -- the whole panel goes read-only without
+            threading a flag through every field component. The one
+            exception (an assignee changing their own job's status) is
+            rendered outside it, in TaskFields. */}
+        {readOnly &&
+          (card.type === "annotation" || card.type === "review") &&
+          card.config.assigned_user_id === meSubject && (
+            <label className="field rounded-lg border border-brand-100 bg-brand-50/50 p-3">
+              <span className="label">Your job status</span>
+              <select
+                className="input"
+                value={(card.config.status as string) ?? "todo"}
+                onChange={(e) => onPatch(card.id, { config: { ...card.config, status: e.target.value } })}
+              >
+                {Object.entries(TASK_STATUS_STYLE).map(([value, style]) => (
+                  <option key={value} value={value}>
+                    {style.label}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">This job is assigned to you -- you can update its status.</span>
+            </label>
+          )}
+        <fieldset disabled={readOnly} className="contents">
         <Header card={card} onClose={onClose} onPatch={onPatch} onDelete={onDelete} />
 
         {card.type === "dataset" && (
@@ -77,6 +121,7 @@ export default function WorkflowPropertiesPanel({
             cases={cases}
             onPatch={onPatch}
             onRun={onRun}
+            onSelectCard={onSelectCard}
             running={running}
             hasIncomingEdge={hasIncomingEdge}
           />
@@ -107,7 +152,7 @@ export default function WorkflowPropertiesPanel({
             card={card}
             studyId={studyId}
             cases={cases}
-            keycloakUsers={keycloakUsers}
+            assignees={assignees}
             onPatch={onPatch}
             onRun={onRun}
             onSelectCard={onSelectCard}
@@ -133,6 +178,7 @@ export default function WorkflowPropertiesPanel({
         {card.type === "note" && <NoteFields card={card} onPatch={onPatch} />}
 
         {card.type === "milestone" && <MilestoneFields card={card} onPatch={onPatch} />}
+        </fieldset>
       </div>
     </aside>
   );
@@ -231,6 +277,7 @@ function DatasetFields({
   cases,
   onPatch,
   onRun,
+  onSelectCard,
   running,
   hasIncomingEdge,
 }: {
@@ -239,6 +286,7 @@ function DatasetFields({
   cases: CaseSummary[];
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
   onRun: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
   running: boolean;
   hasIncomingEdge: boolean;
 }) {
@@ -246,6 +294,41 @@ function DatasetFields({
   const mode = (card.config.mode as string) ?? "all_cases";
   const manualIds = new Set((card.config.case_ids as string[] | undefined) ?? []);
   const exportCaseIds = mode === "manual" ? Array.from(manualIds) : cases.map((c) => c.id);
+
+  // A Dataset another card materialized (Split's part, Review's
+  // approved/rejected, Annotation's "(annotated)", ...) is owned by that
+  // parent: every Run of the parent rewrites this card's case list, so
+  // offering the All cases / Manual pick controls here would only invite
+  // edits that silently vanish on the next Run. Show where the list comes
+  // from instead, and keep export available -- the list itself is real.
+  if (card.materialized_from) {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="hint">
+          Kept in sync from <span className="font-medium text-gray-700">{card.materialized_from.title}</span> -- every Run
+          of that card rewrites this list. To change what lands here, change (and re-run) that card.
+        </p>
+        <button onClick={() => onSelectCard(card.materialized_from!.card_id)} className="btn-secondary btn-sm self-start">
+          Open {card.materialized_from.title}
+        </button>
+        <p className="text-sm text-gray-700">
+          {manualIds.size} case{manualIds.size === 1 ? "" : "s"} in this dataset.
+        </p>
+        <LastRun card={card} />
+        <button onClick={() => setExporting(true)} className="btn-secondary btn-sm self-start">
+          Export for PyTorch
+        </button>
+        {exporting && (
+          <PytorchExportModal
+            studyId={studyId}
+            cardId={card.id}
+            caseCount={manualIds.size}
+            onClose={() => setExporting(false)}
+          />
+        )}
+      </div>
+    );
+  }
 
   function setMode(next: "all_cases" | "manual") {
     if (next === "manual") {
@@ -613,7 +696,7 @@ function TaskFields({
   card,
   studyId,
   cases,
-  keycloakUsers,
+  assignees,
   onPatch,
   onRun,
   onSelectCard,
@@ -622,7 +705,7 @@ function TaskFields({
   card: WorkflowCard;
   studyId: string;
   cases: CaseSummary[];
-  keycloakUsers: KeycloakUser[];
+  assignees: Assignee[];
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
   onRun: (cardId: string) => void;
   onSelectCard: (cardId: string) => void;
@@ -644,16 +727,27 @@ function TaskFields({
           onChange={(e) => onPatch(card.id, { config: { ...card.config, assigned_user_id: e.target.value || null } })}
         >
           <option value="">Unassigned</option>
-          {keycloakUsers.map((u) => (
+          {assignees.map((u) => (
             <option key={u.id} value={u.id}>
-              {u.username ?? u.id}
+              {u.label}
             </option>
           ))}
+          {assignedUserId && !assignees.some((u) => u.id === assignedUserId) && (
+            <option value={assignedUserId}>{assignedUserId.slice(0, 8)}… (no longer a member)</option>
+          )}
         </select>
+        {assignees.length === 0 && <span className="hint">Add members to the study to assign this job.</span>}
       </label>
       <label className="field">
         <span className="label">Status</span>
-        <select className="input" value={status} onChange={(e) => onPatch(card.id, { config: { ...card.config, status: e.target.value } })}>
+        {/* An assignee may flip their own job's status even on a read-only
+            board (the backend allows exactly this) -- a standalone form
+            control escapes the surrounding disabled fieldset. */}
+        <select
+          className="input"
+          value={status}
+          onChange={(e) => onPatch(card.id, { config: { ...card.config, status: e.target.value } })}
+        >
           {Object.entries(TASK_STATUS_STYLE).map(([value, style]) => (
             <option key={value} value={value}>
               {style.label}

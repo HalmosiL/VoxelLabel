@@ -1,6 +1,7 @@
 import { DragEvent, useEffect, useRef, useState } from "react";
 
 import { getQuickImport, quickImport, QuickImportStatus } from "../api/ingestionApi";
+import { describeApiError } from "../api/client";
 import Modal from "./Modal";
 
 const POLL_INTERVAL_MS = 2000;
@@ -10,7 +11,19 @@ const POLL_INTERVAL_MS = 2000;
  * The server groups files by (PatientID, StudyInstanceUID) and creates or
  * matches a Case for each group itself (see
  * services/ingestion-service/app/quick_import.py). */
-export default function QuickImportModal({ studyId, onClose, onImported }: { studyId: string; onClose: () => void; onImported: () => void }) {
+export default function QuickImportModal({
+  studyId,
+  onClose,
+  onImported,
+  onStarted,
+}: {
+  studyId: string;
+  onClose: () => void;
+  onImported: () => void;
+  // Fired with the import id once the batch is queued, so the owning
+  // panel can keep tracking it after this modal is closed.
+  onStarted?: (importId: string) => void;
+}) {
   const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [status, setStatus] = useState<"idle" | "uploading" | "running" | "failed" | "completed">("idle");
@@ -128,9 +141,10 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
     setUploadProgress({ sent: 0, total: files.reduce((sum, f) => sum + f.size, 0) });
     try {
       const res = await quickImport(studyId, files, (sent, total) => setUploadProgress({ sent, total }));
+      onStarted?.(res.import_id);
       poll(res.import_id);
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
       setStatus("failed");
     }
   }
@@ -152,7 +166,7 @@ export default function QuickImportModal({ studyId, onClose, onImported }: { stu
         }
       })
       .catch((err) => {
-        setError(String(err));
+        setError(describeApiError(err));
         setStatus("failed");
       });
   }

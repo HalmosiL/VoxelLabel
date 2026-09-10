@@ -8,6 +8,7 @@ import {
 } from "../api/adminApi";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
+import { describeApiError } from "../api/client";
 
 export default function DeidentificationProfilesPage() {
   const [profiles, setProfiles] = useState<DeidentificationProfile[]>([]);
@@ -18,7 +19,7 @@ export default function DeidentificationProfilesPage() {
   function refresh() {
     listDeidentificationProfiles()
       .then(setProfiles)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, []);
@@ -31,7 +32,7 @@ export default function DeidentificationProfilesPage() {
       setIsDefault(false);
       refresh();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -86,7 +87,7 @@ function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfil
       setReplacementValue("");
       onRuleAdded();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 

@@ -25,7 +25,9 @@ import {
 } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { getStudy, KeycloakUser, listKeycloakUsers, Study } from "../api/adminApi";
+import { getStudy, listStudyMembers, memberLabel, Study } from "../api/adminApi";
+import { describeApiError } from "../api/client";
+import { roleLabel, useMe } from "../auth/MeContext";
 import { CaseSummary, listCases } from "../api/dataApi";
 import {
   createPipelineTemplate,
@@ -51,6 +53,7 @@ import {
 } from "../components/workflow/pipelineTemplates";
 import SaveTemplateModal from "../components/workflow/SaveTemplateModal";
 import ConsortExportPage from "../components/workflow/ConsortExportPage";
+import { AssigneeDirectoryContext } from "../components/workflow/assigneeDirectory";
 import { isValidConnection } from "../components/workflow/handleRules";
 import AnnotationNode from "../components/workflow/nodes/AnnotationNode";
 import AnnotationSurfaceNode from "../components/workflow/nodes/AnnotationSurfaceNode";
@@ -68,7 +71,13 @@ import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
 import WorkflowPropertiesPanel from "../components/workflow/WorkflowPropertiesPanel";
-import FlowEdge, { FlowTone } from "../components/workflow/edges/FlowEdge";
+import FlowEdge from "../components/workflow/edges/FlowEdge";
+import {
+  annotateFlowEdges,
+  cardToNode,
+  edgeToRFEdge,
+  materializationEdges,
+} from "../components/workflow/boardGraph";
 import LlmChatModal from "../components/workflow/LlmChatModal";
 
 const NODE_TYPES = {
@@ -100,168 +109,6 @@ const EDGE_TYPES = { flow: FlowEdge };
 // model, which must stay a deliberate, user-triggered action.
 const _AUTO_RUN_TEMPLATE_TYPES = new Set<WorkflowCardType>(["split", "filter", "union", "annotation", "review"]);
 
-function cardToNode(card: WorkflowCard): CardNode {
-  return {
-    id: card.id,
-    type: card.type,
-    position: { x: card.position_x, y: card.position_y },
-    width: card.width ?? undefined,
-    height: card.height ?? undefined,
-    data: { card },
-  };
-}
-
-function edgeToRFEdge(edge: WorkflowEdge): Edge {
-  return {
-    id: edge.id,
-    source: edge.source_card_id,
-    sourceHandle: edge.source_handle,
-    target: edge.target_card_id,
-    targetHandle: edge.target_handle,
-    // Right-angled routing instead of the default bezier curve, and
-    // draggable by either endpoint (see handleReconnect) to rewire it
-    // onto a different card/handle without deleting and redrawing.
-    // "flow" (see FlowEdge) draws the same right-angled path but also
-    // animates real cases moving along it -- flow data is attached
-    // separately (see annotateFlowEdges) since it depends on the cards
-    // on both ends, not just the edge itself.
-    type: "flow",
-    reconnectable: true,
-  };
-}
-
-/** Derived, non-interactive connector lines from a Split/Annotation/
- * Review/LLM/Criterion card to whichever Dataset card(s) it
- * materialized -- not a real WorkflowEdge (materialized Dataset cards
- * have no real input), so these are recomputed client-side from each
- * card's materialized_card_id(s) rather than fetched, and marked
- * non-deletable/non-selectable so they can't be mistaken for a
- * user-drawn connection. Split/LLM/Criterion have no real output
- * handle of their own (see handleRules.ts), so their nodes render a
- * dedicated non-interactive "materialize" anchor to originate from;
- * Annotation and Review both still have a real "output" handle, so
- * their connector(s) originate from that instead -- Review's two
- * (approved, rejected) just both fan out from the same point. */
-function materializationEdges(cards: WorkflowCard[]): Edge[] {
-  const edges: Edge[] = [];
-  for (const card of cards) {
-    // [childId, anchor handle to draw from, semantic branch key]. Review's
-    // approved/rejected both fan out from the same real "output" handle, so
-    // the branch key (needed to tell them apart for flow tone/count -- see
-    // annotateFlowEdges) has to travel separately from the anchor handle.
-    const childEntries: Array<readonly [string, string, string]> =
-      card.type === "split" || card.type === "llm" || card.type === "criterion"
-        ? Object.entries(card.materialized_card_ids ?? {}).map(([key, childId]) => [childId, "materialize", key] as const)
-        : card.type === "review"
-          ? Object.entries(card.materialized_card_ids ?? {}).map(([key, childId]) => [childId, "output", key] as const)
-          : card.type === "annotation" && card.materialized_card_id
-            ? [[card.materialized_card_id, "output", "annotated"] as const]
-            : [];
-
-    for (const [childId, sourceHandle, branchKey] of childEntries) {
-      edges.push({
-        id: `materialize-${card.id}-${childId}`,
-        source: card.id,
-        sourceHandle,
-        target: childId,
-        targetHandle: "materialize",
-        type: "flow",
-        style: { strokeDasharray: "4 3" },
-        deletable: false,
-        selectable: false,
-        focusable: false,
-        data: { branchKey },
-      });
-    }
-  }
-  return edges;
-}
-
-/** Maps a card id to the tone its downstream cases should render in --
- * a Review's approved/rejected materialized children, and an
- * Annotation's materialized "(annotated)" child, carry that outcome
- * with them wherever they're wired onward (e.g. the rejected branch
- * looping back into an Annotation card's input). Everything else flows
- * "neutral": it hasn't been decided on yet. */
-function buildFlowToneMap(cards: WorkflowCard[]): Record<string, FlowTone> {
-  const tones: Record<string, FlowTone> = {};
-  for (const card of cards) {
-    if (card.type === "review") {
-      const approvedId = card.materialized_card_ids?.approved;
-      const rejectedId = card.materialized_card_ids?.rejected;
-      if (approvedId) tones[approvedId] = "done";
-      if (rejectedId) tones[rejectedId] = "rejected";
-    }
-    if (card.type === "criterion") {
-      const includedId = card.materialized_card_ids?.included;
-      const excludedId = card.materialized_card_ids?.excluded;
-      if (includedId) tones[includedId] = "done";
-      if (excludedId) tones[excludedId] = "rejected";
-    }
-    if (card.type === "annotation" && card.materialized_card_id) {
-      tones[card.materialized_card_id] = "done";
-    }
-  }
-  return tones;
-}
-
-function cardOutputCount(card: WorkflowCard | undefined, handle: string | null): number {
-  if (!card) return 0;
-  const count = card.output_count;
-  if (count == null) return 0;
-  return typeof count === "number" ? count : (count[handle ?? "output"] ?? 0);
-}
-
-/** Attaches how many cases are actually on each edge right now, and
- * which tone they carry, so FlowEdge can animate real volume instead of
- * a decorative flourish -- an edge with nothing flowing through it
- * renders idle rather than pretending otherwise. Derived entirely from
- * data the board already loads (no extra request), so it's cheap to
- * recompute on every render as cards/edges change (e.g. right after a
- * Run updates a card's counts). */
-function annotateFlowEdges(edges: Edge[], cards: WorkflowCard[]): Edge[] {
-  const cardsById = new Map(cards.map((c) => [c.id, c]));
-  const tones = buildFlowToneMap(cards);
-
-  return edges.map((edge) => {
-    const isMaterialization = edge.deletable === false;
-    let count: number;
-    let tone: FlowTone;
-
-    if (isMaterialization) {
-      const parent = cardsById.get(edge.source);
-      const branchKey = (edge.data as { branchKey?: string } | undefined)?.branchKey;
-      if (parent?.type === "review") {
-        count = parent.materialized_counts?.[branchKey ?? ""] ?? 0;
-        tone = branchKey === "approved" ? "done" : "rejected";
-      } else if (parent?.type === "criterion") {
-        count = parent.materialized_counts?.[branchKey ?? ""] ?? 0;
-        tone = branchKey === "included" ? "done" : "rejected";
-      } else if (parent?.type === "split") {
-        const splitCounts = parent.output_count;
-        count = splitCounts && typeof splitCounts !== "number" ? (splitCounts[branchKey ?? ""] ?? 0) : 0;
-        tone = "neutral";
-      } else if (parent?.type === "llm") {
-        // Unlike Split's per-part counts (cached on the parent itself),
-        // an LLM-created Dataset's count just lives on that Dataset card
-        // like any other -- it's a plain "manual" child, computed live
-        // regardless of Run history.
-        const child = cardsById.get(edge.target);
-        count = typeof child?.output_count === "number" ? child.output_count : 0;
-        tone = "neutral";
-      } else {
-        count = parent?.annotation_progress?.annotated ?? 0;
-        tone = "done";
-      }
-    } else {
-      count = cardOutputCount(cardsById.get(edge.source), edge.sourceHandle ?? null);
-      tone = tones[edge.source] ?? "neutral";
-    }
-
-    return { ...edge, data: { count, tone } };
-  });
-}
-
 function isEditableTarget(): boolean {
   const active = document.activeElement;
   return active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
@@ -280,7 +127,16 @@ export default function WorkflowBoardPage() {
 function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const [study, setStudy] = useState<Study | null>(null);
   const [cases, setCases] = useState<CaseSummary[]>([]);
-  const [keycloakUsers, setKeycloakUsers] = useState<KeycloakUser[]>([]);
+  // Assignable people = this study's members (a non-member could never
+  // open the study's data anyway), with names resolved server-side.
+  const [assignees, setAssignees] = useState<{ id: string; label: string }[]>([]);
+  const { me, canManage, roleFor } = useMe();
+  // Editing the board (cards, edges, Run, config) needs data_manager or
+  // admin; everyone else gets a read-only board -- same rule the backend
+  // enforces on every write endpoint, mirrored so the UI doesn't offer
+  // actions that would just fail. An assignee may still change the
+  // status of their own job card (see WorkflowPropertiesPanel).
+  const canEdit = canManage(studyId);
   const [nodes, setNodes] = useState<CardNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -331,18 +187,24 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   function refreshBoard() {
     getWorkflowBoard(studyId)
       .then((board) => {
-        setNodes(board.cards.map(cardToNode));
+        // Keep whatever's selected selected across a refresh -- a Run,
+        // a new connection or a chat turn refetches the board, and losing
+        // the open properties panel each time was disorienting.
+        setNodes((previous) => {
+          const selected = new Set(previous.filter((n) => n.selected).map((n) => n.id));
+          return board.cards.map((card) => ({ ...cardToNode(card), selected: selected.has(card.id) }));
+        });
         setEdges([...board.edges.map(edgeToRFEdge), ...materializationEdges(board.cards)]);
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(() => {
-    getStudy(studyId).then(setStudy).catch((err) => setError(String(err)));
-    listCases(studyId).then(setCases).catch((err) => setError(String(err)));
-    listKeycloakUsers()
-      .then(setKeycloakUsers)
-      .catch(() => setKeycloakUsers([]));
+    getStudy(studyId).then(setStudy).catch((err) => setError(describeApiError(err)));
+    listCases(studyId).then(setCases).catch((err) => setError(describeApiError(err)));
+    listStudyMembers(studyId)
+      .then((members) => setAssignees(members.map((m) => ({ id: m.user_id, label: memberLabel(m) }))))
+      .catch(() => setAssignees([]));
     refreshBoard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studyId]);
@@ -365,6 +227,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   }
 
   function handleNodeDragStop(_event: unknown, _node: CardNode, draggedNodes: CardNode[]) {
+    if (!canEdit) return;
     // draggedNodes is every node that moved -- when several cards are
     // multi-selected, dragging any one of them (Miro-style) moves the
     // whole group, so every member's new position needs persisting, not
@@ -373,10 +236,11 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       draggedNodes.map((node) =>
         updateWorkflowCard(node.id, { position_x: node.position.x, position_y: node.position.y })
       )
-    ).catch((err) => setError(String(err)));
+    ).catch((err) => setError(describeApiError(err)));
   }
 
   function handleConnect(connection: Connection) {
+    if (!canEdit) return;
     const sourceNode = nodes.find((n) => n.id === connection.source);
     const targetNode = nodes.find((n) => n.id === connection.target);
     if (!sourceNode || !targetNode) return;
@@ -398,8 +262,14 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       target_card_id: connection.target,
       target_handle: connection.targetHandle ?? "input",
     })
-      .then((edge) => setEdges((eds) => [...eds, edgeToRFEdge(edge)]))
-      .catch((err) => setError(String(err)));
+      .then((edge) => {
+        setEdges((eds) => [...eds, edgeToRFEdge(edge)]);
+        // Server-computed per-card facts (an LLM/Criterion card's "N cases
+        // connected", stale flags) depend on the new edge -- refetch so
+        // they update now, not on the next page load.
+        refreshBoard();
+      })
+      .catch((err) => setError(describeApiError(err)));
   }
 
   /** Dragging an existing edge's endpoint onto a different handle rewires
@@ -408,6 +278,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
    * graph), so this deletes the old one and creates a new one, then
    * swaps it into place in local state once the new id comes back. */
   function handleReconnect(oldEdge: Edge, newConnection: Connection) {
+    if (!canEdit) return;
     const sourceNode = nodes.find((n) => n.id === newConnection.source);
     const targetNode = nodes.find((n) => n.id === newConnection.target);
     if (!sourceNode || !targetNode) return;
@@ -433,11 +304,11 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       }),
     ])
       .then(([, edge]) => setEdges((eds) => eds.map((e) => (e.id === oldEdge.id ? edgeToRFEdge(edge) : e))))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   function handleNodesDelete(deleted: CardNode[]) {
-    if (deleted.length === 0) return;
+    if (!canEdit || deleted.length === 0) return;
     const deletedIds = new Set(deleted.map((n) => n.id));
     history.record(nodes, realEdges);
     const affectedEdgeIds = realEdges
@@ -450,7 +321,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     Promise.all([
       ...Array.from(deletedIds).map((id) => deleteWorkflowCard(id).catch(() => undefined)),
       ...affectedEdgeIds.map((id) => deleteWorkflowEdge(id).catch(() => undefined)),
-    ]).catch((err) => setError(String(err)));
+    ]).catch((err) => setError(describeApiError(err)));
   }
 
   function handleEdgesDelete(deleted: Edge[]) {
@@ -463,7 +334,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     const deletedIds = new Set(real.map((e) => e.id));
     setEdges((eds) => eds.filter((e) => !deletedIds.has(e.id)));
     Promise.all(Array.from(deletedIds).map((id) => deleteWorkflowEdge(id).catch(() => undefined))).catch((err) =>
-      setError(String(err))
+      setError(describeApiError(err))
     );
   }
 
@@ -474,6 +345,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
+    if (!canEdit) return;
 
     const templateJson = event.dataTransfer.getData(TEMPLATE_DRAG_DATA_FORMAT);
     if (templateJson) {
@@ -487,7 +359,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         // becomes exactly the drop point below.
         insertTemplateAt(template, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
       } catch (err) {
-        setError(String(err));
+        setError(describeApiError(err));
       }
       return;
     }
@@ -508,7 +380,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       config: cardTemplate.defaultConfig,
     })
       .then((card) => setNodes((nds) => [...nds, cardToNode(card)]))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   /** Instantiates a whole Store template at once -- same create-cards-
@@ -595,7 +467,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       // from the server instead of hand-reconciling all of it locally.
       refreshBoard();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     } finally {
       setInsertingTemplateId(null);
     }
@@ -684,7 +556,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         setSidebarTab("store");
         setTemplateRefreshSignal((n) => n + 1);
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   function handleSelectCard(cardId: string) {
@@ -695,7 +567,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   function handlePatch(cardId: string, patch: WorkflowCardPatchInput) {
     updateWorkflowCard(cardId, patch)
       .then((updated) => setNodes((nds) => nds.map((n) => (n.id === cardId ? { ...n, data: { card: updated } } : n))))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   function handleDeleteCard(cardId: string) {
@@ -710,13 +582,13 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     setRunningCardId(cardId);
     runWorkflowCard(cardId)
       .then(() => refreshBoard())
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(describeApiError(err)))
       .finally(() => setRunningCardId(null));
   }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (isEditableTarget()) return;
+      if (isEditableTarget() || !canEdit) return;
       const meta = event.metaKey || event.ctrlKey;
       if (!meta) return;
 
@@ -773,7 +645,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             const valid = createdEdges.filter((e): e is WorkflowEdge => e !== null);
             if (valid.length > 0) setEdges((eds) => [...eds, ...valid.map(edgeToRFEdge)]);
           })
-          .catch((err) => setError(String(err)));
+          .catch((err) => setError(describeApiError(err)));
       }
     }
 
@@ -796,13 +668,18 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           </Link>
           <div>
             <h1 className="text-sm font-semibold text-gray-900">{study?.name ?? "Study"}</h1>
-            <p className="text-xs text-gray-400">Workflow board</p>
+            <p className="text-xs text-gray-400">
+              Workflow board
+              {!canEdit && ` · read-only (your role: ${roleLabel(roleFor(studyId))})`}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowConsortExport(true)} className="btn-secondary btn-sm">
             CONSORT export
           </button>
+          {canEdit && (
+          <>
           <button
             onClick={() => setSavingTemplate(true)}
             disabled={selectedNodes.length === 0}
@@ -825,6 +702,8 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           >
             Redo
           </button>
+          </>
+          )}
         </div>
       </header>
       {error && (
@@ -841,6 +720,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             user-resizable via the drag handle right after this <aside>
             (inline style, not a Tailwind width class, since it's a
             continuous user-chosen value, not one of a fixed set). */}
+        {canEdit && (
         <aside
           className="flex flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 transition-[width]"
           style={{ width: sidebarTab === "store" ? storeSidebarWidth : 224 }}
@@ -875,8 +755,9 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             )}
           </div>
         </aside>
+        )}
 
-        {sidebarTab === "store" && (
+        {canEdit && sidebarTab === "store" && (
           <div
             onMouseDown={startStoreSidebarResize}
             className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200/70 transition-colors hover:bg-brand-400 active:bg-brand-500"
@@ -890,6 +771,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           onDrop={handleDrop}
           onContextMenu={(e) => e.preventDefault()}
         >
+          <AssigneeDirectoryContext.Provider value={Object.fromEntries(assignees.map((a) => [a.id, a.label]))}>
           <ReactFlow
             nodes={nodes}
             edges={renderedEdges}
@@ -903,7 +785,10 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onReconnect={handleReconnect}
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
-            deleteKeyCode={["Backspace", "Delete"]}
+            deleteKeyCode={canEdit ? ["Backspace", "Delete"] : null}
+            nodesDraggable={canEdit}
+            nodesConnectable={canEdit}
+            edgesReconnectable={canEdit}
             // Plain left-drag (or middle-click-drag) on empty canvas pans
             // the board; holding Ctrl while dragging switches to a
             // selection box (multi-select) instead -- selectionKeyCode
@@ -917,18 +802,26 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             selectionKeyCode="Control"
             panOnScroll
             fitView
+            // React Flow's default minZoom (0.5) is too tight for a real
+            // board: fitView (on load, and the ⛶ control) clamps to it, so
+            // a board wider than ~2x the pane opens with cards cut off at
+            // both edges and can't be zoomed out far enough to see whole.
+            minZoom={0.1}
           >
             <Background variant={BackgroundVariant.Dots} gap={16} />
             <Controls />
             <MiniMap pannable zoomable />
           </ReactFlow>
+          </AssigneeDirectoryContext.Provider>
         </div>
 
         <WorkflowPropertiesPanel
           card={selectedCard}
           selectedCount={selectedNodes.length}
           cases={cases}
-          keycloakUsers={keycloakUsers}
+          assignees={assignees}
+          readOnly={!canEdit}
+          meSubject={me?.subject ?? null}
           studyId={studyId}
           hasIncomingEdge={hasIncomingEdge}
           onClose={() => setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))}

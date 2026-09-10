@@ -5,6 +5,7 @@ import { CaseSummary, listCases } from "../api/dataApi";
 import { getWorkflowBoard, WorkflowCard } from "../api/workflowApi";
 import { DatabaseIcon } from "./icons";
 import SectionHeader from "./SectionHeader";
+import { describeApiError } from "../api/client";
 
 /** Card-grid view (matching the workflow board's own Dataset card look)
  * of every Dataset card the board has produced for this study -- both
@@ -22,10 +23,10 @@ export default function DatasetsPanel({ studyId }: { studyId: string }) {
   useEffect(() => {
     getWorkflowBoard(studyId)
       .then((board) => setDatasets(board.cards.filter((c) => c.type === "dataset")))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
     listCases(studyId)
       .then(setCases)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }, [studyId]);
 
   const casesById = new Map(cases.map((c) => [c.id, c]));

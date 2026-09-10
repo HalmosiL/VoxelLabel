@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { ConsortExport, ConsortStage, getConsortExport, getWorkflowBoard } from "../../api/workflowApi";
+import { describeApiError } from "../../api/client";
 
 const BOX_WIDTH = 340;
 const BOX_HEIGHT = 64;
@@ -208,12 +209,12 @@ export default function ConsortExportPage({ studyId, onClose }: { studyId: strin
         setCandidates(roots.map((c) => ({ id: c.id, title: c.title })));
         if (roots.length === 1) setRootCardId(roots[0].id);
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }, [studyId]);
 
   useEffect(() => {
     if (!rootCardId) return;
-    getConsortExport(studyId, rootCardId).then(setData).catch((err) => setError(String(err)));
+    getConsortExport(studyId, rootCardId).then(setData).catch((err) => setError(describeApiError(err)));
   }, [studyId, rootCardId]);
 
   return createPortal(

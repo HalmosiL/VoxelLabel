@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { deleteImagingStudy, updateImagingStudy } from "../api/adminApi";
 import Modal from "./Modal";
 import Thumbnail from "./Thumbnail";
+import { describeApiError } from "../api/client";
 
 interface ImagingStudyLike {
   id: string;
@@ -32,7 +33,7 @@ export default function ImagingStudyModal({
       await updateImagingStudy(imagingStudy.id, { description, modality });
       onSaved();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -42,7 +43,7 @@ export default function ImagingStudyModal({
       await deleteImagingStudy(imagingStudy.id);
       onDeleted();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 

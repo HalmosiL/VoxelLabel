@@ -6,10 +6,12 @@ import { PencilIcon, QuestionMarkCircleIcon } from "../../icons";
 import { CardNode } from "../types";
 import { TASK_STATUS_STYLE } from "../statusStyle";
 import WorkflowNodeShell from "./WorkflowNodeShell";
+import { useAssigneeLabel } from "../assigneeDirectory";
 
 function AnnotationNode({ data, selected }: NodeProps<CardNode>) {
   const { card } = data;
   const assignedUserId = typeof card.config.assigned_user_id === "string" ? card.config.assigned_user_id : null;
+  const assigneeLabel = useAssigneeLabel(assignedUserId);
   const status = typeof card.config.status === "string" ? card.config.status : "todo";
   const style = TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo;
   const progress = card.annotation_progress;
@@ -20,7 +22,7 @@ function AnnotationNode({ data, selected }: NodeProps<CardNode>) {
         {assignedUserId ? (
           <div className="flex items-center gap-1.5">
             <Avatar id={assignedUserId} />
-            <span className="truncate text-xs text-gray-600">{assignedUserId.slice(0, 8)}…</span>
+            <span className="truncate text-xs text-gray-600">{assigneeLabel}</span>
           </div>
         ) : (
           <span className="flex items-center gap-1 text-xs text-red-500" title="Nobody is assigned to this job">

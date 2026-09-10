@@ -9,20 +9,27 @@ import {
   updateStudy,
   uploadStudyCoverImage,
 } from "../api/adminApi";
-import { ApiError } from "../api/client";
+import { ApiError, describeApiError } from "../api/client";
+import { roleLabel, useMe } from "../auth/MeContext";
+import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
 
 type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | null;
 
 export default function StudiesPage() {
+  const { isAdmin } = useMe();
   const [studies, setStudies] = useState<Study[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
 
   function refresh() {
     listStudies()
-      .then(setStudies)
-      .catch((err) => setError(String(err)));
+      .then((list) => {
+        setStudies(list);
+        setLoaded(true);
+      })
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, []);
@@ -35,7 +42,7 @@ export default function StudiesPage() {
       return;
     } catch (err) {
       if (!(err instanceof ApiError) || err.status !== 409) {
-        setError(String(err));
+        setError(describeApiError(err));
         return;
       }
       // Study still has cases -- deleteStudy's own 409 message already
@@ -56,27 +63,39 @@ export default function StudiesPage() {
         await deleteStudy(study.id, true);
         refresh();
       } catch (err2) {
-        setError(String(err2));
+        setError(describeApiError(err2));
       }
     }
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="page-title">Studies</h1>
+      <div>
+        <h1 className="page-title">Studies</h1>
+        {!isAdmin && <p className="page-subtitle">The studies you are a member of, with your role in each.</p>}
+      </div>
       {error && <p className="alert-error">{error}</p>}
+
+      {loaded && studies.length === 0 && !isAdmin && (
+        <EmptyState message="You're not a member of any study yet -- ask a study admin to add you." />
+      )}
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {studies.map((s) => (
           <StudyCard
             key={s.id}
             study={s}
+            // Editing/deleting/cover images: a global admin, or a member
+            // holding the study-scoped admin role (mirrors the backend).
+            canAdminister={isAdmin || s.my_role === "admin"}
+            canDelete={isAdmin}
+            showRole={!isAdmin}
             onImageUploaded={refresh}
             onEdit={() => setModal({ mode: "edit", study: s })}
             onDelete={() => handleDelete(s)}
           />
         ))}
-        <NewStudyTile onClick={() => setModal({ mode: "create" })} />
+        {isAdmin && <NewStudyTile onClick={() => setModal({ mode: "create" })} />}
       </div>
 
       {modal && (
@@ -131,7 +150,7 @@ function StudyFormModal({
       }
       onSaved();
     } catch (err) {
-      onError(String(err));
+      onError(describeApiError(err));
     }
   }
 
@@ -161,11 +180,17 @@ function StudyFormModal({
 
 function StudyCard({
   study,
+  canAdminister,
+  canDelete,
+  showRole,
   onImageUploaded,
   onEdit,
   onDelete,
 }: {
   study: Study;
+  canAdminister: boolean;
+  canDelete: boolean;
+  showRole: boolean;
   onImageUploaded: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -196,11 +221,15 @@ function StudyCard({
           )}
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-gray-900">{study.name}</h3>
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-semibold text-gray-900">{study.name}</h3>
+            {showRole && <span className="badge-blue flex-shrink-0">{roleLabel(study.my_role ?? null)}</span>}
+          </div>
           {study.description && <p className="mt-1 text-sm text-gray-500">{study.description}</p>}
         </div>
       </Link>
 
+      {canAdminister && (
       <div className="absolute right-3 top-3 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
         <label
           className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white"
@@ -216,14 +245,17 @@ function StudyCard({
         >
           <PencilIcon className="h-4 w-4" />
         </button>
-        <button
-          onClick={onDelete}
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-red-600 shadow-sm hover:bg-white"
-          title="Delete study"
-        >
-          <TrashIcon className="h-4 w-4" />
-        </button>
+        {canDelete && (
+          <button
+            onClick={onDelete}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-red-600 shadow-sm hover:bg-white"
+            title="Delete study"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+        )}
       </div>
+      )}
     </div>
   );
 }

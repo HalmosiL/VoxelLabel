@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { AnnotationType, createAnnotationType, listAnnotationTypes } from "../api/adminApi";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
+import { describeApiError } from "../api/client";
 
 const EXAMPLE_SCHEMA = JSON.stringify(
   {
@@ -28,7 +29,7 @@ export default function AnnotationTypesPage() {
   function refresh() {
     listAnnotationTypes()
       .then(setTypes)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, []);
@@ -41,7 +42,7 @@ export default function AnnotationTypesPage() {
       setName("");
       refresh();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 

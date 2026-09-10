@@ -8,6 +8,7 @@ import PageHeader from "../components/PageHeader";
 import ImagingStudyModal from "../components/ImagingStudyModal";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon } from "../components/icons";
+import { describeApiError } from "../api/client";
 
 export default function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
@@ -18,7 +19,7 @@ export default function PatientDetailPage() {
     if (!patientId) return;
     listPatientCases(patientId)
       .then(setCases)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, [patientId]);

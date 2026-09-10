@@ -1,5 +1,6 @@
-import { DragEvent, useEffect, useState } from "react";
+import React, { DragEvent, useEffect, useMemo, useState } from "react";
 
+import { describeApiError } from "../../api/client";
 import { deletePipelineTemplate, listPipelineTemplates, WorkflowCardType } from "../../api/workflowApi";
 import {
   DatabaseIcon,
@@ -117,7 +118,7 @@ function TemplateThumbnail({ template }: { template: PipelineTemplate }) {
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-lg bg-gray-50"
+      className="relative w-full overflow-hidden rounded-lg border border-gray-100 bg-gray-50/80 [background-image:radial-gradient(circle,#d4d8dd_1px,transparent_1px)] [background-size:12px_12px]"
       style={{ aspectRatio: `${contentWidth} / ${contentHeight}` }}
       role="img"
       aria-label={`${template.title} pipeline diagram`}
@@ -202,7 +203,7 @@ function TemplateThumbnail({ template }: { template: PipelineTemplate }) {
             // Same shell language as WorkflowNodeShell's own real card
             // (the `card` class, a gray icon badge) -- just positioned
             // by percentage instead of a fixed pixel scale.
-            className="card absolute flex !items-center gap-1 overflow-hidden !rounded-lg !p-1 !shadow"
+            className="card absolute flex !items-center gap-1 overflow-hidden !rounded-md !border-gray-200 !p-1 !shadow-sm"
             style={{
               left: pct(m(card.x), contentWidth),
               top: pct(m(card.y), contentHeight),
@@ -210,10 +211,10 @@ function TemplateThumbnail({ template }: { template: PipelineTemplate }) {
               height: pct(card.height, contentHeight),
             }}
           >
-            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded bg-gray-100 text-gray-500">
+            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600">
               {Icon && <Icon className="h-2.5 w-2.5" />}
             </span>
-            <p className="truncate text-[8px] font-semibold leading-tight text-gray-900">{card.title}</p>
+            <p className="truncate text-[9px] font-semibold leading-tight text-gray-900">{card.title}</p>
           </div>
         );
       })}
@@ -235,6 +236,13 @@ function TemplateThumbnail({ template }: { template: PipelineTemplate }) {
   );
 }
 
+/** The distinct card types a template is built from, in first-seen
+ * order -- the little icon strip on every Store card, so what a pipeline
+ * *contains* is readable at a glance without decoding the thumbnail. */
+function templateTypes(template: PipelineTemplate): WorkflowCardType[] {
+  return [...new Set(template.cards.map((c) => c.type))];
+}
+
 function TemplateCard({
   template,
   onInsert,
@@ -245,9 +253,14 @@ function TemplateCard({
   onInsert: (template: PipelineTemplate) => void;
   inserting: string | null;
   // Only custom (saved-by-a-user) templates get a delete affordance --
-  // the 5 built-in ones ship with the app and aren't removable.
+  // the built-in ones ship with the app and aren't removable.
   onDelete?: (template: PipelineTemplate) => void;
 }) {
+  const busy = inserting === template.id;
+  const types = templateTypes(template);
+  const autoRuns = template.cards.some((c) => ["split", "review", "filter", "union", "annotation"].includes(c.type));
+  const usesAi = template.cards.some((c) => ["llm", "builder", "criterion"].includes(c.type));
+
   function handleDragStart(event: DragEvent<HTMLDivElement>) {
     // The *whole* template as JSON, not just an id -- a custom template
     // only exists in this component's own fetched state, not in any
@@ -260,31 +273,74 @@ function TemplateCard({
     <div
       draggable
       onDragStart={handleDragStart}
-      className="card relative cursor-grab !p-3 active:cursor-grabbing"
+      className="group relative flex cursor-grab flex-col gap-3 rounded-xl border border-gray-100 bg-white p-3 shadow-sm transition-all hover:-translate-y-px hover:border-brand-200 hover:shadow-md active:cursor-grabbing"
       title="Drag onto the board to place it exactly where you drop it"
     >
-      {onDelete && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(template);
-          }}
-          className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-gray-400 shadow-sm hover:text-red-600"
-          title="Delete template"
-        >
-          <TrashIcon className="h-3.5 w-3.5" />
-        </button>
-      )}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-gray-900">{template.title}</p>
+          <p className="mt-0.5 text-[11px] text-gray-400">
+            {template.cards.length} card{template.cards.length === 1 ? "" : "s"} · {template.edges.length} connection
+            {template.edges.length === 1 ? "" : "s"}
+            {template.feedback && template.feedback.length > 0 && " · feedback loop"}
+          </p>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-1">
+          {usesAi && (
+            <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200">
+              AI
+            </span>
+          )}
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+              onDelete ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-gray-50 text-gray-500 ring-gray-200"
+            }`}
+          >
+            {onDelete ? "Mine" : "Built-in"}
+          </span>
+        </div>
+      </div>
+
       <TemplateThumbnail template={template} />
-      <p className="mt-2 text-sm font-semibold text-gray-900">{template.title}</p>
-      <p className="mt-1 text-xs leading-relaxed text-gray-500">{template.description}</p>
-      <button
-        onClick={() => onInsert(template)}
-        disabled={inserting === template.id}
-        className="btn-secondary btn-sm mt-2 self-start"
-      >
-        {inserting === template.id ? "Inserting…" : "Insert"}
-      </button>
+
+      <p className="text-xs leading-relaxed text-gray-500">{template.description}</p>
+
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1" aria-label="Card types in this pipeline">
+          {types.map((type) => {
+            const Icon = TYPE_ICON[type];
+            return (
+              <span
+                key={type}
+                title={type}
+                className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-gray-500"
+              >
+                {Icon ? <Icon className="h-3 w-3" /> : <span className="text-[9px]">{type[0]}</span>}
+              </span>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(template);
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
+              title="Delete template"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button onClick={() => onInsert(template)} disabled={busy} className="btn-primary btn-sm">
+            {busy ? "Inserting…" : "Insert"}
+          </button>
+        </div>
+      </div>
+      {autoRuns && (
+        <p className="text-[10px] text-gray-400">Data cards run automatically on insert; AI cards wait for you.</p>
+      )}
     </div>
   );
 }
@@ -304,11 +360,12 @@ export default function PipelineStore({
 }) {
   const [customTemplates, setCustomTemplates] = useState<PipelineTemplate[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   function refresh() {
     listPipelineTemplates()
       .then((dtos) => setCustomTemplates(dtos.map(pipelineTemplateFromDTO)))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -318,8 +375,17 @@ export default function PipelineStore({
     if (!window.confirm(`Delete the "${template.title}" template? This cannot be undone.`)) return;
     deletePipelineTemplate(template.id)
       .then(() => setCustomTemplates((ts) => ts.filter((t) => t.id !== template.id)))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
+
+  const needle = filter.trim().toLowerCase();
+  const matches = (t: PipelineTemplate) =>
+    !needle ||
+    t.title.toLowerCase().includes(needle) ||
+    t.description.toLowerCase().includes(needle) ||
+    t.cards.some((c) => c.type.includes(needle) || c.title.toLowerCase().includes(needle));
+  const builtIn = useMemo(() => PIPELINE_TEMPLATES.filter(matches), [needle]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mine = useMemo(() => customTemplates.filter(matches), [customTemplates, needle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     // No width/border/scroll of its own -- shares WorkflowBoardPage's
@@ -328,31 +394,49 @@ export default function PipelineStore({
       <div>
         <p className="section-title">Store</p>
         <p className="hint">
-          Ready-made pipelines -- drag one onto the board wherever you'd like it, or click Insert to place it in the
-          center of the current view. Add your own by selecting a group of cards and using the "Save to Store" button
-          above.
+          Ready-made pipelines. Drag one onto the board, or click Insert to place it in the middle of the current view.
+          Save your own by selecting cards and using "Save to Store".
         </p>
       </div>
+      <input
+        className="input"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="Filter templates (e.g. review, split, criterion)…"
+        aria-label="Filter templates"
+      />
       {error && <p className="alert-error text-xs">{error}</p>}
-      <div className="flex flex-col gap-3">
-        {PIPELINE_TEMPLATES.map((template) => (
+
+      <StoreSection title="Built-in" count={builtIn.length}>
+        {builtIn.map((template) => (
           <TemplateCard key={template.id} template={template} onInsert={onInsert} inserting={inserting} />
         ))}
+      </StoreSection>
+
+      <StoreSection title="My templates" count={mine.length}>
+        {mine.length === 0 && (
+          <p className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400">
+            {customTemplates.length === 0
+              ? "Nothing saved yet -- select a group of cards on the board and click \"Save to Store\"."
+              : "No saved template matches the filter."}
+          </p>
+        )}
+        {mine.map((template) => (
+          <TemplateCard key={template.id} template={template} onInsert={onInsert} inserting={inserting} onDelete={handleDelete} />
+        ))}
+      </StoreSection>
+    </div>
+  );
+}
+
+function StoreSection({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{title}</p>
+        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{count}</span>
       </div>
-      {customTemplates.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">My templates</p>
-          {customTemplates.map((template) => (
-            <TemplateCard
-              key={template.id}
-              template={template}
-              onInsert={onInsert}
-              inserting={inserting}
-              onDelete={handleDelete}
-            />
-          ))}
-        </div>
-      )}
+      {children}
     </div>
   );
 }

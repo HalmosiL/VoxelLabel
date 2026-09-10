@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { createPytorchExport, getPytorchExport, PytorchExportManifest } from "../../api/ingestionApi";
+import { describeApiError } from "../../api/client";
 import Modal from "../Modal";
 
 const POLL_INTERVAL_MS = 3000;
@@ -77,7 +78,7 @@ export default function PytorchExportModal({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(String(err));
+          setError(describeApiError(err));
           setStatus("failed");
         }
       }
@@ -87,7 +88,7 @@ export default function PytorchExportModal({
       .then((res) => poll(res.export_id))
       .catch((err) => {
         if (!cancelled) {
-          setError(String(err));
+          setError(describeApiError(err));
           setStatus("failed");
         }
       });

@@ -12,6 +12,7 @@ import {
   MonitorIcon,
 } from "./icons";
 import SectionHeader from "./SectionHeader";
+import { describeApiError } from "../api/client";
 
 // Annotation/Review have their own dedicated table sections
 // (TaskCardsPanel) and Dataset its own card grid (DatasetsPanel) --
@@ -127,7 +128,7 @@ export default function WorkflowSummaryPanel({ studyId }: { studyId: string }) {
   useEffect(() => {
     getWorkflowBoard(studyId)
       .then((board) => setCards(board.cards.filter((c) => c.type !== "annotation" && c.type !== "review")))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }, [studyId]);
 
   return (

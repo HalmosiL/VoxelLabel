@@ -2,26 +2,45 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { createPatient } from "../api/adminApi";
-import { listPatients, PatientSummary } from "../api/dataApi";
+import { describeApiError } from "../api/client";
+import { PatientSummary, searchPatients } from "../api/dataApi";
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
 
+const PAGE_SIZE = 50;
+
 export default function PatientsPage() {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showNewPatient, setShowNewPatient] = useState(false);
 
+  // Searched and paged on the server (the patient table spans every
+  // study, so it's the one list that grows without bound).
   function refresh() {
-    listPatients()
-      .then(setPatients)
-      .catch((err) => setError(String(err)));
+    searchPatients({ q: search.trim() || undefined, limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      .then(({ items, total: count }) => {
+        setPatients(items);
+        setTotal(count);
+      })
+      .catch((err) => setError(describeApiError(err)));
   }
 
-  useEffect(refresh, []);
+  useEffect(() => {
+    const handle = window.setTimeout(refresh, search ? 300 : 0);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, page]);
 
-  const filtered = patients.filter((p) => p.pseudonym_id.toLowerCase().includes(search.trim().toLowerCase()));
+  useEffect(() => {
+    setPage(0);
+  }, [search]);
+
+  const filtered = patients;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,7 +91,7 @@ export default function PatientsPage() {
                 <td colSpan={3}>
                   <EmptyState
                     message={
-                      patients.length === 0
+                      total === 0 && !search
                         ? "No patients yet -- create one directly, or add a case to register one."
                         : "No patients match your search."
                     }
@@ -100,6 +119,28 @@ export default function PatientsPage() {
           </tbody>
         </table>
       </div>
+      <div className="flex items-center justify-between">
+        <p className="hint">
+          {total === 0 ? "No patients" : `${page * PAGE_SIZE + 1}–${Math.min(total, (page + 1) * PAGE_SIZE)} of ${total} patients`}
+        </p>
+        {pageCount > 1 && (
+          <div className="flex items-center gap-2">
+            <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="btn-secondary btn-sm">
+              ← Previous
+            </button>
+            <span className="text-xs text-gray-500">
+              Page {page + 1} of {pageCount}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={page >= pageCount - 1}
+              className="btn-secondary btn-sm"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -123,7 +164,7 @@ function NewPatientModal({
       await createPatient(externalPatientId.trim());
       onCreated();
     } catch (err) {
-      onError(String(err));
+      onError(describeApiError(err));
     } finally {
       setSaving(false);
     }

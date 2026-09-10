@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getStudy, Study, updateStudy } from "../api/adminApi";
+import { describeApiError } from "../api/client";
+import { roleLabel, useMe } from "../auth/MeContext";
 import CasesPanel from "../components/CasesPanel";
 import DatasetsPanel from "../components/DatasetsPanel";
 import { DocumentIcon, PencilIcon } from "../components/icons";
@@ -9,10 +11,12 @@ import MembersPanel from "../components/MembersPanel";
 import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
 import TaskCardsPanel from "../components/TaskCardsPanel";
+import VersionsPanel from "../components/VersionsPanel";
 import WorkflowSummaryPanel from "../components/WorkflowSummaryPanel";
 
 export default function StudyDetailPage() {
   const { studyId } = useParams<{ studyId: string }>();
+  const { canAdminister, canManage, roleFor, isAdmin } = useMe();
   const [study, setStudy] = useState<Study | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -21,7 +25,7 @@ export default function StudyDetailPage() {
     if (!studyId) return;
     getStudy(studyId)
       .then(setStudy)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, [studyId]);
@@ -35,19 +39,22 @@ export default function StudyDetailPage() {
         subtitle={study?.description ?? undefined}
         action={
           <div className="flex items-center gap-2">
+            {!isAdmin && <span className="badge-blue">Your role: {roleLabel(roleFor(studyId))}</span>}
             <Link to={`/studies/${studyId}/workflow`} className="btn-secondary btn-sm">
               Workflow board
             </Link>
-            <button onClick={() => setEditOpen(true)} className="btn-secondary btn-sm">
-              Edit
-            </button>
+            {canAdminister(studyId) && (
+              <button onClick={() => setEditOpen(true)} className="btn-secondary btn-sm">
+                Edit
+              </button>
+            )}
           </div>
         }
       />
       {error && <p className="alert-error">{error}</p>}
 
-      <MembersPanel studyId={studyId} />
-      <CasesPanel studyId={studyId} />
+      <MembersPanel studyId={studyId} canAdminister={canAdminister(studyId)} />
+      <CasesPanel studyId={studyId} canManage={canManage(studyId)} />
       <TaskCardsPanel
         studyId={studyId}
         cardType="annotation"
@@ -64,6 +71,14 @@ export default function StudyDetailPage() {
       />
       <WorkflowSummaryPanel studyId={studyId} />
       <DatasetsPanel studyId={studyId} />
+      <VersionsPanel
+        studyId={studyId}
+        canManage={canManage(studyId)}
+        canAdminister={canAdminister(studyId)}
+        // A restore may have renamed the study and reshaped every panel
+        // above -- the simplest correct thing is a full page reload.
+        onRestored={() => window.location.reload()}
+      />
 
       {editOpen && study && (
         <EditStudyModal
@@ -90,7 +105,7 @@ function EditStudyModal({ study, onClose, onSaved }: { study: Study; onClose: ()
       await updateStudy(study.id, name, description);
       onSaved();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
