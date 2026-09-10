@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
+import { MeProvider } from "./auth/MeContext";
 import keycloak from "./keycloak";
 import "./styles.css";
 
@@ -13,7 +14,9 @@ function renderApp() {
   ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
       <BrowserRouter>
-        <App />
+        <MeProvider>
+          <App />
+        </MeProvider>
       </BrowserRouter>
     </React.StrictMode>
   );
@@ -48,6 +51,11 @@ async function bootstrap() {
   const saved = session ? await session.getSession() : null;
 
   try {
+    // checkLoginIframe is off in both branches: the session-status iframe
+    // depends on third-party cookies (blocked by default in current
+    // browsers), so it can't reliably detect anything -- and it fired an
+    // aborted request on every page load. Token refresh (below) is what
+    // actually keeps the session alive.
     // With a saved session, hand keycloak-js the (possibly already-
     // expired) token set it had at last launch rather than forcing a
     // fresh login-required redirect -- this is keycloak-js's own
@@ -57,8 +65,8 @@ async function bootstrap() {
     // still-valid refresh token, all without ever showing a login page.
     const authenticated = await keycloak.init(
       saved
-        ? { token: saved.token, refreshToken: saved.refreshToken, idToken: saved.idToken, pkceMethod: "S256" }
-        : { onLoad: "login-required", pkceMethod: "S256" }
+        ? { token: saved.token, refreshToken: saved.refreshToken, idToken: saved.idToken, pkceMethod: "S256", checkLoginIframe: false }
+        : { onLoad: "login-required", pkceMethod: "S256", checkLoginIframe: false }
     );
 
     if (saved) {

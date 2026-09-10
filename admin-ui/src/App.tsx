@@ -1,7 +1,8 @@
+import { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { useMe } from "./auth/MeContext";
 import Layout from "./components/Layout";
-import { isClinicianApp } from "./config";
 import AnnotationTypesPage from "./pages/AnnotationTypesPage";
 import CaseDetailPage from "./pages/CaseDetailPage";
 import DeidentificationProfilesPage from "./pages/DeidentificationProfilesPage";
@@ -11,25 +12,102 @@ import PatientDetailPage from "./pages/PatientDetailPage";
 import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
 import StudyDetailPage from "./pages/StudyDetailPage";
+import SystemPage from "./pages/SystemPage";
 import UsersPage from "./pages/UsersPage";
 import WorkflowBoardPage from "./pages/WorkflowBoardPage";
 
+/** Keeps a pure annotator/reviewer (or the clinician app) on their
+ * workbench: any admin-side page -- studies, patients, configuration,
+ * the workflow board -- bounces back to My Jobs instead of rendering a
+ * screen full of controls their role would only get 403s from. The
+ * job, case and viewer pages stay reachable. */
+function FullUiOnly({ children }: { children: ReactElement }) {
+  const { jobsOnly } = useMe();
+  return jobsOnly ? <Navigate to="/my-jobs" replace /> : children;
+}
+
 export default function App() {
+  const { jobsOnly } = useMe();
   return (
     <Routes>
-      <Route path="/studies/:studyId/workflow" element={<WorkflowBoardPage />} />
+      <Route
+        path="/studies/:studyId/workflow"
+        element={
+          <FullUiOnly>
+            <WorkflowBoardPage />
+          </FullUiOnly>
+        }
+      />
       <Route element={<Layout />}>
-        <Route path="/" element={<Navigate to={isClinicianApp ? "/my-jobs" : "/studies"} replace />} />
+        <Route path="/" element={<Navigate to={jobsOnly ? "/my-jobs" : "/studies"} replace />} />
         <Route path="/my-jobs" element={<MyJobsPage />} />
         <Route path="/my-jobs/:cardId" element={<JobDetailPage />} />
-        <Route path="/studies" element={<StudiesPage />} />
-        <Route path="/studies/:studyId" element={<StudyDetailPage />} />
         <Route path="/studies/:studyId/cases/:caseId" element={<CaseDetailPage />} />
-        <Route path="/patients" element={<PatientsPage />} />
-        <Route path="/patients/:patientId" element={<PatientDetailPage />} />
-        <Route path="/annotation-types" element={<AnnotationTypesPage />} />
-        <Route path="/deidentification-profiles" element={<DeidentificationProfilesPage />} />
-        <Route path="/users" element={<UsersPage />} />
+        <Route
+          path="/studies"
+          element={
+            <FullUiOnly>
+              <StudiesPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/studies/:studyId"
+          element={
+            <FullUiOnly>
+              <StudyDetailPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/patients"
+          element={
+            <FullUiOnly>
+              <PatientsPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/patients/:patientId"
+          element={
+            <FullUiOnly>
+              <PatientDetailPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/annotation-types"
+          element={
+            <FullUiOnly>
+              <AnnotationTypesPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/deidentification-profiles"
+          element={
+            <FullUiOnly>
+              <DeidentificationProfilesPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <FullUiOnly>
+              <UsersPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/system"
+          element={
+            <FullUiOnly>
+              <SystemPage />
+            </FullUiOnly>
+          }
+        />
+        <Route path="*" element={<Navigate to={jobsOnly ? "/my-jobs" : "/studies"} replace />} />
       </Route>
     </Routes>
   );

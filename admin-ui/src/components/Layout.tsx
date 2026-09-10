@@ -1,7 +1,10 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import Avatar from "./Avatar";
-import { isClinicianApp } from "../config";
+import { BriefcaseIcon, LogoutIcon } from "./icons";
+import WorkbenchLayout from "./WorkbenchLayout";
+import { logout } from "../auth/logout";
+import { useMe } from "../auth/MeContext";
 import keycloak from "../keycloak";
 
 const navGroups = [
@@ -19,21 +22,35 @@ const navGroups = [
       { to: "/annotation-types", label: "Annotation Types", icon: TagIcon },
       { to: "/deidentification-profiles", label: "De-identification", icon: ShieldIcon },
       { to: "/users", label: "Users", icon: UsersIcon },
+      { to: "/system", label: "System", icon: ServerIcon },
     ],
   },
 ];
 
-// The clinician-app desktop shell is for one person's own work only --
-// everything else (Studies, Patients, the whole Configuration group) is
-// admin-ui surface a doctor never needs and would just be clutter/a
-// confusing dead end (its own role checks would refuse them anyway).
-// This is a UX reduction, not the access control -- see config.ts's
-// isClinicianApp docstring.
-const clinicianNavGroups = [{ label: "Workspace", items: [navGroups[0].items[0]] }];
+// A study member without the global admin role (data manager or viewer):
+// My Jobs and their own Studies. Patients (cross-study) and the whole
+// Configuration group are global-admin-only endpoints, so showing them
+// would only lead to 403s.
+const memberNavGroups = [{ label: "Workspace", items: navGroups[0].items.slice(0, 2) }];
 
+/** Picks the shell for the signed-in person: a pure annotator/reviewer
+ * (or the clinician desktop app) gets the reduced WorkbenchLayout -- one
+ * My Jobs page and the surfaces it opens; everyone else the full sidebar
+ * with the screens their role can actually use. */
 export default function Layout() {
+  const { isAdmin, me, jobsOnly } = useMe();
+  if (jobsOnly) return <WorkbenchLayout />;
+  return <AdminLayout isAdmin={isAdmin} membershipCount={me?.memberships.length ?? 0} />;
+}
+
+function AdminLayout({ isAdmin, membershipCount }: { isAdmin: boolean; membershipCount: number }) {
   const username = (keycloak.tokenParsed?.preferred_username as string) ?? "user";
-  const groups = isClinicianApp ? clinicianNavGroups : navGroups;
+  const groups = isAdmin ? navGroups : memberNavGroups;
+  const roleChip = isAdmin
+    ? "Global admin"
+    : membershipCount > 0
+      ? `Member of ${membershipCount} stud${membershipCount === 1 ? "y" : "ies"}`
+      : "No study access yet";
 
   return (
     <div className="flex min-h-screen">
@@ -44,7 +61,7 @@ export default function Layout() {
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight text-gray-900">VoxelLabel</div>
-            <div className="text-xs leading-tight text-gray-400">{isClinicianApp ? "My Jobs" : "Admin"}</div>
+            <div className="text-xs leading-tight text-gray-400">Admin</div>
           </div>
         </div>
 
@@ -86,16 +103,12 @@ export default function Layout() {
 
         <div className="flex items-center gap-2.5 border-t border-gray-200/70 p-4">
           <Avatar id={username} />
-          <span className="flex-1 truncate text-sm font-medium text-gray-700">{username}</span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-sm font-medium text-gray-700">{username}</span>
+            <span className="truncate text-[11px] text-gray-400">{roleChip}</span>
+          </span>
           <button
-            onClick={() => {
-              // Drop the persisted session first -- otherwise the next
-              // launch would silently restore it and undo this logout.
-              // Falls back to an already-resolved promise in the normal
-              // browser deployment, where clinicianSession is undefined.
-              const cleared = window.clinicianSession?.clearSession() ?? Promise.resolve();
-              cleared.finally(() => keycloak.logout());
-            }}
+            onClick={logout}
             title="Log out"
             className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
           >
@@ -113,17 +126,6 @@ export default function Layout() {
   );
 }
 
-function BriefcaseIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
-      <path
-        fillRule="evenodd"
-        d="M6 4a2 2 0 012-2h4a2 2 0 012 2v1h1.5A2.5 2.5 0 0118 7.5v6a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 012 13.5v-6A2.5 2.5 0 014.5 5H6V4zm2 1h4V4H8v1zM4.5 7a.5.5 0 00-.5.5V9h12V7.5a.5.5 0 00-.5-.5h-11zM16 10.5H4v3a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-3z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
 
 function FolderIcon({ className }: { className?: string }) {
   return (
@@ -177,14 +179,16 @@ function ShieldIcon({ className }: { className?: string }) {
   );
 }
 
-function LogoutIcon({ className }: { className?: string }) {
+
+function ServerIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">
       <path
         fillRule="evenodd"
-        d="M3 3a1 1 0 011-1h6a1 1 0 110 2H5v12h5a1 1 0 110 2H4a1 1 0 01-1-1V3zm10.293 3.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L14.586 11H8a1 1 0 110-2h6.586l-1.293-1.293a1 1 0 010-1.414z"
+        d="M2 4.5A2.5 2.5 0 014.5 2h11A2.5 2.5 0 0118 4.5v2A2.5 2.5 0 0115.5 9h-11A2.5 2.5 0 012 6.5v-2zm3 1a.75.75 0 100 1.5h.5a.75.75 0 000-1.5H5zm-3 8A2.5 2.5 0 014.5 11h11a2.5 2.5 0 012.5 2.5v2a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 012 15.5v-2zm3 1a.75.75 0 100 1.5h.5a.75.75 0 000-1.5H5z"
         clipRule="evenodd"
       />
     </svg>
   );
 }
+

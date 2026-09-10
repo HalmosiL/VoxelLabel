@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { describeApiError } from "../api/client";
 import { listMyJobs, MyJob } from "../api/workflowApi";
 import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
-import { isClinicianApp } from "../config";
+import { useMe } from "../auth/MeContext";
 import EmptyState from "../components/EmptyState";
 
 /** Full-page view of a single job assigned to the calling user -- reuses
@@ -13,13 +14,14 @@ import EmptyState from "../components/EmptyState";
  * wire for a direct link isn't worth a second backend endpoint. */
 export default function JobDetailPage() {
   const { cardId } = useParams<{ cardId: string }>();
+  const { jobsOnly } = useMe();
   const [jobs, setJobs] = useState<MyJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     listMyJobs()
       .then(setJobs)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(describeApiError(err)));
   }, []);
 
   if (error) return <p className="alert-error">{error}</p>;
@@ -66,12 +68,9 @@ export default function JobDetailPage() {
             {annotatedCount} of {job.cases.length} case{job.cases.length === 1 ? "" : "s"} annotated
           </p>
           {/* The workflow board is study-wide structure/editing surface --
-              outside what the clinician shell reduces the app to (just
-              this one person's own jobs), so it's hidden there even
-              though nothing stops a direct URL visit from working (the
-              backend's own role checks are the real boundary, same as
-              every other clinician-mode UI reduction). */}
-          {!isClinicianApp && (
+              outside the reduced workbench (just this one person's own
+              jobs); the route itself redirects there too. */}
+          {!jobsOnly && (
             <Link to={`/studies/${job.study_id}/workflow`} className="text-xs font-medium text-brand-600 hover:text-brand-700">
               Open workflow board
             </Link>
@@ -100,7 +99,16 @@ export default function JobDetailPage() {
                   job.card_type === "review" && c.pending_annotation_id ? AWAITING_REVIEW_STYLE : CASE_STATUS_STYLE[c.status];
                 return (
                   <tr key={c.id}>
-                    <td>{c.title || `${c.id.slice(0, 8)}…`}</td>
+                    <td>
+                      <div className="flex flex-col gap-0.5">
+                        <span>{c.title || `${c.id.slice(0, 8)}…`}</span>
+                        {c.latest_review_comment && (
+                          <span className="text-xs text-gray-500">
+                            <span className="font-medium text-gray-600">Reviewer:</span> {c.latest_review_comment}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td>
                       <span className={caseStyle.badge}>
                         <span className={`badge-dot ${caseStyle.dot}`} />
