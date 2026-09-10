@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Downloadable single-user desktop shell for VoxelLabel: log in once, see only your own Annotation/Review jobs, open the viewer directly.",
   "private": true,
+  "author": "VoxelLabel",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -24,6 +25,7 @@
       "preload.js",
       "session-store.js",
       "config.js",
+      "static-server.js",
       "no-config.html"
     ],
     "extraResources": [

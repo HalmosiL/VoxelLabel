@@ -4,7 +4,7 @@
 // on it). No new UI of its own beyond a first-run "edit config.json"
 // safety screen; the bundled admin-ui/dist is the real app.
 const path = require("path");
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
 
 const { loadConfig } = require("./config");
 const sessionStore = require("./session-store");
@@ -88,6 +88,18 @@ async function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // On Linux without a keyring daemon, Electron's safeStorage reports
+  // encryption as *unavailable* even with the "basic" password store
+  // selected above -- and then the persisted login (session-store.js)
+  // silently never saves anything, so every launch shows the login page
+  // again. Opting into plain-text-backed storage makes safeStorage work
+  // there too (the session file is then obfuscated rather than
+  // keyring-encrypted -- the same trade-off Chromium itself makes on
+  // such desktops). No-op on Windows/macOS, which always have a store.
+  if (process.platform === "linux" && typeof safeStorage.setUsePlainTextEncryption === "function") {
+    safeStorage.setUsePlainTextEncryption(true);
+  }
+
   ipcMain.handle("clinician:getSession", () => sessionStore.getSession(userDataDir));
   ipcMain.handle("clinician:saveSession", (_event, session) => sessionStore.saveSession(userDataDir, session));
   ipcMain.handle("clinician:clearSession", () => sessionStore.clearSession(userDataDir));
