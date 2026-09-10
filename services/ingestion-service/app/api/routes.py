@@ -1,8 +1,10 @@
 """HTTP API for DICOM ingestion: upload, job status, PyTorch exports, and
 quick import."""
+import io
 import json
 import uuid
 
+import pydicom
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -13,7 +15,23 @@ from shared_models.database import get_db
 from shared_models.models import Case, Study, WorkflowCard, WorkflowCardType
 
 from app.storage import download_object, presigned_export_url, upload_staged_file
+from app.pipeline import REQUIRED_TAGS
 from app.tasks import celery_app, export_pytorch_dataset, ingest_dicom_file, quick_import_batch
+
+
+def _reject_non_dicom(data: bytes) -> None:
+    """Fail fast, in the request, on a file that isn't a usable DICOM --
+    otherwise it would be staged, queued, and only fail minutes later
+    inside a worker where nobody is looking (and its staged copy would
+    linger in object storage). Header-only parse: pixel data is never
+    decoded here."""
+    try:
+        dataset = pydicom.dcmread(io.BytesIO(data), stop_before_pixels=True, force=True)
+    except Exception as exc:  # noqa: BLE001 -- any parse failure means "not DICOM" to the caller
+        raise HTTPException(status_code=422, detail=f"Not a readable DICOM file: {exc}") from exc
+    missing = [tag for tag in REQUIRED_TAGS if tag not in dataset]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Not a valid DICOM file: missing {', '.join(missing)}")
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 
@@ -41,12 +59,27 @@ async def upload_dicom(
         raise HTTPException(status_code=404, detail="Case not found")
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
+    data = await file.read()
+    _reject_non_dicom(data)
     job_id = str(uuid.uuid4())
     staging_key = f"_staging/{job_id}.dcm"
-    upload_staged_file(staging_key, await file.read())
-
-    ingest_dicom_file.delay(job_id=job_id, case_id=case_id, staging_key=staging_key)
+    upload_staged_file(staging_key, data)
+    # task_id=job_id makes the job pollable via GET /ingestion/jobs/{job_id}
+    # (Celery's own result backend), the same way quick imports are.
+    ingest_dicom_file.apply_async(kwargs={"job_id": job_id, "case_id": case_id, "staging_key": staging_key}, task_id=job_id)
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/jobs/{job_id}")
+def get_ingestion_job(job_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Polls one single-file upload job -- completed (with the instance
+    id, or "duplicate"), failed (with the reason), or still pending."""
+    result = AsyncResult(job_id, app=celery_app)
+    if result.state == "SUCCESS":
+        return {"status": "completed", **(result.result if isinstance(result.result, dict) else {})}
+    if result.state == "FAILURE":
+        return {"status": "failed", "error": str(result.result)}
+    return {"status": (result.state or "PENDING").lower()}
 
 
 @router.post("/studies/{study_id}/quick-import")

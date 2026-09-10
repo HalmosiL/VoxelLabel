@@ -1,6 +1,7 @@
 """HTTP API for browsing cases, imaging studies/series/instances, and
 clinical data items."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
@@ -65,13 +66,28 @@ def _serialize_case(case: Case) -> dict:
 @router.get("/studies/{study_id}/cases")
 def list_cases(
     study_id: str,
+    response: Response,
+    q: str | None = Query(default=None, description="Case-insensitive substring of title, accession number or type"),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
+    """Cases of a study, optionally searched (`q`) and paged (`limit`/
+    `offset`). The response stays a plain list for existing callers;
+    the unpaged total is in the `X-Total-Count` header so a paging UI
+    can render "N of M" without a second request."""
     require_study_role(db, study_id, user, allowed_roles=_READ_ROLES)
 
-    cases = db.query(Case).filter_by(study_id=study_id).all()
-    return [_serialize_case(c) for c in cases]
+    query = db.query(Case).filter_by(study_id=study_id)
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(or_(Case.title.ilike(pattern), Case.accession_number.ilike(pattern), Case.type.ilike(pattern)))
+    response.headers["X-Total-Count"] = str(query.count())
+    query = query.order_by(Case.created_at.desc()).offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+    return [_serialize_case(c) for c in query.all()]
 
 
 @router.get("/cases/{case_id}")
@@ -233,6 +249,10 @@ def list_clinical_data_items(
 
 @router.get("/patients")
 def list_patients(
+    response: Response,
+    q: str | None = Query(default=None, description="Case-insensitive substring of the pseudonym id"),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
@@ -240,8 +260,14 @@ def list_patients(
     needs the global admin role instead of a study-scoped check."""
     _require_global_admin(user)
 
-    patients = db.query(Patient).all()
-    return [{"id": str(p.id), "pseudonym_id": p.pseudonym_id, "case_count": len(p.cases)} for p in patients]
+    query = db.query(Patient)
+    if q:
+        query = query.filter(Patient.pseudonym_id.ilike(f"%{q}%"))
+    response.headers["X-Total-Count"] = str(query.count())
+    query = query.order_by(Patient.pseudonym_id).offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+    return [{"id": str(p.id), "pseudonym_id": p.pseudonym_id, "case_count": len(p.cases)} for p in query.all()]
 
 
 @router.get("/patients/{patient_id}/cases")

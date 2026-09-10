@@ -15,6 +15,14 @@ router = APIRouter(prefix="/annotations", tags=["annotations"])
 _READ_ROLES = ["viewer", "annotator", "reviewer", "admin"]
 
 
+def _has_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles: list[str]) -> bool:
+    try:
+        require_study_role(db, study_id, user, allowed_roles)
+        return True
+    except HTTPException:
+        return False
+
+
 _CREATABLE_STATUSES = {AnnotationStatus.DRAFT, AnnotationStatus.SUBMITTED}
 
 
@@ -35,7 +43,14 @@ def create_annotation(
     rejected, which only the reviewer-only /review endpoint below can
     set. The payload is validated against the registered annotation
     type's JSON Schema before being stored."""
-    require_study_role(db, study_id, user, allowed_roles=["annotator", "admin"])
+    # "reviewer" is allowed here too, not just "annotator": a review in
+    # ct-annotator records the reviewer's per-object accept/reject marks
+    # as a new annotation version *before* posting the approve/reject
+    # decision on it (see its handleSubmitReview), so a reviewer-only
+    # member could never actually finish a review -- their save was
+    # refused with 403 one step before the decision. The decision itself
+    # stays reviewer/admin-only (see review_annotation below).
+    require_study_role(db, study_id, user, allowed_roles=["annotator", "reviewer", "admin"])
 
     if status not in _CREATABLE_STATUSES:
         raise HTTPException(status_code=422, detail=f"Cannot create an annotation with status '{status.value}'")
@@ -131,7 +146,13 @@ def review_annotation(
         raise HTTPException(status_code=404, detail="Annotation not found")
 
     require_study_role(db, str(annotation.study_id), user, allowed_roles=["reviewer", "admin"])
-
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=422, detail="decision must be 'approve' or 'reject'")
+    if annotation.status in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED) and "admin" not in user.realm_roles:
+        # A decision is a decision -- re-deciding an already approved/
+        # rejected version is reserved for a global admin (an override),
+        # so two reviewers can't silently flip each other's outcome.
+        raise HTTPException(status_code=409, detail=f"This annotation was already {annotation.status.value}")
     annotation.status = AnnotationStatus.APPROVED if decision == "approve" else AnnotationStatus.REJECTED
     db.add(AnnotationReview(annotation_id=annotation.id, reviewer_id=user.subject, decision=decision, comment=comment))
     db.commit()
@@ -158,6 +179,10 @@ def delete_annotation(
         raise HTTPException(status_code=404, detail="Annotation not found")
 
     require_study_role(db, str(annotation.study_id), user, allowed_roles=["annotator", "reviewer", "admin"])
+    if annotation.annotator_id != user.subject and not _has_study_role(db, str(annotation.study_id), user, ["reviewer", "admin"]):
+        # An annotator may only delete their *own* work; taking back
+        # someone else's submission is a reviewer/admin action.
+        raise HTTPException(status_code=403, detail="You can only delete your own annotations")
 
     if db.query(Annotation).filter_by(parent_version_id=annotation.id).first() is not None:
         raise HTTPException(status_code=409, detail="Cannot delete an annotation that has a newer version")

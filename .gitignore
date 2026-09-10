@@ -11,3 +11,6 @@ build/
 infra/k8s/secret.yaml
 node_modules/
 admin-ui/.env
+
+# Claude Code local session config -- not project code.
+.claude/

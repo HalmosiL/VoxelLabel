@@ -104,49 +104,63 @@ def _ingest_one_instance(db: Session, case: Case, dataset) -> dict:
     return {"status": "completed", "instance_id": str(instance.id)}
 
 
-def _get_or_create_imaging_study(db: Session, dataset, case: Case) -> ImagingStudy:
-    imaging_study = db.query(ImagingStudy).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
-    if imaging_study is not None:
-        return imaging_study
+def _get_or_create(db: Session, model, lookup: dict, build_row):
+    """Find-or-insert a row by a unique key, safe under concurrent workers.
 
-    imaging_study = ImagingStudy(
-        case_id=case.id,
-        study_instance_uid=dataset.StudyInstanceUID,
-        modality=getattr(dataset, "Modality", None),
-        description=getattr(dataset, "StudyDescription", None),
-    )
-    db.add(imaging_study)
+    Two Celery workers ingesting files of the same brand-new study/series
+    at once both see "doesn't exist yet" and both try to INSERT; the
+    loser's INSERT fails on the unique constraint. That failure is
+    confined to a SAVEPOINT (`begin_nested`), so only the failed INSERT
+    is undone and the rest of the caller's transaction survives -- a
+    plain `db.rollback()` here would discard *everything* flushed so far
+    in this transaction, which for the quick-import batch path (many
+    instances per commit, see app/quick_import.py) would silently drop
+    every already-processed instance of the batch. After the savepoint
+    rolls back, the winner's row (committed by then -- Postgres blocks
+    the losing INSERT on the unique index until the winner commits) is
+    re-read and used instead.
+    """
+    row = db.query(model).filter_by(**lookup).first()
+    if row is not None:
+        return row
     try:
-        db.flush()
+        with db.begin_nested():
+            row = build_row()
+            db.add(row)
+            db.flush()
+        return row
     except IntegrityError:
-        # Another worker won the race and inserted this same
-        # study_instance_uid first (its own unique constraint) -- this is
-        # the fix for a known bug (see project memory, 2026-08-22 entry):
-        # concurrent uploads for a brand-new series used to raise
-        # uncaught here and silently drop the losing instance. Roll back
-        # this half-done insert and use the winner's row instead.
-        db.rollback()
-        imaging_study = db.query(ImagingStudy).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
-    return imaging_study
+        db.expire_all()
+        row = db.query(model).filter_by(**lookup).first()
+        if row is None:  # not a unique-key race after all -- surface it
+            raise
+        return row
+
+
+def _get_or_create_imaging_study(db: Session, dataset, case: Case) -> ImagingStudy:
+    return _get_or_create(
+        db,
+        ImagingStudy,
+        {"study_instance_uid": dataset.StudyInstanceUID},
+        lambda: ImagingStudy(
+            case_id=case.id,
+            study_instance_uid=dataset.StudyInstanceUID,
+            modality=getattr(dataset, "Modality", None),
+            description=getattr(dataset, "StudyDescription", None),
+        ),
+    )
 
 
 def _get_or_create_series(db: Session, dataset, imaging_study: ImagingStudy) -> Series:
-    series = db.query(Series).filter_by(series_instance_uid=dataset.SeriesInstanceUID).first()
-    if series is not None:
-        return series
-
-    series = Series(
-        imaging_study_id=imaging_study.id,
-        series_instance_uid=dataset.SeriesInstanceUID,
-        series_number=getattr(dataset, "SeriesNumber", None),
-        body_part=getattr(dataset, "BodyPartExamined", None),
-        series_description=getattr(dataset, "SeriesDescription", None),
+    return _get_or_create(
+        db,
+        Series,
+        {"series_instance_uid": dataset.SeriesInstanceUID},
+        lambda: Series(
+            imaging_study_id=imaging_study.id,
+            series_instance_uid=dataset.SeriesInstanceUID,
+            series_number=getattr(dataset, "SeriesNumber", None),
+            body_part=getattr(dataset, "BodyPartExamined", None),
+            series_description=getattr(dataset, "SeriesDescription", None),
+        ),
     )
-    db.add(series)
-    try:
-        db.flush()
-    except IntegrityError:
-        # Same race as _get_or_create_imaging_study, one level down.
-        db.rollback()
-        series = db.query(Series).filter_by(series_instance_uid=dataset.SeriesInstanceUID).first()
-    return series

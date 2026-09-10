@@ -1,5 +1,5 @@
 """Unit tests for the workflow board's pure logic helpers -- the parts of
-app/api/workflow.py that need no live DB or Keycloak. Run-time behavior
+the app/api/workflow package that need no live DB or Keycloak. Run-time behavior
 that requires a live Postgres (the actual Run endpoints, edge validation,
 cascading delete) is exercised via curl against the docker-compose stack
 instead, following this service's existing test/verification split (see

@@ -500,6 +500,19 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
                         summary = _summarize_tool_result(
                             name, result_data, result.is_error, _tool_error_text(result) if result.is_error else ""
                         )
+                        previous = new_messages[-1] if new_messages else None
+                        if (
+                            previous
+                            and previous.get("tool_call")
+                            and previous["tool_call"].get("name") == name
+                            and previous["tool_call"].get("args") == args
+                        ):
+                            # The model re-issued the exact same call (a
+                            # retry after a nudge, typically) -- refresh
+                            # the shown result instead of narrating the
+                            # same "Let me check..." line twice in a row.
+                            previous["tool_call"]["result_summary"] = summary
+                            continue
                         new_messages.append(
                             {
                                 "role": "assistant",

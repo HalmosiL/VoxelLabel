@@ -16,6 +16,8 @@ from app.api.imaging import router as imaging_router
 from app.api.pipeline_templates import router as pipeline_templates_router
 from app.api.studies import router as studies_router
 from app.api.users import router as users_router
+from app.api.versions import router as versions_router
+from app.api.backups import router as backups_router
 from app.api.workflow import router as workflow_router
 from app.core.config import settings
 
@@ -36,6 +38,8 @@ app.include_router(imaging_router)
 app.include_router(users_router)
 app.include_router(workflow_router)
 app.include_router(pipeline_templates_router)
+app.include_router(versions_router)
+app.include_router(backups_router)
 
 
 @app.get("/health")
