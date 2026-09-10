@@ -59,10 +59,84 @@ def list_realm_users() -> list[dict]:
     )
     response.raise_for_status()
     admin_ids = _admin_role_user_ids()
-    return [
-        {"id": u["id"], "username": u.get("username"), "email": u.get("email"), "is_admin": u["id"] in admin_ids}
-        for u in response.json()
-    ]
+    return [_serialize_user(u, u["id"] in admin_ids) for u in response.json()]
+
+
+def _serialize_user(u: dict, is_admin: bool) -> dict:
+    created = u.get("createdTimestamp")
+    return {
+        "id": u["id"],
+        "username": u.get("username"),
+        "email": u.get("email"),
+        "first_name": u.get("firstName"),
+        "last_name": u.get("lastName"),
+        "enabled": bool(u.get("enabled", True)),
+        "email_verified": bool(u.get("emailVerified", False)),
+        "required_actions": u.get("requiredActions") or [],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created / 1000)) if created else None,
+        "is_admin": is_admin,
+    }
+
+
+def _headers() -> dict:
+    return {"Authorization": f"Bearer {_service_account_token()}"}
+
+
+def _users_url(user_id: str = "") -> str:
+    base = f"{settings.keycloak_internal_url}/admin/realms/{settings.keycloak_realm}/users"
+    return f"{base}/{user_id}" if user_id else base
+
+
+def get_user(user_id: str) -> dict:
+    response = httpx.get(_users_url(user_id), headers=_headers())
+    response.raise_for_status()
+    return _serialize_user(response.json(), user_id in _admin_role_user_ids())
+
+
+def update_user(user_id: str, **fields) -> dict:
+    """Edits profile fields (first_name/last_name/email/enabled) -- Keycloak's
+    PUT replaces the representation, so the current one is fetched and
+    merged first, never overwritten blind."""
+    current = httpx.get(_users_url(user_id), headers=_headers())
+    current.raise_for_status()
+    representation = current.json()
+    mapping = {"first_name": "firstName", "last_name": "lastName", "email": "email", "enabled": "enabled"}
+    for key, value in fields.items():
+        if value is not None and key in mapping:
+            representation[mapping[key]] = value
+    response = httpx.put(_users_url(user_id), headers=_headers(), json=representation)
+    response.raise_for_status()
+    return get_user(user_id)
+
+
+def set_admin_role(user_id: str, is_admin: bool) -> None:
+    currently_admin = user_id in _admin_role_user_ids()
+    if is_admin and not currently_admin:
+        _grant_admin_role(user_id)
+    elif not is_admin and currently_admin:
+        role = httpx.get(f"{settings.keycloak_internal_url}/admin/realms/{settings.keycloak_realm}/roles/admin", headers=_headers())
+        role.raise_for_status()
+        response = httpx.request(
+            "DELETE", f"{_users_url(user_id)}/role-mappings/realm", headers=_headers(), json=[role.json()]
+        )
+        response.raise_for_status()
+
+
+def reset_password(user_id: str, password: str, temporary: bool = True) -> None:
+    """Sets a new password; `temporary` makes Keycloak ask the person to
+    choose their own at the next login (the "handed over by an admin"
+    case), False sets it outright."""
+    response = httpx.put(
+        f"{_users_url(user_id)}/reset-password",
+        headers=_headers(),
+        json={"type": "password", "value": password, "temporary": temporary},
+    )
+    response.raise_for_status()
+
+
+def delete_user(user_id: str) -> None:
+    response = httpx.delete(_users_url(user_id), headers=_headers())
+    response.raise_for_status()
 
 
 def create_user(username: str, email: str, first_name: str, last_name: str, password: str, is_admin: bool) -> dict:

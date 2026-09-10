@@ -1,5 +1,16 @@
+# Every service restarts on its own after a crash/host reboot
+# (`restart: unless-stopped`) and carries a memory ceiling: the whole
+# stack shares a 7 GB dev host with Ollama, so one runaway process must
+# not take the others down with it. The ceilings are generous relative
+# to observed usage (see docker stats) -- raise one if a service gets
+# OOM-killed rather than removing it.
 services:
   postgres:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768m
     image: postgres:16
     environment:
       POSTGRES_USER: ctplatform
@@ -11,11 +22,21 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   redis:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
     image: redis:7
     ports:
       - "6379:6379"
 
   minio:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
@@ -30,6 +51,11 @@ services:
   # Dev-mode Keycloak (in-memory, single node). Production uses the
   # Keycloak Operator with its own HA Postgres -- see infra/k8s/README.md.
   keycloak:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 900m
     image: quay.io/keycloak/keycloak:24.0
     command: start-dev
     environment:
@@ -41,6 +67,11 @@ services:
       - keycloak-data:/opt/keycloak/data
 
   ingestion-service:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     build:
       context: .
       dockerfile: services/ingestion-service/Dockerfile
@@ -62,6 +93,11 @@ services:
       - minio
 
   ingestion-worker:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     build:
       context: .
       dockerfile: services/ingestion-service/Dockerfile
@@ -76,6 +112,11 @@ services:
       - minio
 
   data-service:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     build:
       context: .
       dockerfile: services/data-service/Dockerfile
@@ -95,6 +136,11 @@ services:
       - minio
 
   annotation-service:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     build:
       context: .
       dockerfile: services/annotation-service/Dockerfile
@@ -108,6 +154,11 @@ services:
       - postgres
 
   admin-service:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     build:
       context: .
       dockerfile: services/admin-service/Dockerfile
@@ -133,17 +184,52 @@ services:
       # real requirement, not just a nice-to-have.
       OLLAMA_MODEL: qwen3:1.7b
       MCP_SERVER_URL: http://mcp-server:8000/mcp
+      # Where the db-backup service writes dumps -- listed/triggered/
+      # downloaded through this service's /admin/backups endpoints.
+      BACKUPS_DIR: /backups
+    volumes:
+      - db-backups:/backups
     ports:
       - "8004:8000"
     depends_on:
       - postgres
       - minio
 
+  # Scheduled logical backups of the platform database (pg_dump, custom
+  # format) into the db-backups volume -- daily by default, plus on
+  # demand via admin-ui's "Back up now" (a trigger file admin-service
+  # writes into the same volume). Restore: scripts/restore-db.sh.
+  db-backup:
+    image: postgres:16
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    environment:
+      PGHOST: postgres
+      PGUSER: ctplatform
+      PGPASSWORD: ctplatform
+      PGDATABASE: ctplatform
+      BACKUP_INTERVAL_SECONDS: "86400"
+      BACKUP_RETENTION_DAYS: "14"
+    volumes:
+      - db-backups:/backups
+      - ./scripts/db-backup-loop.sh:/usr/local/bin/db-backup-loop.sh:ro
+    entrypoint: ["bash", "/usr/local/bin/db-backup-loop.sh"]
+    depends_on:
+      - postgres
+
   # A real MCP server (not framing/mocked) exposing the Clinical Trial
   # Assistant's tools -- reachable only inside this compose network
   # (no host port published); admin-service's llm_chat is the only
   # caller, and its own require_study_role check is the trust boundary.
   mcp-server:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     build:
       context: .
       dockerfile: services/mcp-server/Dockerfile
@@ -168,12 +254,20 @@ services:
   # pull <model>`.
   ollama:
     image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      # Unload the model 2 minutes after the last chat instead of the
+      # default 5 -- on this 7 GB host the loaded model is the single
+      # biggest resident allocation.
+      OLLAMA_KEEP_ALIVE: 2m
     volumes:
       - ollama-data:/root/.ollama
     ports:
       - "11434:11434"
     deploy:
       resources:
+        limits:
+          memory: 4g
         reservations:
           devices:
             - driver: nvidia
@@ -185,6 +279,11 @@ services:
   # server-to-server, so no runtime env wiring is needed here beyond the
   # build-time defaults in admin-ui/src/config.ts.
   admin-ui:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64m
     build:
       context: .
       dockerfile: admin-ui/Dockerfile
@@ -192,6 +291,7 @@ services:
       - "5173:80"
 
 volumes:
+  db-backups:
   postgres-data:
   minio-data:
   keycloak-data:

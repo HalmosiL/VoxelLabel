@@ -38,6 +38,10 @@ class Settings:
     ollama_model: str = os.environ.get("OLLAMA_MODEL", "qwen3:1.7b")
     # ...driven through a real MCP server's tools, not anything mocked.
     mcp_server_url: str = os.environ.get("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
+    # Shared with the db-backup compose service (see docker-compose.yml)
+    # -- dumps are listed/downloaded from here and a trigger file written
+    # into it starts an on-demand backup.
+    backups_dir: str = os.environ.get("BACKUPS_DIR", "/backups")
 
 
 settings = Settings()
