@@ -1,5 +1,5 @@
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import {
   CaseFormFields,
@@ -8,6 +8,7 @@ import {
   updateCase,
   updateSeries,
 } from "../api/adminApi";
+import { describeApiError } from "../api/client";
 import {
   CaseSeries,
   CaseSummary,
@@ -22,8 +23,8 @@ import {
   listImagingStudies,
   listInstances,
 } from "../api/dataApi";
-import { uploadDicom } from "../api/ingestionApi";
-import { ANNOTATOR_UI_URL } from "../config";
+import { getIngestionJob, uploadDicom } from "../api/ingestionApi";
+import { useMe } from "../auth/MeContext";
 import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
 import ImagingStudyModal from "../components/ImagingStudyModal";
@@ -31,6 +32,7 @@ import Modal from "../components/Modal";
 import SectionHeader from "../components/SectionHeader";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon, PencilIcon } from "../components/icons";
+import { ANNOTATOR_UI_URL } from "../config";
 
 /** Appends `&jobId=<id>` when this Case page was reached via a My Jobs
  * link -- lets ct-annotator fetch and enforce that job's Surface-card
@@ -46,36 +48,52 @@ function viewerUrl(seriesId: string, studyId: string, caseId: string, jobId: str
   return `${withJob}&returnUrl=${encodeURIComponent(window.location.href)}`;
 }
 
+/** One case, top to bottom: who/what it is (with the free-text notes
+ * right next to it), then its imaging grouped the way DICOM actually
+ * nests it (imaging study → series → images, each series openable in
+ * the viewer), then the non-imaging documents as a table. Editing
+ * controls only appear for a member who may manage data; a job link
+ * (`?jobId=`) travels into every "Open in Viewer" so the viewer applies
+ * that job's surface restrictions. */
 export default function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const [searchParams] = useSearchParams();
   const jobId = searchParams.get("jobId");
+  const { canManage, jobsOnly } = useMe();
   const [caseInfo, setCaseInfo] = useState<CaseSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  // Bumped after a DICOM upload so the Series section (a sibling
-  // component with its own independent fetch, no other way to hear
-  // about an upload that happened inside ImagingStudiesSection) knows
-  // to refetch too -- see ImagingStudiesSection's own onUploaded call.
-  const [imagingRefreshSignal, setImagingRefreshSignal] = useState(0);
 
   function refreshCase() {
-    if (caseId) getCase(caseId).then(setCaseInfo).catch((err) => setError(String(err)));
+    if (caseId) getCase(caseId).then(setCaseInfo).catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refreshCase, [caseId]);
 
-  if (!caseId || !caseInfo) return null;
+  if (!caseId || !caseInfo) return error ? <p className="alert-error">{error}</p> : null;
+  const editable = canManage(caseInfo.study_id);
 
   return (
     <div className="flex flex-col gap-6">
       {error && <p className="alert-error">{error}</p>}
 
-      <CaseInfoCard caseInfo={caseInfo} onEdit={() => setEditModalOpen(true)} />
-      <CommentBox caseId={caseId} initialComment={caseInfo.comment} onSaved={refreshCase} />
-      <ImagingStudiesSection caseId={caseId} onUploaded={() => setImagingRefreshSignal((n) => n + 1)} />
-      <SeriesSection caseId={caseId} studyId={caseInfo.study_id} jobId={jobId} refreshSignal={imagingRefreshSignal} />
-      <DocumentsSection caseId={caseId} />
+      <nav className="flex items-center gap-1.5 text-xs text-gray-400">
+        {jobId ? (
+          <Link to={`/my-jobs/${jobId}`} className="font-medium text-brand-600 hover:text-brand-700">
+            ← Back to the job
+          </Link>
+        ) : (
+          !jobsOnly && (
+            <Link to={`/studies/${caseInfo.study_id}`} className="font-medium text-brand-600 hover:text-brand-700">
+              ← Back to the study
+            </Link>
+          )
+        )}
+      </nav>
+
+      <CaseHeader caseInfo={caseInfo} editable={editable} onEdit={() => setEditModalOpen(true)} onSaved={refreshCase} />
+      <ImagingSection caseId={caseId} studyId={caseInfo.study_id} jobId={jobId} editable={editable} />
+      <DocumentsSection caseId={caseId} editable={editable} />
 
       {editModalOpen && (
         <EditCaseModal
@@ -91,37 +109,93 @@ export default function CaseDetailPage() {
   );
 }
 
-function CaseInfoCard({ caseInfo, onEdit }: { caseInfo: CaseSummary; onEdit: () => void }) {
+// ---------------------------------------------------------------- header
+
+function CaseHeader({
+  caseInfo,
+  editable,
+  onEdit,
+  onSaved,
+}: {
+  caseInfo: CaseSummary;
+  editable: boolean;
+  onEdit: () => void;
+  onSaved: () => void;
+}) {
+  const [comment, setComment] = useState(caseInfo.comment ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dirty = comment !== (caseInfo.comment ?? "");
+
+  useEffect(() => {
+    setComment(caseInfo.comment ?? "");
+  }, [caseInfo.comment]);
+
+  async function handleSaveComment() {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateCase(caseInfo.id, { comment });
+      onSaved();
+    } catch (err) {
+      setError(describeApiError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="card">
-      <div className="flex flex-wrap items-start justify-between gap-6">
-        <div className="flex flex-col gap-1.5">
-          <h1 className="page-title">{caseInfo.title || `Patient ${caseInfo.patient_pseudonym_id.slice(0, 8)}…`}</h1>
-          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm text-gray-600">
+      {error && <p className="alert-error mb-3">{error}</p>}
+      <div className="grid gap-6 lg:grid-cols-[1fr,minmax(280px,1fr)]">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="page-title">{caseInfo.title || `Patient ${caseInfo.patient_pseudonym_id.slice(0, 8)}…`}</h1>
+              {caseInfo.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {caseInfo.tags.map((tag) => (
+                    <span key={tag} className="badge-gray">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {editable && (
+              <button onClick={onEdit} className="btn-secondary btn-sm flex-shrink-0">
+                Edit details
+              </button>
+            )}
+          </div>
+          <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1.5 text-sm">
             <dt className="text-gray-400">Patient ID</dt>
-            <dd className="font-mono text-xs">{caseInfo.patient_pseudonym_id}</dd>
+            <dd className="font-mono text-xs text-gray-700">{caseInfo.patient_pseudonym_id}</dd>
             <dt className="text-gray-400">Accession number</dt>
-            <dd>{caseInfo.accession_number || "—"}</dd>
+            <dd className="text-gray-700">{caseInfo.accession_number || "—"}</dd>
             <dt className="text-gray-400">Date</dt>
-            <dd>{caseInfo.date || "—"}</dd>
+            <dd className="text-gray-700">{caseInfo.date || "—"}</dd>
             <dt className="text-gray-400">Type</dt>
-            <dd>{caseInfo.type || "—"}</dd>
+            <dd className="text-gray-700">{caseInfo.type || "—"}</dd>
           </dl>
         </div>
 
-        <div className="flex flex-col items-end gap-3">
-          <button onClick={onEdit} className="btn-secondary btn-sm">
-            Edit
-          </button>
-          {caseInfo.tags.length > 0 && (
-            <div className="flex flex-wrap justify-end gap-1.5">
-              {caseInfo.tags.map((tag) => (
-                <span key={tag} className="badge-gray">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
+        <div className="flex flex-col gap-2 rounded-xl bg-gray-50/80 p-4">
+          <div className="flex items-center justify-between">
+            <span className="label">Notes</span>
+            {editable && dirty && (
+              <button onClick={handleSaveComment} disabled={saving} className="btn-primary btn-sm">
+                {saving ? "Saving…" : "Save notes"}
+              </button>
+            )}
+          </div>
+          <textarea
+            className="input min-h-[7rem] flex-1 resize-y bg-white"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            readOnly={!editable}
+            placeholder={editable ? "Clinical context, what to look for, anything the annotator should know…" : "No notes."}
+          />
         </div>
       </div>
     </div>
@@ -151,7 +225,7 @@ function EditCaseModal({
       await updateCase(caseInfo.id, fields);
       onSaved();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -173,16 +247,11 @@ function EditCaseModal({
         </label>
         <label className="field">
           <span className="label">Date</span>
-          <input
-            className="input"
-            type="date"
-            value={fields.date}
-            onChange={(e) => setFields({ ...fields, date: e.target.value })}
-          />
+          <input className="input" type="date" value={fields.date} onChange={(e) => setFields({ ...fields, date: e.target.value })} />
         </label>
         <label className="field">
           <span className="label">Type</span>
-          <input className="input" value={fields.type} onChange={(e) => setFields({ ...fields, type: e.target.value })} />
+          <input className="input" value={fields.type} onChange={(e) => setFields({ ...fields, type: e.target.value })} placeholder="e.g. radiology, oncology" />
         </label>
         <div className="mt-2 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn-secondary">
@@ -197,82 +266,81 @@ function EditCaseModal({
   );
 }
 
-function CommentBox({ caseId, initialComment, onSaved }: { caseId: string; initialComment: string | null; onSaved: () => void }) {
-  const [comment, setComment] = useState(initialComment ?? "");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+// ---------------------------------------------------------------- imaging
 
-  useEffect(() => setComment(initialComment ?? ""), [initialComment]);
-
-  async function handleSave() {
-    setSaving(true);
-    setError(null);
-    try {
-      await updateCase(caseId, { comment });
-      onSaved();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2 className="section-title mb-3">Comment</h2>
-      {error && <p className="alert-error mb-3">{error}</p>}
-      <textarea
-        className="input"
-        rows={4}
-        value={comment}
-        onChange={(e) => setComment(e.target.value)}
-        placeholder="Notes about this case…"
-      />
-      <button onClick={handleSave} disabled={saving} className="btn-secondary btn-sm mt-3">
-        {saving ? "Saving…" : "Save comment"}
-      </button>
-    </div>
-  );
-}
-
-function ImagingStudiesSection({ caseId, onUploaded }: { caseId: string; onUploaded: () => void }) {
+function ImagingSection({
+  caseId,
+  studyId,
+  jobId,
+  editable,
+}: {
+  caseId: string;
+  studyId: string;
+  jobId: string | null;
+  editable: boolean;
+}) {
   const [imagingStudies, setImagingStudies] = useState<ImagingStudy[]>([]);
+  const [series, setSeries] = useState<CaseSeries[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [openImagingStudy, setOpenImagingStudy] = useState<ImagingStudy | null>(null);
+  const [openSeriesId, setOpenSeriesId] = useState<string | null>(null);
 
   function refresh() {
-    listImagingStudies(caseId).then(setImagingStudies).catch((err) => setError(String(err)));
+    Promise.all([listImagingStudies(caseId), listCaseSeries(caseId)])
+      .then(([studies, allSeries]) => {
+        setImagingStudies(studies);
+        setSeries(allSeries);
+        setLoaded(true);
+      })
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, [caseId]);
 
+  const seriesByStudy = useMemo(() => {
+    const groups = new Map<string, CaseSeries[]>();
+    for (const s of series) {
+      const list = groups.get(s.imaging_study_id) ?? [];
+      list.push(s);
+      groups.set(s.imaging_study_id, list);
+    }
+    return groups;
+  }, [series]);
+  const totalImages = series.reduce((sum, s) => sum + s.instance_count, 0);
+
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setUploadStatus("Uploading…");
+    setUploadStatus(`Uploading ${file.name}…`);
+    setError(null);
     try {
       const result = await uploadDicom(caseId, file);
-      setUploadStatus(`Queued as job ${result.job_id}. Processing…`);
-      // Ingestion runs async in a Celery worker -- there's no job-status
-      // endpoint for this legacy single-file path (unlike quick-import)
-      // to poll, so this refreshes a couple of times on a delay instead
-      // of making the user remember to hit Refresh themselves. Local
-      // ingestion has consistently finished in well under a second all
-      // session; two attempts a few seconds apart give real margin
-      // without a full polling mechanism.
-      window.setTimeout(() => {
-        refresh();
-        onUploaded();
-      }, 1500);
-      window.setTimeout(() => {
-        refresh();
-        onUploaded();
-        setUploadStatus(null);
-      }, 4000);
+      setUploadStatus("Processing in the ingestion worker…");
+      // Poll the job (the worker runs asynchronously) so the page
+      // actually learns whether the file landed, was already known, or
+      // failed -- instead of refreshing on a guessed delay.
+      const startedAt = Date.now();
+      const poll = async () => {
+        const job = await getIngestionJob(result.job_id);
+        if (job.status === "completed" || job.status === "duplicate") {
+          setUploadStatus(job.status === "duplicate" ? `${file.name} was already in this case (skipped).` : `✓ ${file.name} imported.`);
+          refresh();
+          window.setTimeout(() => setUploadStatus(null), 4000);
+        } else if (job.status === "failed") {
+          setUploadStatus(null);
+          setError(`Upload of ${file.name} failed: ${(job as { error?: string }).error ?? "unknown error"}`);
+        } else if (Date.now() - startedAt > 120000) {
+          setUploadStatus(`Still processing ${file.name} -- use Refresh to check later.`);
+        } else {
+          window.setTimeout(poll, 1500);
+        }
+      };
+      await poll();
     } catch (err) {
       setUploadStatus(null);
-      setError(String(err));
+      setError(describeApiError(err));
     }
     event.target.value = "";
   }
@@ -283,10 +351,18 @@ function ImagingStudiesSection({ caseId, onUploaded }: { caseId: string; onUploa
         title="Imaging"
         action={
           <div className="flex items-center gap-2">
-            <label className="btn-secondary btn-sm cursor-pointer">
-              Upload DICOM
-              <input type="file" accept=".dcm" className="hidden" onChange={handleUpload} />
-            </label>
+            {loaded && imagingStudies.length > 0 && (
+              <span className="hint">
+                {imagingStudies.length} stud{imagingStudies.length === 1 ? "y" : "ies"} · {series.length} series · {totalImages} image
+                {totalImages === 1 ? "" : "s"}
+              </span>
+            )}
+            {editable && (
+              <label className="btn-secondary btn-sm cursor-pointer">
+                Upload DICOM
+                <input type="file" accept=".dcm,application/dicom" className="hidden" onChange={handleUpload} />
+              </label>
+            )}
             <button onClick={refresh} className="btn-secondary btn-sm">
               Refresh
             </button>
@@ -296,21 +372,76 @@ function ImagingStudiesSection({ caseId, onUploaded }: { caseId: string; onUploa
       {error && <p className="alert-error mt-3">{error}</p>}
       {uploadStatus && <p className="hint mt-2">{uploadStatus}</p>}
 
-      {imagingStudies.length === 0 ? (
-        <EmptyState message="No imaging yet -- upload a DICOM file above." />
-      ) : (
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {imagingStudies.map((s) => (
-            <button key={s.id} onClick={() => setOpenImagingStudy(s)} className="text-left" title={s.study_instance_uid}>
-              <Thumbnail url={s.thumbnail_url} label={s.description ?? undefined} />
-              <div className="mt-1.5 flex items-center gap-1">
-                {s.modality && <span className="badge-blue">{s.modality}</span>}
-              </div>
-              <p className="mt-1 truncate text-xs text-gray-600">{s.description ?? s.study_instance_uid}</p>
-            </button>
-          ))}
-        </div>
+      {loaded && imagingStudies.length === 0 && (
+        <EmptyState
+          message={
+            editable
+              ? "No imaging yet -- upload a DICOM file above, or use Quick import on the study page for a whole folder."
+              : "No imaging yet."
+          }
+        />
       )}
+
+      <div className="mt-4 flex flex-col gap-4">
+        {imagingStudies.map((study) => {
+          const studySeries = seriesByStudy.get(study.id) ?? [];
+          const imageCount = studySeries.reduce((sum, s) => sum + s.instance_count, 0);
+          return (
+            <div key={study.id} className="rounded-xl border border-gray-100">
+              <div className="flex items-center gap-4 px-4 py-3">
+                <div className="w-14 flex-shrink-0">
+                  <Thumbnail url={study.thumbnail_url} label={study.description ?? undefined} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {study.modality && <span className="badge-blue">{study.modality}</span>}
+                    <p className="truncate text-sm font-semibold text-gray-900" title={study.study_instance_uid}>
+                      {study.description ?? "Imaging study"}
+                    </p>
+                  </div>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {study.study_date ? `${study.study_date} · ` : ""}
+                    {studySeries.length} series · {imageCount} image{imageCount === 1 ? "" : "s"}
+                  </p>
+                </div>
+                {editable && (
+                  <button onClick={() => setOpenImagingStudy(study)} className="btn-secondary btn-sm" title="Edit or delete this imaging study">
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {studySeries.length === 0 ? (
+                <p className="border-t border-gray-100 px-4 py-3 text-xs text-gray-400">No series in this study yet.</p>
+              ) : (
+                <ul className="divide-y divide-gray-50 border-t border-gray-100">
+                  {studySeries.map((s) => (
+                    <li key={s.id} className="flex items-center gap-4 px-4 py-2.5 transition-colors hover:bg-brand-50/30">
+                      <div className="w-10 flex-shrink-0">
+                        <Thumbnail url={s.thumbnail_url} label={s.series_description ?? undefined} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-gray-800" title={s.series_instance_uid}>
+                          {s.series_description ?? s.series_instance_uid}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {s.instance_count} image{s.instance_count === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <button onClick={() => setOpenSeriesId(s.id)} className="btn-secondary btn-sm">
+                        Images
+                      </button>
+                      <a href={viewerUrl(s.id, studyId, caseId, jobId)} target="_blank" rel="noreferrer" className="btn-primary btn-sm">
+                        Open in Viewer
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
       {openImagingStudy && (
         <ImagingStudyModal
@@ -326,68 +457,6 @@ function ImagingStudiesSection({ caseId, onUploaded }: { caseId: string; onUploa
           }}
         />
       )}
-    </div>
-  );
-}
-
-function SeriesSection({
-  caseId,
-  studyId,
-  jobId,
-  refreshSignal,
-}: {
-  caseId: string;
-  studyId: string;
-  jobId: string | null;
-  // Bumped by the parent after a DICOM upload -- this section has no
-  // other way to learn that ImagingStudiesSection (a sibling, its own
-  // independent fetch) just added new imaging whose series belong here.
-  refreshSignal: number;
-}) {
-  const [series, setSeries] = useState<CaseSeries[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [openSeriesId, setOpenSeriesId] = useState<string | null>(null);
-
-  function refresh() {
-    listCaseSeries(caseId).then(setSeries).catch((err) => setError(String(err)));
-  }
-
-  useEffect(refresh, [caseId, refreshSignal]);
-
-  return (
-    <div className="card">
-      <SectionHeader title="Series" action={<button onClick={refresh} className="btn-secondary btn-sm">Refresh</button>} />
-      {error && <p className="alert-error mt-3">{error}</p>}
-
-      {series.length === 0 ? (
-        <EmptyState message="No series yet." />
-      ) : (
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {series.map((s) => (
-            <div key={s.id}>
-              <button onClick={() => setOpenSeriesId(s.id)} className="w-full text-left">
-                <Thumbnail url={s.thumbnail_url} label={s.series_description ?? undefined} />
-                <p className="mt-1.5 truncate text-xs font-medium text-gray-700">
-                  {s.series_description ?? s.series_instance_uid}
-                </p>
-                <p className="truncate text-xs text-gray-400">{s.imaging_study_description}</p>
-                <p className="text-xs text-gray-400">
-                  {s.instance_count} image{s.instance_count === 1 ? "" : "s"}
-                </p>
-              </button>
-              <a
-                href={viewerUrl(s.id, studyId, caseId, jobId)}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-secondary btn-sm mt-1.5 block w-full text-center"
-              >
-                Open in Viewer
-              </a>
-            </div>
-          ))}
-        </div>
-      )}
-
       {openSeriesId && (
         <SeriesInstancesModal
           seriesId={openSeriesId}
@@ -395,6 +464,7 @@ function SeriesSection({
           studyId={studyId}
           caseId={caseId}
           jobId={jobId}
+          editable={editable}
           onClose={() => setOpenSeriesId(null)}
           onChanged={() => {
             setOpenSeriesId(null);
@@ -412,6 +482,7 @@ function SeriesInstancesModal({
   studyId,
   caseId,
   jobId,
+  editable,
   onClose,
   onChanged,
 }: {
@@ -420,6 +491,7 @@ function SeriesInstancesModal({
   studyId: string;
   caseId: string;
   jobId: string | null;
+  editable: boolean;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -428,12 +500,18 @@ function SeriesInstancesModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    listInstances(seriesId).then(setInstances);
+    listInstances(seriesId)
+      .then(setInstances)
+      .catch((err) => setError(describeApiError(err)));
   }, [seriesId]);
 
   async function openPixelData(instanceId: string) {
-    const { url } = await getPixelDataUrl(instanceId);
-    window.open(url, "_blank");
+    try {
+      const { url } = await getPixelDataUrl(instanceId);
+      window.open(url, "_blank");
+    } catch (err) {
+      setError(describeApiError(err));
+    }
   }
 
   async function handleSaveDescription(event: FormEvent) {
@@ -442,7 +520,7 @@ function SeriesInstancesModal({
       await updateSeries(seriesId, { seriesDescription });
       onChanged();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
@@ -452,78 +530,94 @@ function SeriesInstancesModal({
       await deleteSeries(seriesId);
       onChanged();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
     }
   }
 
   return (
-    <Modal title="Series instances" onClose={onClose} maxWidthClassName="max-w-3xl">
+    <Modal title={series?.series_description ?? "Series"} onClose={onClose} maxWidthClassName="max-w-3xl">
       <div className="flex flex-col gap-4">
         {error && <p className="alert-error">{error}</p>}
 
-        <form onSubmit={handleSaveDescription} className="flex items-end gap-2">
-          <label className="field flex-1">
-            <span className="label">Series description</span>
-            <input className="input" value={seriesDescription} onChange={(e) => setSeriesDescription(e.target.value)} />
-          </label>
-          <button type="submit" className="btn-secondary btn-sm">
-            Save
-          </button>
-        </form>
+        {editable ? (
+          <form onSubmit={handleSaveDescription} className="flex items-end gap-2">
+            <label className="field flex-1">
+              <span className="label">Series description</span>
+              <input className="input" value={seriesDescription} onChange={(e) => setSeriesDescription(e.target.value)} />
+            </label>
+            <button type="submit" className="btn-secondary btn-sm">
+              Save
+            </button>
+          </form>
+        ) : (
+          <p className="hint">{series?.imaging_study_description ?? ""}</p>
+        )}
 
         <p className="hint">
-          {instances.length} instance{instances.length === 1 ? "" : "s"} in this series.
+          {instances.length} image{instances.length === 1 ? "" : "s"} in this series, ordered by instance number.
         </p>
-        {instances.length === 0 && <EmptyState message="No instances." />}
+        {instances.length === 0 && <EmptyState message="No images." />}
         <div className="grid max-h-96 grid-cols-2 gap-4 overflow-y-auto sm:grid-cols-3 md:grid-cols-4">
-          {instances.map((i) => (
-            <div key={i.id}>
-              <Thumbnail url={i.thumbnail_url} label={`#${i.instance_number ?? "?"}`} />
-              <p className="mt-1.5 truncate text-xs font-medium text-gray-700">#{i.instance_number ?? "?"}</p>
-              <p className="truncate text-xs text-gray-400" title={i.sop_instance_uid}>
-                {i.sop_instance_uid}
-              </p>
-              <button onClick={() => openPixelData(i.id)} className="btn-secondary btn-sm mt-1.5 w-full">
-                Download
-              </button>
-            </div>
-          ))}
+          {[...instances]
+            .sort((a, b) => (a.instance_number ?? 0) - (b.instance_number ?? 0))
+            .map((i) => (
+              <div key={i.id}>
+                <Thumbnail url={i.thumbnail_url} label={`#${i.instance_number ?? "?"}`} />
+                <p className="mt-1.5 truncate text-xs font-medium text-gray-700">#{i.instance_number ?? "?"}</p>
+                <p className="truncate text-xs text-gray-400" title={i.sop_instance_uid}>
+                  {i.sop_instance_uid}
+                </p>
+                <button onClick={() => openPixelData(i.id)} className="btn-secondary btn-sm mt-1.5 w-full">
+                  Download DICOM
+                </button>
+              </div>
+            ))}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
-          <a href={viewerUrl(seriesId, studyId, caseId, jobId)} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+        <div className="flex justify-between gap-2 border-t border-gray-100 pt-4">
+          {editable ? (
+            <button onClick={handleDelete} className="btn-danger btn-sm">
+              Delete series
+            </button>
+          ) : (
+            <span />
+          )}
+          <a href={viewerUrl(seriesId, studyId, caseId, jobId)} target="_blank" rel="noreferrer" className="btn-primary btn-sm">
             Open in Viewer
           </a>
-          <button onClick={handleDelete} className="btn-danger btn-sm">
-            Delete series
-          </button>
         </div>
       </div>
     </Modal>
   );
 }
 
-function DocumentsSection({ caseId }: { caseId: string }) {
+// ---------------------------------------------------------------- documents
+
+function DocumentsSection({ caseId, editable }: { caseId: string; editable: boolean }) {
   const [items, setItems] = useState<ClinicalDataItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openItem, setOpenItem] = useState<ClinicalDataItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   function refresh() {
-    listClinicalDataItems(caseId).then(setItems).catch((err) => setError(String(err)));
+    listClinicalDataItems(caseId)
+      .then((list) => {
+        setItems(list);
+        setLoaded(true);
+      })
+      .catch((err) => setError(describeApiError(err)));
   }
 
   useEffect(refresh, [caseId]);
 
   async function viewFile(item: ClinicalDataItem) {
-    if (!item.has_file) {
-      // Nothing to view -- fall back to the edit modal, same as before,
-      // so clicking a metadata-only item still does something useful.
-      setOpenItem(item);
-      return;
+    try {
+      const { url } = await getClinicalDataFileUrl(item.id);
+      window.open(url, "_blank");
+    } catch (err) {
+      setError(describeApiError(err));
     }
-    const { url } = await getClinicalDataFileUrl(item.id);
-    window.open(url, "_blank");
   }
 
   return (
@@ -531,40 +625,93 @@ function DocumentsSection({ caseId }: { caseId: string }) {
       <SectionHeader
         title="Documents"
         action={
-          <button onClick={() => setCreateOpen(true)} className="btn-secondary btn-sm">
-            Add document
-          </button>
+          <div className="flex items-center gap-2">
+            {loaded && items.length > 0 && (
+              <span className="hint">
+                {items.length} document{items.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {editable && (
+              <button onClick={() => setCreateOpen(true)} className="btn-secondary btn-sm">
+                Add document
+              </button>
+            )}
+          </div>
         }
       />
       {error && <p className="alert-error mt-3">{error}</p>}
 
-      {items.length === 0 ? (
-        <EmptyState message="No documents yet." />
+      {loaded && items.length === 0 ? (
+        <EmptyState message={editable ? "No documents yet -- add a report, referral letter or any other file above." : "No documents."} />
       ) : (
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {items.map((item) => (
-            <div key={item.id} className="group relative text-left">
-              <button onClick={() => viewFile(item)} className="w-full text-left" title={item.has_file ? "Click to view the file" : "No file attached"}>
-                <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-lg bg-gray-100 p-2">
-                  <DocumentIcon className="h-8 w-8 text-gray-400" />
-                  <span className="badge-blue">{item.type}</span>
-                </div>
-                <p className="mt-1.5 truncate text-xs font-medium text-gray-700">{item.title}</p>
-              </button>
-              {/* Editing metadata/tags/consent is a separate, deliberate
-                  action from viewing the file -- the click itself
-                  opens/views the file (see viewFile), so editing gets
-                  its own small affordance instead of taking over the
-                  primary click. */}
-              <button
-                onClick={() => setOpenItem(item)}
-                className="absolute right-1 top-1 hidden h-6 w-6 items-center justify-center rounded-full bg-white/90 text-gray-500 shadow-sm hover:text-gray-800 group-hover:flex"
-                title="Edit document"
-              >
-                <PencilIcon className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
+        <div className="table-wrap mt-4">
+          <table>
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Type</th>
+                <th>Date</th>
+                <th>Tags</th>
+                <th>Consent</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
+                        <DocumentIcon className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-800">{item.title}</p>
+                        <p className="text-xs text-gray-400">{item.has_file ? "File attached" : "No file -- metadata only"}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <span className="badge-blue">{item.type}</span>
+                  </td>
+                  <td className="whitespace-nowrap text-sm text-gray-500">{item.date ?? "—"}</td>
+                  <td>
+                    <div className="flex flex-wrap gap-1">
+                      {item.tags.length === 0 && <span className="text-xs text-gray-300">—</span>}
+                      {item.tags.map((tag) => (
+                        <span key={tag} className="badge-gray">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="flex flex-wrap gap-1">
+                      {item.consents.length === 0 && <span className="text-xs text-gray-300">—</span>}
+                      {item.consents.map((c, i) => (
+                        <span key={i} className={c.status === "granted" ? "badge-green" : "badge-red"}>
+                          {c.consent_type}: {c.status}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {item.has_file && (
+                        <button onClick={() => viewFile(item)} className="btn-secondary btn-sm">
+                          View
+                        </button>
+                      )}
+                      {editable && (
+                        <button onClick={() => setOpenItem(item)} className="text-gray-400 hover:text-gray-700" title="Edit document, tags and consent">
+                          <PencilIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -598,20 +745,26 @@ function DocumentsSection({ caseId }: { caseId: string }) {
   );
 }
 
+const DOCUMENT_TYPES = ["report", "referral_letter", "pathology", "oncology", "lab_result", "discharge_summary", "other"];
+
 function NewDocumentModal({ caseId, onClose, onSaved }: { caseId: string; onClose: () => void; onSaved: () => void }) {
-  const [type, setType] = useState("");
+  const [type, setType] = useState("report");
   const [title, setTitle] = useState("");
   const [itemDate, setItemDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    setSaving(true);
     try {
       await createClinicalDataItem(caseId, type, title, itemDate, file);
       onSaved();
     } catch (err) {
-      setError(String(err));
+      setError(describeApiError(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -620,12 +773,18 @@ function NewDocumentModal({ caseId, onClose, onSaved }: { caseId: string; onClos
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {error && <p className="alert-error">{error}</p>}
         <label className="field">
-          <span className="label">Type</span>
-          <input className="input" value={type} onChange={(e) => setType(e.target.value)} placeholder="referral_letter" required />
+          <span className="label">Title</span>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Radiology report 2026-03-12" required autoFocus />
         </label>
         <label className="field">
-          <span className="label">Title</span>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required />
+          <span className="label">Type</span>
+          <input className="input" list="document-types" value={type} onChange={(e) => setType(e.target.value)} required />
+          <datalist id="document-types">
+            {DOCUMENT_TYPES.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+          <span className="hint">Pick one of the usual types or type your own -- the Filter card on the board matches on it exactly.</span>
         </label>
         <label className="field">
           <span className="label">Date</span>
@@ -639,8 +798,8 @@ function NewDocumentModal({ caseId, onClose, onSaved }: { caseId: string; onClos
           <button type="button" onClick={onClose} className="btn-secondary">
             Cancel
           </button>
-          <button type="submit" className="btn-primary">
-            Add
+          <button type="submit" className="btn-primary" disabled={saving}>
+            {saving ? "Adding…" : "Add"}
           </button>
         </div>
       </form>
