@@ -591,3 +591,35 @@ class AuditLog(Base):
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     diff: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StudyVersion(Base):
+    """A point-in-time snapshot of everything that makes up a Study's
+    *configuration*: the study's own fields, its memberships, the whole
+    workflow board (cards with their config/run state, edges) and every
+    case's editable metadata. Recorded automatically after each change
+    (coalesced -- see admin-service's app/versioning.py) and on demand
+    with a label, so any earlier state can be inspected and restored.
+    Deliberately excludes clinical payload data (DICOM instances,
+    documents, annotations): those are never rewritten by a restore --
+    a restore re-shapes the study around them, it never deletes them."""
+
+    __tablename__ = "study_versions"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("studies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # 1, 2, 3 ... per study -- what people refer to ("restore v12").
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # "auto" (recorded after a change), "manual" (saved with a label), or
+    # "pre_restore" (the safety copy taken right before a restore).
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+    label: Mapped[str | None] = mapped_column(String(255))
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)  # Keycloak "sub" claim
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Small counts (cards/edges/members/cases) for the version list, so
+    # listing versions never has to load every snapshot.
+    summary: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+

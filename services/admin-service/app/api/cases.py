@@ -19,6 +19,7 @@ from app.api.imaging import _delete_instance
 from app.api.studies import _require_global_admin
 from app.api.workflow import _cascade_new_case
 from app.storage import delete_object
+from app.versioning import autosave
 
 router = APIRouter(prefix="/admin", tags=["admin:cases"])
 
@@ -115,6 +116,7 @@ def create_case(
         _cascade_new_case(db, case.study_id)
     except Exception:
         pass
+    autosave(db, case.study_id, user.subject)
 
     return {"id": str(case.id), "patient_id": str(patient.id), "accession_number": case.accession_number}
 
@@ -149,6 +151,7 @@ def update_case(
         case.comment = comment or None
 
     db.commit()
+    autosave(db, case.study_id, user.subject)
     return {
         "id": str(case.id),
         "accession_number": case.accession_number,
@@ -210,5 +213,7 @@ def delete_case(
         raise HTTPException(status_code=404, detail="Case not found")
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
+    study_id_for_version = case.study_id
     _delete_case_cascade(db, case)
     db.commit()
+    autosave(db, study_id_for_version, user.subject)
