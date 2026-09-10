@@ -140,3 +140,16 @@ export async function uploadDicom(caseId: string, file: File): Promise<{ job_id:
   }
   return response.json();
 }
+
+export type IngestionJobStatus =
+  | { status: "completed"; instance_id?: string; job_id?: string }
+  | { status: "duplicate"; instance_id?: string; job_id?: string }
+  | { status: "failed"; error: string }
+  | { status: string };
+
+/** Polls one single-file DICOM upload (see uploadDicom) -- the worker
+ * processes it asynchronously, and this is how the page learns whether
+ * it landed, was a duplicate, or failed. */
+export function getIngestionJob(jobId: string): Promise<IngestionJobStatus> {
+  return apiFetch(API.ingestion, `/ingestion/jobs/${jobId}`);
+}

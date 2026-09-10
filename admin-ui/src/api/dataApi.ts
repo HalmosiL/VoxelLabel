@@ -1,5 +1,5 @@
 import { API } from "../config";
-import { apiFetch } from "./client";
+import { apiFetch, apiFetchWithTotal } from "./client";
 
 export interface CaseSummary {
   id: string;
@@ -78,6 +78,31 @@ export interface PatientCase {
 }
 
 const base = API.data;
+
+export interface PageQuery {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function pageParams(query: PageQuery): string {
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.offset) params.set("offset", String(query.offset));
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
+/** Searched + paged cases of a study, with the unpaged total. */
+export function searchCases(studyId: string, query: PageQuery): Promise<{ items: CaseSummary[]; total: number }> {
+  return apiFetchWithTotal(base, `/data/studies/${studyId}/cases${pageParams(query)}`);
+}
+
+/** Searched + paged patient list (global admin), with the unpaged total. */
+export function searchPatients(query: PageQuery): Promise<{ items: PatientSummary[]; total: number }> {
+  return apiFetchWithTotal(base, `/data/patients${pageParams(query)}`);
+}
 
 export function listCases(studyId: string): Promise<CaseSummary[]> {
   return apiFetch(base, `/data/studies/${studyId}/cases`);

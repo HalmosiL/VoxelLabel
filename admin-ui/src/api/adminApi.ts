@@ -1,5 +1,6 @@
+import keycloak from "../keycloak";
 import { API } from "../config";
-import { apiFetch } from "./client";
+import { apiFetch, ApiError } from "./client";
 
 export interface Study {
   id: string;
@@ -7,11 +8,19 @@ export interface Study {
   description: string | null;
   deidentification_profile_id: string | null;
   cover_image_url: string | null;
+  // The caller's own role in this study ("admin" for a global admin),
+  // null when they hold none -- what admin-ui gates edit actions on.
+  my_role?: string | null;
 }
 
 export interface StudyMember {
   user_id: string;
   role: string;
+  // Resolved from Keycloak server-side (null if the directory lookup
+  // failed) -- the members list is readable by every member, so names
+  // no longer depend on the admin-only user directory.
+  username?: string | null;
+  email?: string | null;
 }
 
 export interface DeidentificationRule {
@@ -33,6 +42,13 @@ export interface KeycloakUser {
   username: string | null;
   email: string | null;
   is_admin: boolean;
+  first_name?: string | null;
+  last_name?: string | null;
+  enabled?: boolean;
+  email_verified?: boolean;
+  required_actions?: string[];
+  created_at?: string | null;
+  memberships?: { study_id: string; study_name: string | null; role: string }[];
 }
 
 export interface CreateUserInput {
@@ -95,6 +111,36 @@ export function uploadStudyCoverImage(studyId: string, file: File): Promise<{ id
   const formData = new FormData();
   formData.append("file", file);
   return apiFetch(base, `/admin/studies/${studyId}/cover-image`, { method: "POST", body: formData });
+}
+
+export interface MeMembership {
+  study_id: string;
+  study_name: string | null;
+  role: string;
+}
+
+export interface Me {
+  subject: string;
+  email: string | null;
+  is_admin: boolean;
+  realm_roles: string[];
+  memberships: MeMembership[];
+}
+
+/** Who am I -- global admin flag + every study membership with its role.
+ * The access token carries no study-scoped roles, so this is what the
+ * UI gates its buttons/nav on (the backend stays the real control). */
+export function getMe(): Promise<Me> {
+  return apiFetch(base, "/admin/me");
+}
+
+/** A member's display name: username, else email, else a shortened id. */
+export function memberLabel(member: { username?: string | null; email?: string | null; user_id: string }): string {
+  return member.username ?? member.email ?? `${member.user_id.slice(0, 8)}…`;
+}
+
+export function removeStudyMember(studyId: string, userId: string): Promise<void> {
+  return apiFetch(base, `/admin/studies/${studyId}/members/${userId}`, { method: "DELETE" });
 }
 
 export function listStudyMembers(studyId: string): Promise<StudyMember[]> {
@@ -289,4 +335,139 @@ export function createAnnotationType(name: string, jsonSchema: Record<string, un
     method: "POST",
     body: JSON.stringify(jsonSchema),
   });
+}
+
+// ---------------------------------------------------------------- users
+
+export interface UpdateUserInput {
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  enabled?: boolean;
+  is_admin?: boolean;
+}
+
+export function getKeycloakUser(userId: string): Promise<KeycloakUser> {
+  return apiFetch(base, `/admin/users/${userId}`);
+}
+
+export function updateKeycloakUser(userId: string, input: UpdateUserInput): Promise<KeycloakUser> {
+  return apiFetch(base, `/admin/users/${userId}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function resetKeycloakPassword(userId: string, password: string, temporary: boolean): Promise<void> {
+  return apiFetch(base, `/admin/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ password, temporary }),
+  });
+}
+
+export function deleteKeycloakUser(userId: string): Promise<void> {
+  return apiFetch(base, `/admin/users/${userId}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------- study versions
+
+export interface StudyVersionSummary {
+  cards: number;
+  edges: number;
+  members: number;
+  cases: number;
+  name?: string | null;
+}
+
+export interface StudyVersion {
+  id: string;
+  number: number;
+  kind: "auto" | "manual" | "pre_restore";
+  label: string | null;
+  created_by: string;
+  created_by_name: string | null;
+  created_at: string | null;
+  summary: StudyVersionSummary;
+}
+
+export interface VersionChangeCounts {
+  added: number;
+  removed: number;
+  modified: number;
+}
+
+export interface StudyVersionDetail extends StudyVersion {
+  snapshot: Record<string, unknown>;
+  changes_if_restored: {
+    study: boolean;
+    members: VersionChangeCounts;
+    cards: VersionChangeCounts;
+    edges: VersionChangeCounts;
+    cases: VersionChangeCounts;
+  };
+}
+
+export function listStudyVersions(studyId: string): Promise<StudyVersion[]> {
+  return apiFetch(base, `/admin/studies/${studyId}/versions`);
+}
+
+export function createStudyVersion(studyId: string, label: string): Promise<StudyVersion> {
+  return apiFetch(base, `/admin/studies/${studyId}/versions`, { method: "POST", body: JSON.stringify({ label }) });
+}
+
+export function getStudyVersion(studyId: string, versionId: string): Promise<StudyVersionDetail> {
+  return apiFetch(base, `/admin/studies/${studyId}/versions/${versionId}`);
+}
+
+export function restoreStudyVersion(
+  studyId: string,
+  versionId: string
+): Promise<{ restored_version: number; safety_version: number | null; new_version: number | null }> {
+  return apiFetch(base, `/admin/studies/${studyId}/versions/${versionId}/restore`, { method: "POST" });
+}
+
+export function deleteStudyVersion(studyId: string, versionId: string): Promise<void> {
+  return apiFetch(base, `/admin/studies/${studyId}/versions/${versionId}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------- database backups
+
+export interface BackupFile {
+  filename: string;
+  size_bytes: number;
+  created_at: string;
+  sha256: string | null;
+}
+
+export interface BackupsOverview {
+  available: boolean;
+  backups: BackupFile[];
+  status: { state: string; file: string; message: string; at: string } | null;
+  queued: boolean;
+  directory: string;
+}
+
+export function listBackups(): Promise<BackupsOverview> {
+  return apiFetch(base, "/admin/backups");
+}
+
+export function requestBackup(): Promise<{ status: string }> {
+  return apiFetch(base, "/admin/backups", { method: "POST" });
+}
+
+export function deleteBackup(filename: string): Promise<void> {
+  return apiFetch(base, `/admin/backups/${filename}`, { method: "DELETE" });
+}
+
+/** The dump is fetched with the bearer token and handed to the browser
+ * as a blob download -- a plain <a href> couldn't carry the token. */
+export async function downloadBackup(filename: string): Promise<void> {
+  const response = await fetch(`${base}/admin/backups/${filename}`, {
+    headers: { Authorization: `Bearer ${keycloak.token}` },
+  });
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

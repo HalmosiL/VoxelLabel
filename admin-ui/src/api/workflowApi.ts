@@ -262,6 +262,10 @@ export interface WorkflowCardCase {
   // been submitted yet. Backs the Study page's per-case Approve/Reject
   // buttons.
   pending_annotation_id?: string | null;
+  // The reviewer's comment on the case's latest decision (approve/reject),
+  // null if there was none -- lets the annotator see *why* a case came
+  // back rejected without opening the viewer.
+  latest_review_comment?: string | null;
 }
 
 /** Same per-case annotated/not-annotated breakdown listMyJobs already

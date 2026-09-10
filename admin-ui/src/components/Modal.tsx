@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
 
 export default function Modal({
@@ -15,6 +15,15 @@ export default function Modal({
   // can ask for more room without affecting anyone else.
   maxWidthClassName?: string;
 }) {
+  // Escape closes, like every other dialog people are used to -- without
+  // it a keyboard user is stuck until they find the × button.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" onClick={onClose}>
       <div
