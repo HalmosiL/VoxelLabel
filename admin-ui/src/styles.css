@@ -204,3 +204,15 @@
     opacity: 1;
   }
 }
+
+/* Mobile browsers: 100vh is the viewport WITHOUT the browser's own
+   bars, so an h-screen app frame is taller than what's actually
+   visible -- the bottom (footer, sliders, the end of a side panel) sits
+   under the toolbar and, with the frame's own overflow hidden, can't
+   be scrolled to. 100dvh is the visible height, live. Overrides every
+   h-screen in the app frame in one place. */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh;
+  }
+}

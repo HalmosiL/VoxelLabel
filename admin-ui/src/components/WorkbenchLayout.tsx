@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import Avatar from "./Avatar";
-import { BriefcaseIcon, LogoutIcon, QuestionMarkCircleIcon } from "./icons";
+import { BriefcaseIcon, LogoutIcon, QrIcon, QuestionMarkCircleIcon } from "./icons";
+import ShareQrModal from "./ShareQrModal";
 import { GuideProvider, useGuideControls } from "../guide/GuideContext";
 import keycloak from "../keycloak";
 import { logout } from "../auth/logout";
@@ -24,6 +26,7 @@ function WorkbenchShell() {
   const username = (keycloak.tokenParsed?.preferred_username as string) ?? "user";
   const fullName = (keycloak.tokenParsed?.name as string) ?? username;
   const guide = useGuideControls();
+  const [qrOpen, setQrOpen] = useState(false);
 
   return (
     // h-screen, not min-h-screen -- see Layout.tsx's AdminLayout for why:
@@ -67,6 +70,17 @@ function WorkbenchShell() {
                 Tutorial
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setQrOpen(true)}
+              data-testid="share-qr-button"
+              title="Show a QR code of this address for a tablet or phone"
+              aria-label="Open on a tablet"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            >
+              <QrIcon className="h-4 w-4" />
+            </button>
+            {qrOpen && <ShareQrModal onClose={() => setQrOpen(false)} />}
             <Avatar id={username} />
             <span className="hidden max-w-[12rem] truncate text-sm text-gray-700 sm:inline" title={username}>
               {fullName}

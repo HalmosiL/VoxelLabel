@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import Avatar from "./Avatar";
-import { BriefcaseIcon, LogoutIcon, QuestionMarkCircleIcon } from "./icons";
+import { BriefcaseIcon, LogoutIcon, QrIcon, QuestionMarkCircleIcon } from "./icons";
+import ShareQrModal from "./ShareQrModal";
 import WorkbenchLayout from "./WorkbenchLayout";
 import { logout } from "../auth/logout";
 import { useMe, VIEW_AS_OPTIONS } from "../auth/MeContext";
@@ -76,6 +77,7 @@ function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; m
   // rely on stays put.
   const compact = useCompactLayout();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setDrawerOpen(false), [location.pathname]);
   useEffect(() => {
@@ -175,6 +177,19 @@ function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; m
             </button>
           </div>
         )}
+        <div className="px-3 pb-3">
+          <button
+            type="button"
+            onClick={() => setQrOpen(true)}
+            data-testid="share-qr-button"
+            title="Show a QR code of this address for a tablet or phone"
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 shadow-sm transition-colors hover:bg-gray-50"
+          >
+            <QrIcon className="h-4 w-4" />
+            Open on a tablet
+          </button>
+        </div>
+        {qrOpen && <ShareQrModal onClose={() => setQrOpen(false)} />}
         <div className="flex items-center gap-2.5 border-t border-gray-200/70 p-4" data-guide="account">
           <Avatar id={username} />
           <span className="flex min-w-0 flex-1 flex-col">

@@ -84,6 +84,12 @@ async function tabletContext(browser, landscape) {
     check("admin-ui portrait: hover-only card actions are visible without hover", (await hoverOnly.count()) === 0 || (await hoverOnly.evaluate((el) => getComputedStyle(el).opacity)) === "1");
     await page.screenshot({ path: "tablet-admin-portrait.png" });
 
+    // "Open on a tablet": a QR code of this very address, in the sidebar drawer.
+    const menu = await center(page.locator('[data-testid="menu-button"]')); await page.touchscreen.tap(menu.x, menu.y); await page.waitForTimeout(400);
+    const qrBtn = await center(page.locator('[data-testid="share-qr-button"]')); await page.touchscreen.tap(qrBtn.x, qrBtn.y); await page.waitForTimeout(600);
+    check("admin-ui portrait: QR modal shows a code + this origin", (await page.locator('[data-testid="share-qr"]').count()) === 1 && (await page.locator('[data-testid="share-url"]').innerText()).startsWith(UI));
+    await page.keyboard.press("Escape"); await page.waitForTimeout(300);
+
     // Workflow board: library drawer, tap-to-add, touch pan, properties overlay.
     await page.goto(`${UI}/studies/${F.STUDY}/workflow`, { waitUntil: "networkidle" });
     await page.waitForSelector(".react-flow__node", { timeout: 20000 }); await page.waitForTimeout(800);
