@@ -53,10 +53,28 @@ const center = async (loc) => { const b = await loc.boundingBox(); return { x: b
 async function tabletContext(browser, landscape) {
   const ctx = await browser.newContext({ viewport: landscape ? { width: 1024, height: 768 } : { width: 768, height: 1024 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
   await ctx.addInitScript(seenGuides);
+  // The viewer goes fullscreen on the first touch of a touch screen;
+  // keep the emulated viewport as it is for deterministic geometry.
+  await ctx.addInitScript(() => { try { sessionStorage.setItem("ct.fullscreenDeclined", "1"); } catch {} });
   return ctx;
 }
 
 (async () => {
+  // These specs drive the local stack directly (localhost ports, a
+  // locally issued token). While the ngrok launcher is running, the
+  // backends validate tokens against the tunnel's issuer instead and
+  // every API call here 401s -- fail with that, not with a confusing
+  // `undefined` further down.
+  {
+    const t = await token(F.ADMIN_USER.username, F.ADMIN_USER.password);
+    const probe = await fetch(`${ADMIN}/admin/my-jobs`, { headers: { Authorization: `Bearer ${t}` } });
+    if (probe.status === 401) {
+      console.log("checks 0, fails 1");
+      console.log("FAIL the stack is in ngrok mode (backends expect the tunnel's Keycloak issuer).");
+      console.log("     Stop scripts/run-with-ngrok.sh and `docker compose up -d` for localhost mode, then rerun.");
+      process.exit(1);
+    }
+  }
   const browser = await chromium.launch();
 
   // ── admin-ui, portrait (768): drawer sidebar, tap targets, overflow ──
@@ -185,6 +203,47 @@ async function tabletContext(browser, landscape) {
     check(`${label}: two-finger tap jumps all planes`, JSON.stringify(sBefore) !== JSON.stringify(sAfter), { sBefore, sAfter });
     await page.screenshot({ path: landscape ? "tablet-tutorial-landscape.png" : "tablet-tutorial-portrait.png" });
     check(`${label}: no page errors`, errors.length === 0, errors.slice(0, 3));
+    await ctx.close();
+  }
+
+  // ── tutorial: fullscreen on first touch, and the tour in fullscreen ──
+  // Its own context: the others pre-decline fullscreen to keep the
+  // emulated viewport geometry fixed.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+    const page = await ctx.newPage(); const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+    await login(page, F.ANNOTATOR.username, F.ANNOTATOR.password, `${VIEWER}/tutorial`);
+    await page.waitForSelector("canvas", { timeout: 30000 }); await page.waitForTimeout(1500);
+    const dialog = page.locator('[role="dialog"]');
+    // The tour auto-opens on a first visit -- and on a compact layout it
+    // needs the side panel open, since its stops live there.
+    check("tutorial: the tour opens the side panel by itself on a tablet", (await dialog.count()) === 1 && (await page.locator('[data-testid="side-panel"]').count()) === 1);
+    const fs = () => page.evaluate(() => Boolean(document.fullscreenElement));
+    check("tutorial: not fullscreen before the first touch", (await fs()) === false);
+    // Walk the tour in fullscreen: the overlay portals into document.body,
+    // which is only visible because fullscreen is the whole document.
+    let walked = 0, spotlighted = 0, everFullscreen = false;
+    for (let i = 0; i < 25 && (await dialog.count()); i++) {
+      const next = dialog.locator("[data-guide-next]");
+      const label = await next.innerText();
+      const box = await next.boundingBox();
+      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForTimeout(250);
+      if (await fs()) everFullscreen = true;
+      walked++;
+      if ((await page.locator("[data-guide-overlay] .ring-2").count()) > 0) spotlighted++;
+      if (label === "Finish") break;
+    }
+    check("tutorial: the first touch takes it fullscreen", everFullscreen, { walked });
+    check("tutorial: the tour is usable in fullscreen (steps + spotlights)", walked >= 8 && spotlighted >= 5, { walked, spotlighted });
+    check("tutorial: finishing the tour closes it", (await dialog.count()) === 0);
+    check("tutorial: the side panel goes back to closed after the tour", (await page.locator('[data-testid="side-panel"]').count()) === 0);
+    // Leaving fullscreen is remembered, so it doesn't drag you back in.
+    await page.evaluate(() => document.exitFullscreen()); await page.waitForTimeout(400);
+    const paint = await center(page.locator('[data-guide="tool-paint"] button'));
+    await page.touchscreen.tap(paint.x, paint.y); await page.waitForTimeout(500);
+    check("tutorial: leaving fullscreen is remembered (no re-entry on the next touch)", (await fs()) === false);
+    check("tutorial fullscreen: no page errors", errors.length === 0, errors.slice(0, 3));
     await ctx.close();
   }
 
