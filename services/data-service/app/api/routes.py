@@ -219,7 +219,14 @@ def get_pixel_data_url(
     imaging_study = instance.series.imaging_study
     require_study_role(db, str(imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
-    return {"url": presigned_pixel_data_url(instance.object_storage_key)}
+    # storage_key alongside the browser-facing presigned URL: a *server*
+    # (ct-annotator's backend building its MPR volume) that has its own
+    # credentials for the same bucket reads the object over the internal
+    # endpoint instead -- the presigned URL is signed for the public host
+    # (PUBLIC_MINIO_URL), which behind a tunnel/proxy is the wrong way
+    # round for a server-to-server fetch and simply unreachable from
+    # inside the deployment in some setups.
+    return {"url": presigned_pixel_data_url(instance.object_storage_key), "storage_key": instance.object_storage_key}
 
 
 def _serialize_clinical_data_item(item: ClinicalDataItem) -> dict:
