@@ -269,7 +269,9 @@ def run_cycle(db: Session) -> dict:
     states = {s.card_id: s for s in db.query(JobNotificationState).all()}
     # First ever run: record where things stand without mailing about all
     # of history as if it had just happened.
-    bootstrap = len(states) == 0
+    # See NotificationSettings.first_observed_at for why this isn't
+    # "the state table is empty".
+    bootstrap = settings.first_observed_at is None
     now = datetime.now(timezone.utc)
 
     studies = {s.id: s.name for s in db.query(Study).filter(Study.id.in_({c.study_id for c in cards})).all()} if cards else {}
@@ -352,5 +354,7 @@ def run_cycle(db: Session) -> dict:
         if card_id not in live_ids:
             db.delete(state)
 
+    if bootstrap:
+        settings.first_observed_at = now
     db.commit()
     return summary

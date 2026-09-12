@@ -1,0 +1,8 @@
+{
+  "name": "voxellabel-e2e",
+  "private": true,
+  "description": "Browser end-to-end specs -- see README.md; run with ./run.sh",
+  "dependencies": {
+    "playwright": "1.47.0"
+  }
+}

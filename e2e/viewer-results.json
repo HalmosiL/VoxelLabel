@@ -1,0 +1,176 @@
+[
+ {
+  "name": "viewer loaded (Viewer title)",
+  "ok": true
+ },
+ {
+  "name": "job status badge present",
+  "ok": true
+ },
+ {
+  "name": "case navigation present",
+  "ok": true
+ },
+ {
+  "name": "toolbar tools present",
+  "ok": true,
+  "extra": {
+   "cursor": 1,
+   "paint": 1,
+   "erase": 1,
+   "fill": 1,
+   "polygon": 1,
+   "auto": 1,
+   "histogram": 1
+  }
+ },
+ {
+  "name": "paint disabled without object",
+  "ok": true
+ },
+ {
+  "name": "object created",
+  "ok": true
+ },
+ {
+  "name": "paint enabled with object",
+  "ok": true
+ },
+ {
+  "name": "panes visible",
+  "ok": true,
+  "extra": [
+   "AXIAL"
+  ]
+ },
+ {
+  "name": "paint hint in footer",
+  "ok": true,
+  "extra": "Paint · Drag=Draw · Right-click drag=Erase · Right-click (no drag)=Comment\nActive: Nodule 1"
+ },
+ {
+  "name": "undo/redo clickable",
+  "ok": true
+ },
+ {
+  "name": "polygon hint",
+  "ok": true
+ },
+ {
+  "name": "auto contour panel opens",
+  "ok": true,
+  "extra": 2
+ },
+ {
+  "name": "histogram panel opens",
+  "ok": true
+ },
+ {
+  "name": "window presets",
+  "ok": true,
+  "extra": [
+   "Soft tissue",
+   "Lung",
+   "Bone",
+   "Brain"
+  ]
+ },
+ {
+  "name": "new instance via header",
+  "ok": true
+ },
+ {
+  "name": "hide/lock toggles",
+  "ok": true
+ },
+ {
+  "name": "documents dropdown",
+  "ok": true
+ },
+ {
+  "name": "save draft feedback",
+  "ok": true,
+  "extra": "s\n←\nCase 5 of 6\n→\nDocuments\nNew instance\nTutorial\nSave\nMark as Annotated\n✓ Saved"
+ },
+ {
+  "name": "mark as annotated feedback",
+  "ok": true
+ },
+ {
+  "name": "back link points to case page",
+  "ok": true
+ },
+ {
+  "name": "annotator: no console errors",
+  "ok": true,
+  "extra": []
+ },
+ {
+  "name": "reviewer sees the submitted case awaiting review",
+  "ok": true,
+  "extra": [
+   [
+    "Chest CT (LIDC-IDRI-0171)",
+    "done",
+    null
+   ],
+   [
+    "Chest CT (LIDC-IDRI-0957)",
+    "done",
+    null
+   ],
+   [
+    "Chest CT (LIDC-IDRI-0078)",
+    "done",
+    null
+   ],
+   [
+    "Chest CT (LIDC-IDRI-0983)",
+    "pending",
+    "606da04e-22e0-44c9-b991-d7cdda2117fe"
+   ],
+   [
+    "Chest CT (LIDC-IDRI-0719)",
+    "pending",
+    "2490987b-f6a9-4fea-b346-5eb79a9f7748"
+   ]
+  ]
+ },
+ {
+  "name": "review mode title",
+  "ok": true
+ },
+ {
+  "name": "no toolbar in review",
+  "ok": true
+ },
+ {
+  "name": "review objects listed",
+  "ok": true,
+  "extra": 4
+ },
+ {
+  "name": "submit disabled until decided",
+  "ok": true
+ },
+ {
+  "name": "all objects decided",
+  "ok": true
+ },
+ {
+  "name": "case bounced back to annotator as rejected with comment",
+  "ok": true,
+  "extra": {
+   "id": "5fd360c2-b12d-4d0d-aea3-f0a136dfe2f7",
+   "title": "Chest CT (LIDC-IDRI-0719)",
+   "status": "rejected",
+   "latest_annotation_id": "58b3e1f6-55bc-4240-9ee5-d607bd142212",
+   "latest_review_comment": "Nodule 1: Boundary too generous on the medial side."
+  }
+ },
+ {
+  "name": "reviewer: no console errors",
+  "ok": true,
+  "extra": []
+ }
+]

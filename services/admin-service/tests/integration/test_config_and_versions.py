@@ -1,0 +1,54 @@
+"""Annotation types, de-identification profiles, and a study's version
+history (save / inspect / restore / delete)."""
+from .conftest import DM_SUBJECT, add_member, make_case, make_study
+
+
+def test_annotation_types_are_global_and_admin_managed(client):
+    schema = {"type": "object", "required": ["x"], "properties": {"x": {"type": "number"}}}
+    r = client.post("/admin/annotation-types", params={"name": "bbox"}, json=schema)
+    assert r.status_code == 200 and r.json()["name"] == "bbox"
+    assert client.post("/admin/annotation-types", params={"name": "bbox"}, json=schema).status_code in (400, 409)
+    listed = client.get("/admin/annotation-types").json()
+    assert [t["name"] for t in listed] == ["bbox"] and listed[0]["json_schema"] == schema
+    client.as_user(DM_SUBJECT)
+    assert client.post("/admin/annotation-types", params={"name": "nope"}, json=schema).status_code == 403
+
+
+def test_deidentification_profiles_and_rules(client):
+    p = client.post("/admin/deidentification-profiles", params={"name": "Strict", "is_default": "true"}).json()
+    r = client.post(f"/admin/deidentification-profiles/{p['id']}/rules", params={"dicom_tag": "(0010,0010)", "action": "hash"})
+    assert r.status_code == 200 and r.json()["action"] == "hash"
+    r2 = client.post(f"/admin/deidentification-profiles/{p['id']}/rules", params={"dicom_tag": "(0008,0080)", "action": "replace_fixed", "replacement_value": "HOSPITAL"})
+    assert r2.json()["replacement_value"] == "HOSPITAL"
+    profiles = client.get("/admin/deidentification-profiles").json()
+    assert profiles[0]["is_default"] is True and [x["dicom_tag"] for x in profiles[0]["rules"]] == ["(0010,0010)", "(0008,0080)"]
+
+
+def test_versions_capture_changes_and_restore_them(client):
+    sid = make_study(client, "Original")
+    add_member(client, sid, DM_SUBJECT, "data_manager")
+    make_case(client, sid, title="case one")
+    saved = client.post(f"/admin/studies/{sid}/versions", json={"label": "before rename"})
+    assert saved.status_code == 201
+    vid = saved.json()["id"]
+
+    client.patch(f"/admin/studies/{sid}", params={"name": "Renamed"})
+    assert client.get(f"/admin/studies/{sid}").json()["name"] == "Renamed"
+
+    detail = client.get(f"/admin/studies/{sid}/versions/{vid}").json()
+    assert detail["label"] == "before rename" and detail["changes_if_restored"]
+
+    restored = client.post(f"/admin/studies/{sid}/versions/{vid}/restore")
+    assert restored.status_code == 200
+    assert client.get(f"/admin/studies/{sid}").json()["name"] == "Original"
+    # a safety version of the pre-restore state exists, and the restore is audited
+    labels = [v.get("label") for v in client.get(f"/admin/studies/{sid}/versions").json()]
+    assert any(l and "before restore" in l.lower() for l in labels) or len(labels) >= 3
+    actions = [e["action"] for e in client.get("/admin/audit-log", params={"entity_id": sid}).json()["entries"]]
+    assert "study.restore_version" in actions
+
+    client.as_user(DM_SUBJECT)
+    assert client.post(f"/admin/studies/{sid}/versions/{vid}/restore").status_code == 403  # study admin only
+    assert client.delete(f"/admin/studies/{sid}/versions/{vid}").status_code == 403
+    client.as_admin()
+    assert client.delete(f"/admin/studies/{sid}/versions/{vid}").status_code == 204

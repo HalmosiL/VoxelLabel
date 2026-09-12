@@ -650,6 +650,13 @@ class NotificationSettings(Base):
     # Where the links in emails point (the admin-ui/workbench origin).
     platform_base_url: Mapped[str] = mapped_column(String(512), nullable=False, default="http://localhost:5173")
     poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    # When the observer first ran. Its first cycle records the current
+    # state silently instead of emailing about every job as if it had just
+    # appeared; this marks that the silent cycle has happened. (An empty
+    # job_notification_state table can't be the marker: with no cards yet
+    # it stays empty, and the first card ever created would then be
+    # swallowed by a second "first" cycle.)
+    first_observed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

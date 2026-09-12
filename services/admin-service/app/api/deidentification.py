@@ -72,4 +72,4 @@ def add_rule(
     )
     db.add(rule)
     db.commit()
-    return {"id": str(rule.id), "dicom_tag": rule.dicom_tag, "action": rule.action.value}
+    return {"id": str(rule.id), "dicom_tag": rule.dicom_tag, "action": rule.action.value, "replacement_value": rule.replacement_value}
