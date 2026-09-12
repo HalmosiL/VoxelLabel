@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import Avatar from "./Avatar";
 import { BriefcaseIcon, LogoutIcon, QuestionMarkCircleIcon } from "./icons";
@@ -6,6 +7,7 @@ import WorkbenchLayout from "./WorkbenchLayout";
 import { logout } from "../auth/logout";
 import { useMe, VIEW_AS_OPTIONS } from "../auth/MeContext";
 import { GuideProvider, useGuideControls } from "../guide/GuideContext";
+import { useCompactLayout } from "../hooks/useMediaQuery";
 import keycloak from "../keycloak";
 
 const navGroups = [
@@ -66,6 +68,26 @@ function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; m
       ? `Member of ${membershipCount} stud${membershipCount === 1 ? "y" : "ies"}`
       : "No study access yet";
 
+  // Below lg (a tablet in portrait, a narrow window) the sidebar is a
+  // drawer: closed by default, opened from a menu button in a slim top
+  // bar, closed again by picking a page, tapping the backdrop, or Escape.
+  // Above lg it's the fixed left column it always was -- same markup,
+  // only its positioning changes, so every data-guide anchor the tours
+  // rely on stays put.
+  const compact = useCompactLayout();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const location = useLocation();
+  useEffect(() => setDrawerOpen(false), [location.pathname]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setDrawerOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+  const sidebarVisible = !compact || drawerOpen;
+
   return (
     // h-screen, not min-h-screen: this row has to be exactly one
     // viewport tall, not "at least" -- its outer ancestor (App.tsx) is
@@ -74,16 +96,35 @@ function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; m
     // inside it scrolls its own content internally (the <main> below)
     // rather than growing taller than the viewport itself. A page whose
     // content doesn't fit couldn't be scrolled to at all otherwise.
-    <div className="flex h-screen">
-      <aside className="flex h-screen w-64 flex-shrink-0 flex-col overflow-y-auto border-r border-gray-200/70 bg-white/80 backdrop-blur-sm">
+    <div className="relative flex h-screen">
+      {compact && drawerOpen && (
+        <div className="fixed inset-0 z-30 bg-gray-900/30" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
+      <aside
+        data-testid="sidebar"
+        className={`flex h-screen w-64 flex-shrink-0 flex-col overflow-y-auto border-r border-gray-200/70 bg-white/80 backdrop-blur-sm ${
+          compact ? "fixed inset-y-0 left-0 z-40 bg-white shadow-2xl transition-transform" : ""
+        } ${compact && !drawerOpen ? "-translate-x-full" : ""}`}
+        aria-hidden={!sidebarVisible}
+      >
         <div className="flex items-center gap-2.5 px-5 py-5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white shadow-sm shadow-brand-600/30">
             VL
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold leading-tight text-gray-900">VoxelLabel</div>
             <div className="text-xs leading-tight text-gray-400">Admin</div>
           </div>
+          {compact && (
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(false)}
+              aria-label="Close menu"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            >
+              <CloseIcon className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
         <nav className="flex flex-1 flex-col gap-5 px-3 pt-2" data-guide="sidebar-nav">
@@ -150,12 +191,59 @@ function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; m
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-8 py-8">
-          <Outlet />
-        </div>
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {compact && (
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200/70 bg-white/85 px-3 py-2 backdrop-blur-sm">
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              data-testid="menu-button"
+              aria-label="Open menu"
+              aria-expanded={drawerOpen}
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100"
+            >
+              <MenuIcon className="h-5 w-5" />
+            </button>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-bold text-white">
+              VL
+            </div>
+            <span className="text-sm font-semibold text-gray-900">VoxelLabel</span>
+            <span className="flex-1" />
+            {guide.available && (
+              <button
+                onClick={guide.start}
+                aria-label="Tutorial"
+                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-sm font-semibold text-amber-800 shadow-sm"
+              >
+                <QuestionMarkCircleIcon className="h-4 w-4" />
+                Tutorial
+              </button>
+            )}
+          </div>
+        )}
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
+  );
+}
+
+function MenuIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 5.25a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10zm0 5.25a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function CloseIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+    </svg>
   );
 }
 

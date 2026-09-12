@@ -211,7 +211,7 @@ export function templateFor(type: WorkflowCardType): CardTemplate {
 
 export const DRAG_DATA_FORMAT = "application/x-workflow-card-type";
 
-export default function CardLibrarySidebar() {
+export default function CardLibrarySidebar({ onAdd }: { onAdd?: (type: WorkflowCardType) => void }) {
   function handleDragStart(event: DragEvent<HTMLDivElement>, type: WorkflowCardType) {
     event.dataTransfer.setData(DRAG_DATA_FORMAT, type);
     event.dataTransfer.effectAllowed = "move";
@@ -231,12 +231,29 @@ export default function CardLibrarySidebar() {
                 key={item.type}
                 draggable
                 onDragStart={(e) => handleDragStart(e, item.type)}
-                className="flex cursor-grab items-center gap-2 rounded-lg border border-gray-100 bg-white px-2.5 py-2 text-sm text-gray-700 shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
+                className="flex cursor-grab items-center gap-2 rounded-lg border border-gray-100 bg-white py-1 pl-2.5 pr-1 text-sm text-gray-700 shadow-sm transition-shadow hover:shadow-md active:cursor-grabbing"
               >
                 <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
                   {item.icon}
                 </span>
-                {item.label}
+                <span className="min-w-0 flex-1 truncate py-1">{item.label}</span>
+                {/* HTML5 drag-and-drop doesn't exist on most touch
+                    browsers: the "+" drops the card in the middle of the
+                    current view instead -- also just quicker with a
+                    mouse when exact placement doesn't matter. */}
+                {onAdd && (
+                  <button
+                    type="button"
+                    onClick={() => onAdd(item.type)}
+                    aria-label={`Add ${item.label} card`}
+                    title="Add to the board (middle of the view)"
+                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-brand-50 hover:text-brand-700"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                      <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                    </svg>
+                  </button>
+                )}
               </div>
             ))}
           </div>

@@ -40,6 +40,11 @@ checks can see deliveries). On a fresh stack, create the equivalent
 an Annotation card assigned to the annotator wired from an *all cases*
 Dataset, a Review card wired from it) and put the ids in `fixtures.js`.
 
+`tablet.spec.js` emulates an iPad (both orientations, `isMobile` +
+`hasTouch`, so `pointer: coarse` / `hover: none` match) and drives real
+multi-touch through CDP `Input.dispatchTouchEvent` -- pinch, long-press,
+two-finger tap -- since `page.touchscreen` can only tap.
+
 Two checks are data-dependent and expected to flip with the current
 state: `roles` reports whether the reviewer currently *has an open
 job*, and whether the admin's first job's first case has imaging.

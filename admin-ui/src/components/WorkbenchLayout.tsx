@@ -33,7 +33,7 @@ function WorkbenchShell() {
     // way to reach the rest of the page.
     <div className="flex h-screen flex-col">
       <header className="flex-shrink-0 border-b border-gray-200/70 bg-white/85 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-4xl items-center gap-6 px-6">
+        <div className="mx-auto flex h-14 max-w-4xl items-center gap-4 px-4 sm:gap-6 sm:px-6">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-bold text-white shadow-sm shadow-brand-600/30">
               VL
@@ -83,7 +83,7 @@ function WorkbenchShell() {
       </header>
 
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-8">
+        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
           <Outlet />
         </div>
       </main>

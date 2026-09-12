@@ -45,7 +45,10 @@
   }
 
   .table-wrap {
-    @apply overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm backdrop-blur-sm;
+    /* overflow-x-auto, not overflow-hidden: a wide table scrolls
+       sideways inside its own card on a narrow screen instead of being
+       squashed or clipped -- the corners stay rounded either way. */
+    @apply overflow-x-auto rounded-2xl border border-gray-100 bg-white/90 shadow-sm backdrop-blur-sm;
   }
   table {
     @apply min-w-full divide-y divide-gray-100;
@@ -155,4 +158,49 @@
   width: 26px;
   height: 26px;
   transform: translate(-50%, -50%);
+}
+
+/* ── Touch / tablet ────────────────────────────────────────────────────
+   A finger needs bigger targets than a mouse pointer, and can't hover.
+   Both are media features, not screen sizes: a tablet in landscape is
+   as wide as a laptop, so the layout breakpoints above say nothing
+   about how it's operated. `pointer: coarse` is the finger; `hover:
+   none` is the lack of a hover state (controls that only appear on
+   hover would otherwise be unreachable). */
+@media (pointer: coarse) {
+  .btn {
+    min-height: 2.75rem;
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+  .btn-sm {
+    min-height: 2.25rem;
+  }
+  .input,
+  select.input {
+    min-height: 2.75rem;
+  }
+  th,
+  td {
+    padding-top: 0.875rem;
+    padding-bottom: 0.875rem;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  /* React Flow's card handles: the invisible hit zone grows past the
+     finger's own footprint (see the mouse-sized version below). */
+  .react-flow__handle::before {
+    width: 40px;
+    height: 40px;
+  }
+}
+@media (hover: none) {
+  /* Tailwind's group-hover reveal pattern: the controls simply stay
+     visible where hovering isn't a thing. */
+  .group .group-hover\:opacity-100 {
+    opacity: 1;
+  }
 }

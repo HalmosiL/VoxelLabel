@@ -300,7 +300,42 @@ Esc). The workbench pages (My Jobs, job, case) and both viewer modes
 open theirs the first time you visit; the admin pages only on the
 **Tutorial** button (sidebar bottom / board header).
 
-## 17. Clinician desktop app
+## 17. Using it on a tablet
+
+Every screen works with a finger instead of a mouse -- an iPad or an
+Android tablet in either orientation, in the browser, with nothing to
+install. Targets are finger-sized, wide tables scroll sideways inside
+their card, and side panels turn into drawers where there isn't room:
+
+- **Admin pages**: in portrait the left menu is a drawer -- open it with
+  the ☰ button in the top bar, pick a page, it closes by itself. In
+  landscape it stays a column.
+- **Workflow board**: drag on empty canvas to pan, pinch to zoom, drag a
+  card to move it. Add a card with the **+** on a library item (it
+  lands in the middle of the view); the library itself opens from the
+  header's *Library* button in portrait. Connect two cards by tapping
+  one handle, then the other. Selecting a card slides its properties
+  over the right edge.
+- **Viewer and tutorial** (the touch equivalents of the mouse gestures):
+
+  | With a mouse | On a tablet |
+  |---|---|
+  | drag (paint, erase, box) | one finger |
+  | scroll to zoom | pinch with two fingers |
+  | drag to pan when zoomed | two-finger drag (any tool), or one finger with the Cursor tool |
+  | Ctrl/Cmd+scroll to change slice | the slider under each pane |
+  | double-click to reset the zoom | double-tap |
+  | Alt+click for the HU value | long-press (hold ~half a second) |
+  | Ctrl/Cmd+click to jump all planes | two-finger tap |
+  | right-drag to erase | the Eraser tool |
+  | hover for a control's help | long-press the control (tap the "?" marks) |
+
+  The side panel (objects, window/level, saved versions) opens from
+  the header's **Panel** button and closes with its ✕. The footer
+  line shows the gestures for the current tool. A second finger landing
+  mid-stroke cancels that stroke -- lift both and start again.
+
+## 18. Clinician desktop app
 
 `clinician-app/` packages admin-ui for a doctor: one window, only My
 Jobs and what it opens, the viewer opens in a native window, the
@@ -309,7 +344,7 @@ keychain). Configured by a `config.json` with the same URLs as the
 server's `.env`. Linux AppImage built; Windows/macOS need building on
 those platforms.
 
-## 18. APIs (for integrations)
+## 19. APIs (for integrations)
 
 All JSON, bearer-token (Keycloak) authenticated, same roles as the UI.
 

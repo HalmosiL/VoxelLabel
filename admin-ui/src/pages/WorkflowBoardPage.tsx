@@ -28,6 +28,7 @@ import { Link, useParams } from "react-router-dom";
 import { getStudy, listStudyMembers, memberLabel, Study } from "../api/adminApi";
 import { describeApiError } from "../api/client";
 import { roleLabel, useMe } from "../auth/MeContext";
+import { useCompactLayout } from "../hooks/useMediaQuery";
 import { CaseSummary, listCases } from "../api/dataApi";
 import {
   createPipelineTemplate,
@@ -151,6 +152,13 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   // Which panel the left sidebar shows -- the draggable card library, or
   // the Store's ready-made pipeline templates (see handleInsertTemplate).
   const [sidebarTab, setSidebarTab] = useState<"library" | "store">("library");
+  // Tablet / narrow window: the library sidebar starts closed (a header
+  // button opens it) and the properties panel overlays the canvas only
+  // while a card is selected -- three fixed columns don't fit.
+  const compact = useCompactLayout();
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryVisible = !compact || libraryOpen;
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
   // Store's own width, user-resizable (see the drag handle next to the
   // <aside> below) and remembered across sessions -- the Library tab
   // stays a fixed compact width, since its plain draggable card list
@@ -478,14 +486,43 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   /** The Store's "Insert" button -- centers the template on whatever's
    * currently in view, for a click-only insert with no drag involved. */
+  /** The middle of the visible canvas, in flow coordinates -- where
+   * "add without dragging" (the library's "+", the Store's Insert)
+   * puts things. Measured from the canvas element, not the window: on
+   * a tablet the sidebars overlay it and the window's center can sit
+   * under one of them. */
+  function viewportCenterFlowPosition(offsetX: number, offsetY: number) {
+    const rect = canvasAreaRef.current?.getBoundingClientRect();
+    const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const cy = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    return screenToFlowPosition({ x: cx - offsetX, y: cy - offsetY });
+  }
+
   function handleInsertTemplate(template: PipelineTemplate) {
-    insertTemplateAt(
-      template,
-      screenToFlowPosition({
-        x: window.innerWidth / 2 - 200,
-        y: window.innerHeight / 2 - 150,
-      })
-    );
+    insertTemplateAt(template, viewportCenterFlowPosition(200, 150));
+  }
+
+  /** The library's "+" (and the only way to add a card from a touch
+   * screen, where HTML5 drag-and-drop doesn't exist): same card as a
+   * drop, placed in the middle of the view instead of under a cursor. */
+  function handleAddCardAtCenter(type: WorkflowCardType) {
+    if (!canEdit) return;
+    const cardTemplate = CARD_TEMPLATES.find((t) => t.type === type);
+    if (!cardTemplate) return;
+    const position = viewportCenterFlowPosition(cardTemplate.defaultWidth / 2, cardTemplate.defaultHeight / 2);
+    history.record(nodes, realEdges);
+    createWorkflowCard(studyId, {
+      type: cardTemplate.type,
+      title: cardTemplate.defaultTitle,
+      position_x: position.x,
+      position_y: position.y,
+      width: cardTemplate.defaultWidth,
+      height: cardTemplate.defaultHeight,
+      config: cardTemplate.defaultConfig,
+    })
+      .then((card) => setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), { ...cardToNode(card), selected: true }]))
+      .catch((err) => setError(describeApiError(err)));
+    if (compact) setLibraryOpen(false);
   }
 
   /** Drag-to-resize the Store sidebar (see the handle rendered right
@@ -666,20 +703,31 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200/70 bg-white px-5 py-3">
-        <div className="flex items-center gap-3" data-guide="board-header">
+      <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-y-2 border-b border-gray-200/70 bg-white px-3 py-2 sm:px-5 sm:py-3">
+        <div className="flex min-w-0 items-center gap-3" data-guide="board-header">
           <Link to={`/studies/${studyId}`} className="btn-secondary btn-sm">
             ← Back
           </Link>
-          <div>
-            <h1 className="text-sm font-semibold text-gray-900">{study?.name ?? "Study"}</h1>
-            <p className="text-xs text-gray-400">
+          {canEdit && compact && (
+            <button
+              type="button"
+              onClick={() => setLibraryOpen((v) => !v)}
+              data-testid="library-toggle"
+              aria-expanded={libraryOpen}
+              className={`btn-sm ${libraryOpen ? "btn-primary" : "btn-secondary"}`}
+            >
+              Library
+            </button>
+          )}
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold text-gray-900">{study?.name ?? "Study"}</h1>
+            <p className="truncate text-xs text-gray-400">
               Workflow board
               {!canEdit && ` · read-only (your role: ${roleLabel(roleFor(studyId))})`}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {guide.available && (
             <button
               onClick={guide.start}
@@ -728,18 +776,22 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         {/* Wider on the Store tab -- the pipeline thumbnails need real
             room to stay legible; the plain draggable card list doesn't
             need (or want) that extra width, so it only widens while
             Store is actually open. The Store's own width is further
             user-resizable via the drag handle right after this <aside>
             (inline style, not a Tailwind width class, since it's a
-            continuous user-chosen value, not one of a fixed set). */}
-        {canEdit && (
+            continuous user-chosen value, not one of a fixed set).
+            Compact (tablet): an overlay over the canvas instead of a
+            column, opened from the header's Library button. */}
+        {canEdit && libraryVisible && (
         <aside
           data-guide="board-library"
-          className="flex flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 transition-[width]"
+          className={`flex flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 transition-[width] ${
+            compact ? "absolute inset-y-0 left-0 z-20 max-w-[85vw] bg-white shadow-2xl" : ""
+          }`}
           style={{ width: sidebarTab === "store" ? storeSidebarWidth : 224 }}
         >
           <div className="flex flex-shrink-0 border-b border-gray-200/70 text-sm">
@@ -762,7 +814,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {sidebarTab === "library" ? (
-              <CardLibrarySidebar />
+              <CardLibrarySidebar onAdd={handleAddCardAtCenter} />
             ) : (
               <PipelineStore
                 onInsert={handleInsertTemplate}
@@ -774,7 +826,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         </aside>
         )}
 
-        {canEdit && sidebarTab === "store" && (
+        {canEdit && sidebarTab === "store" && !compact && (
           <div
             onMouseDown={startStoreSidebarResize}
             className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200/70 transition-colors hover:bg-brand-400 active:bg-brand-500"
@@ -783,7 +835,8 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         )}
 
         <div
-          className="relative flex-1"
+          ref={canvasAreaRef}
+          className="relative min-w-0 flex-1"
           data-guide="board-canvas"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
@@ -833,6 +886,10 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           </AssigneeDirectoryContext.Provider>
         </div>
 
+        {/* Compact: only while something is selected, as an overlay on
+            the right (its own ✕ / tapping the canvas deselects). */}
+        {(!compact || selectedNodes.length > 0) && (
+        <div className={compact ? "absolute inset-y-0 right-0 z-20 flex max-w-[90vw] shadow-2xl" : "flex flex-shrink-0"}>
         <WorkflowPropertiesPanel
           card={selectedCard}
           selectedCount={selectedNodes.length}
@@ -850,6 +907,8 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           onOpenChat={setChatCardId}
           running={runningCardId !== null}
         />
+        </div>
+        )}
 
         {chatCard && (
           <LlmChatModal card={chatCard} onClose={() => setChatCardId(null)} onBoardChanged={refreshBoard} />
