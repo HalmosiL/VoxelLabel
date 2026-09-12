@@ -5,6 +5,8 @@ roles), de-identification profiles, cases, and clinical data items. Most
 endpoints require study-scoped roles (see shared_auth); study/profile
 management specifically requires the global Keycloak "admin" realm role.
 """
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,14 +16,24 @@ from app.api.clinical_data import router as clinical_data_router
 from app.api.deidentification import router as deidentification_router
 from app.api.imaging import router as imaging_router
 from app.api.pipeline_templates import router as pipeline_templates_router
+from app.api.registration import public_router as registration_public_router, router as registration_router
 from app.api.studies import router as studies_router
 from app.api.users import router as users_router
 from app.api.versions import router as versions_router
 from app.api.backups import router as backups_router
 from app.api.workflow import router as workflow_router
 from app.core.config import settings
+from app.notifications import router as notifications_router, start_poller
 
-app = FastAPI(title="CT Platform - Admin Service")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # The notification service's observation loop runs inside this
+    # process -- see app/notifications/poller.py.
+    start_poller()
+    yield
+
+
+app = FastAPI(title="CT Platform - Admin Service", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_allowed_origins),
@@ -40,6 +52,9 @@ app.include_router(workflow_router)
 app.include_router(pipeline_templates_router)
 app.include_router(versions_router)
 app.include_router(backups_router)
+app.include_router(notifications_router)
+app.include_router(registration_router)
+app.include_router(registration_public_router)
 
 
 @app.get("/health")

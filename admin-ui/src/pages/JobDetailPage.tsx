@@ -5,6 +5,8 @@ import { describeApiError } from "../api/client";
 import { listMyJobs, MyJob } from "../api/workflowApi";
 import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
 import { useMe } from "../auth/MeContext";
+import { useRegisterGuide } from "../guide/GuideContext";
+import { JOB_STEPS } from "../guide/workbenchSteps";
 import EmptyState from "../components/EmptyState";
 
 /** Full-page view of a single job assigned to the calling user -- reuses
@@ -24,10 +26,12 @@ export default function JobDetailPage() {
       .catch((err) => setError(describeApiError(err)));
   }, []);
 
+  const job = jobs?.find((j) => j.card_id === cardId);
+  useRegisterGuide("job", JOB_STEPS, Boolean(job));
+
   if (error) return <p className="alert-error">{error}</p>;
   if (!jobs) return null;
 
-  const job = jobs.find((j) => j.card_id === cardId);
   if (!job) {
     return (
       <div className="flex flex-col gap-4">
@@ -48,7 +52,7 @@ export default function JobDetailPage() {
         ← Back to My Jobs
       </Link>
 
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3" data-guide="job-header">
         <div>
           <h1 className="page-title">{job.card_title}</h1>
           <p className="mt-1 text-sm text-gray-500">{job.study_name ?? "Unknown study"}</p>
@@ -77,7 +81,7 @@ export default function JobDetailPage() {
           )}
         </div>
 
-        <div className="table-wrap mt-4">
+        <div className="table-wrap mt-4" data-guide="cases-table">
           <table>
             <thead>
               <tr>
@@ -94,7 +98,10 @@ export default function JobDetailPage() {
                   </td>
                 </tr>
               )}
-              {job.cases.map((c) => {
+              {job.cases.map((c, i) => {
+                // The tour uses the first row (and the first reviewer
+                // comment on the page) as its examples.
+                const firstComment = job.cases.findIndex((x) => x.latest_review_comment) === i;
                 const caseStyle =
                   job.card_type === "review" && c.pending_annotation_id ? AWAITING_REVIEW_STYLE : CASE_STATUS_STYLE[c.status];
                 return (
@@ -103,7 +110,7 @@ export default function JobDetailPage() {
                       <div className="flex flex-col gap-0.5">
                         <span>{c.title || `${c.id.slice(0, 8)}…`}</span>
                         {c.latest_review_comment && (
-                          <span className="text-xs text-gray-500">
+                          <span className="text-xs text-gray-500" data-guide={firstComment ? "reviewer-comment" : undefined}>
                             <span className="font-medium text-gray-600">Reviewer:</span> {c.latest_review_comment}
                           </span>
                         )}
@@ -119,6 +126,7 @@ export default function JobDetailPage() {
                       <Link
                         to={`/studies/${job.study_id}/cases/${c.id}?jobId=${job.card_id}`}
                         className="text-xs font-medium text-brand-600 hover:text-brand-700"
+                        data-guide={i === 0 ? "open-case" : undefined}
                       >
                         Open case →
                       </Link>

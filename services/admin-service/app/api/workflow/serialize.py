@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from shared_models.models import WorkflowCard, WorkflowCardType, WorkflowEdge
 
 from .graph import _dataset_output_ids, _is_stale, _llm_connected_case_ids, _materialized_children, _output_count
-from .status import _annotation_progress
+from .status import _annotation_progress, compute_job_status
 
 
 def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by_target: dict) -> dict:
@@ -18,6 +18,14 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         if edge.source_card_id in cards_by_id
     )
 
+    # `config["status"]` for an Annotation/Review card is a derived
+    # value (see compute_job_status), not something stored durably --
+    # overridden here so the board (this response), My Jobs, and
+    # ct-annotator's surface-config never disagree with each other.
+    config = card.config
+    if card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+        config = {**card.config, "status": compute_job_status(db, card)}
+
     result = {
         "id": str(card.id),
         "type": card.type.value,
@@ -26,7 +34,7 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         "position_y": card.position_y,
         "width": card.width,
         "height": card.height,
-        "config": card.config,
+        "config": config,
         "output_case_ids": output_case_ids,
         "output_count": _output_count(card, output_case_ids),
         "last_run_at": card.last_run_at.isoformat() if card.last_run_at else None,

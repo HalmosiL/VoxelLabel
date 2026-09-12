@@ -366,6 +366,63 @@ export function deleteKeycloakUser(userId: string): Promise<void> {
   return apiFetch(base, `/admin/users/${userId}`, { method: "DELETE" });
 }
 
+// ---------------------------------------------------------------- registration requests
+
+export interface RegistrationRequest {
+  id: string;
+  created_at: string;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  decided_at: string | null;
+  decided_by: string | null;
+  rejection_reason: string | null;
+}
+
+export interface RegistrationRequestInput {
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  note?: string | null;
+}
+
+/** The pre-login AuthPage's "Create account" tab posts here -- and
+ * deliberately bypasses apiFetch (which always attaches the current
+ * Keycloak token): there is no session yet, that's the whole point. */
+export async function submitRegistrationRequest(input: RegistrationRequestInput): Promise<RegistrationRequest> {
+  const response = await fetch(`${base}/public/registration-requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+  return response.json();
+}
+
+/** Every submission through that form -- listed here for the Users
+ * page's "Registration requests" panel (global admin only). */
+export function listRegistrationRequests(status?: RegistrationRequest["status"]): Promise<RegistrationRequest[]> {
+  const qs = status ? `?status=${status}` : "";
+  return apiFetch(base, `/admin/registration-requests${qs}`);
+}
+
+/** Creates the real Keycloak account with a random one-time password and
+ * emails it to the requester -- see admin-service's registration.py. */
+export function approveRegistrationRequest(id: string): Promise<RegistrationRequest> {
+  return apiFetch(base, `/admin/registration-requests/${id}/approve`, { method: "POST" });
+}
+
+export function rejectRegistrationRequest(id: string, reason?: string): Promise<RegistrationRequest> {
+  return apiFetch(base, `/admin/registration-requests/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || null }),
+  });
+}
+
 // ---------------------------------------------------------------- study versions
 
 export interface StudyVersionSummary {
@@ -470,4 +527,100 @@ export async function downloadBackup(filename: string): Promise<void> {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------- notification service
+
+export interface NotificationSettings {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string | null;
+  smtp_password_set: boolean;
+  smtp_use_tls: boolean;
+  smtp_use_ssl: boolean;
+  from_address: string;
+  platform_base_url: string;
+  poll_interval_seconds: number;
+  updated_at: string | null;
+}
+
+export type NotificationSettingsPatch = Partial<Omit<NotificationSettings, "smtp_password_set" | "updated_at">> & {
+  // null/absent = keep the stored one, "" = clear it.
+  smtp_password?: string | null;
+};
+
+export interface NotificationStatus {
+  running: boolean;
+  enabled: boolean;
+  poll_interval_seconds: number;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  last_error: string | null;
+  last_result: { cards: number; events: number; sent: number; skipped: number; failed: number; bootstrap: boolean } | null;
+  log_entries: number;
+}
+
+export interface NotificationLogEntry {
+  id: string;
+  created_at: string;
+  user_id: string;
+  email: string | null;
+  event_type: string;
+  card_id: string | null;
+  subject: string;
+  body: string;
+  status: "sent" | "failed" | "skipped";
+  error: string | null;
+}
+
+export interface NotificationPreference {
+  user_id: string;
+  username?: string | null;
+  email?: string | null;
+  email_enabled: boolean;
+  notify_new_job: boolean;
+  notify_status_change: boolean;
+}
+
+export type NotificationPreferencePatch = Partial<Pick<NotificationPreference, "email_enabled" | "notify_new_job" | "notify_status_change">>;
+
+export function getNotificationSettings(): Promise<NotificationSettings> {
+  return apiFetch(base, "/admin/notifications/settings");
+}
+
+export function updateNotificationSettings(patch: NotificationSettingsPatch): Promise<NotificationSettings> {
+  return apiFetch(base, "/admin/notifications/settings", { method: "PUT", body: JSON.stringify(patch) });
+}
+
+export function sendTestNotificationEmail(to?: string): Promise<{ status: string; to: string }> {
+  return apiFetch(base, "/admin/notifications/test-email", { method: "POST", body: JSON.stringify({ to: to || null }) });
+}
+
+export function runNotificationCheckNow(): Promise<NotificationStatus["last_result"]> {
+  return apiFetch(base, "/admin/notifications/run-now", { method: "POST" });
+}
+
+export function getNotificationStatus(): Promise<NotificationStatus> {
+  return apiFetch(base, "/admin/notifications/status");
+}
+
+export function listNotificationLog(limit = 100): Promise<NotificationLogEntry[]> {
+  return apiFetch(base, `/admin/notifications/log?limit=${limit}`);
+}
+
+export function listNotificationPreferences(): Promise<NotificationPreference[]> {
+  return apiFetch(base, "/admin/notifications/preferences");
+}
+
+export function updateNotificationPreferences(userId: string, patch: NotificationPreferencePatch): Promise<NotificationPreference> {
+  return apiFetch(base, `/admin/notifications/preferences/${userId}`, { method: "PUT", body: JSON.stringify(patch) });
+}
+
+export function getMyNotificationPreferences(): Promise<NotificationPreference> {
+  return apiFetch(base, "/admin/notifications/preferences/me");
+}
+
+export function updateMyNotificationPreferences(patch: NotificationPreferencePatch): Promise<NotificationPreference> {
+  return apiFetch(base, "/admin/notifications/preferences/me", { method: "PUT", body: JSON.stringify(patch) });
 }

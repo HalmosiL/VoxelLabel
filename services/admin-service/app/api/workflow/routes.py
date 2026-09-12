@@ -30,7 +30,7 @@ from .engine import run_card_with_ripple
 from .graph import _card_or_404, _dataset_output_ids, _has_study_role, _materialized_children
 from .schemas import LlmChatIn, WorkflowCardIn, WorkflowCardPatch, WorkflowEdgeIn
 from .serialize import _serialize_card, _serialize_edge
-from .status import _cases_with_annotated_status
+from .status import _cases_with_annotated_status, compute_job_status
 from app.versioning import autosave
 
 router = APIRouter(prefix="/admin", tags=["admin:workflow"])
@@ -193,33 +193,12 @@ def update_workflow_card(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     card = _card_or_404(db, card_id)
-    require_study_role(db, str(card.study_id), user, allowed_roles=["data_manager", "admin", "annotator", "reviewer"])
-
-    if not _has_study_role(db, str(card.study_id), user, _WRITE_ROLES):
-        # Narrowed permission: someone with only an annotator/reviewer role
-        # may flip the status of their own assigned annotation/review
-        # card, and nothing else -- lets Levente mark his own card "done"
-        # without granting general board-editing rights.
-        only_status_change = (
-            body.title is None
-            and body.position_x is None
-            and body.position_y is None
-            and body.width is None
-            and body.height is None
-            and body.config is not None
-            and set(body.config.keys()) <= {"status"}
-        )
-        if (
-            card.type not in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW)
-            or not only_status_change
-            or card.config.get("assigned_user_id") != user.subject
-        ):
-            raise HTTPException(status_code=403, detail="Insufficient study role")
-        card.config = {**card.config, "status": body.config["status"]}
-        db.commit()
-        db.refresh(card)
-        autosave(db, card.study_id, user.subject)
-        return _serialize_card(db, card, {card.id: card}, {})
+    # Board edits are write-role only. (An earlier version let an
+    # assignee with just an annotator/reviewer role PATCH their own
+    # card's `config.status` -- gone now that status is computed from
+    # the cases' real annotation state on every read, see
+    # compute_job_status; there's nothing left for them to set.)
+    require_study_role(db, str(card.study_id), user, allowed_roles=_WRITE_ROLES)
 
     if body.title is not None:
         card.title = body.title
@@ -304,8 +283,9 @@ def get_surface_config(
     Review job apart from an Annotation one and switch to its
     simplified, view-and-decide-only surface -- there's no other cheap
     way for it to learn this without a second round trip. `status`
-    (todo/in_progress/done) rides along too, so ct-annotator can show
-    and let the assignee change it without a separate fetch."""
+    (todo/in_progress/done) rides along too, so ct-annotator can show it
+    without a separate fetch -- computed fresh by compute_job_status
+    from the cases' own annotation state, not something to set."""
     card = _card_or_404(db, card_id)
     require_study_role(db, str(card.study_id), user, allowed_roles=_READ_ROLES)
     is_review = card.type == WorkflowCardType.REVIEW
@@ -325,7 +305,7 @@ def get_surface_config(
     if is_review:
         config = {**config, "tools": [], "show_3d": False}
 
-    return {**config, "card_type": card.type.value, "status": card.config.get("status", "todo")}
+    return {**config, "card_type": card.type.value, "status": compute_job_status(db, card)}
 
 
 @router.get("/my-jobs")
@@ -362,7 +342,7 @@ def list_my_jobs(
                 "card_id": str(card.id),
                 "card_title": card.title,
                 "card_type": card.type.value,
-                "status": card.config.get("status", "todo"),
+                "status": compute_job_status(db, card),
                 "cases": _cases_with_annotated_status(db, card),
             }
         )

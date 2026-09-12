@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="refresh" content="0; url=/?auth=register" />
+<title>Redirecting…</title>
+</head>
+<body style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:2rem;color:#374151">
+  <!--
+    Registration now lives on the same sign-in/create-account surface
+    as everything else (see src/pages/AuthPage.tsx) -- this file stays
+    only so a previously shared /register.html link still lands
+    somewhere useful instead of 404ing. ?auth=register opens straight
+    to the "Create account" tab (see main.tsx's renderAuthPage).
+  -->
+  <script>window.location.replace("/?auth=register");</script>
+  <p>Redirecting to <a href="/?auth=register">the sign-in page</a>…</p>
+</body>
+</html>

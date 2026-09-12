@@ -4,6 +4,8 @@ import { AnnotationType, createAnnotationType, listAnnotationTypes } from "../ap
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
 import { describeApiError } from "../api/client";
+import { ANNOTATION_TYPES_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 const EXAMPLE_SCHEMA = JSON.stringify(
   {
@@ -33,6 +35,7 @@ export default function AnnotationTypesPage() {
   }
 
   useEffect(refresh, []);
+  useRegisterGuide("annotation-types", ANNOTATION_TYPES_STEPS, true, false);
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -54,7 +57,7 @@ export default function AnnotationTypesPage() {
       />
       {error && <p className="alert-error">{error}</p>}
 
-      <div className="table-wrap">
+      <div className="table-wrap" data-guide="types-table">
         <table>
           <thead>
             <tr>
@@ -84,7 +87,7 @@ export default function AnnotationTypesPage() {
         </table>
       </div>
 
-      <div className="card">
+      <div className="card" data-guide="new-type">
         <h2 className="section-title mb-4">Register a new type</h2>
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
           <label className="field">

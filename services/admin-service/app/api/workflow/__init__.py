@@ -20,7 +20,7 @@ import from this package.
 from .engine import _cascade_new_case, _cumulative_ratios, _matches_filter, _split_case_ids, _split_parts
 from .graph import _dedupe_sorted, _is_stale, _output_count
 from .routes import router
-from .status import _case_status
+from .status import _case_status, _job_status_from_entries
 
 __all__ = [
     "router",
@@ -29,6 +29,7 @@ __all__ = [
     "_cumulative_ratios",
     "_dedupe_sorted",
     "_is_stale",
+    "_job_status_from_entries",
     "_matches_filter",
     "_output_count",
     "_split_case_ids",

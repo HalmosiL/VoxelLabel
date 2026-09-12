@@ -13,6 +13,8 @@ import { ApiError, describeApiError } from "../api/client";
 import { roleLabel, useMe } from "../auth/MeContext";
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
+import { STUDIES_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | null;
 
@@ -33,6 +35,7 @@ export default function StudiesPage() {
   }
 
   useEffect(refresh, []);
+  useRegisterGuide("studies", STUDIES_STEPS, loaded, false);
 
   async function handleDelete(study: Study) {
     if (!window.confirm(`Delete "${study.name}"? This cannot be undone.`)) return;
@@ -81,9 +84,10 @@ export default function StudiesPage() {
       )}
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {studies.map((s) => (
+        {studies.map((s, i) => (
           <StudyCard
             key={s.id}
+            guide={i === 0 ? "study-card" : undefined}
             study={s}
             // Editing/deleting/cover images: a global admin, or a member
             // holding the study-scoped admin role (mirrors the backend).
@@ -117,6 +121,7 @@ function NewStudyTile({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
+      data-guide="new-study"
       className="flex aspect-[4/3] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 transition-colors hover:border-brand-300 hover:bg-brand-50/50 hover:text-brand-600"
     >
       <PlusIcon className="h-8 w-8" />
@@ -186,8 +191,11 @@ function StudyCard({
   onImageUploaded,
   onEdit,
   onDelete,
+  guide,
 }: {
   study: Study;
+  /** data-guide anchor for the page tour (the first card carries it). */
+  guide?: string;
   canAdminister: boolean;
   canDelete: boolean;
   showRole: boolean;
@@ -211,7 +219,7 @@ function StudyCard({
   }
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm transition-shadow hover:shadow-md">
+    <div className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm transition-shadow hover:shadow-md" data-guide={guide}>
       <Link to={`/studies/${study.id}`} className="block">
         <div className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-gradient-to-br from-brand-100 to-brand-50">
           {study.cover_image_url ? (

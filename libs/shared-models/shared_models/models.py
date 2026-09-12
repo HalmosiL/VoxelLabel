@@ -623,3 +623,121 @@ class StudyVersion(Base):
     # listing versions never has to load every snapshot.
     summary: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
+
+
+# ── Notification service (see admin-service's app/notifications) ─────────
+
+
+class NotificationSettings(Base):
+    """The platform's one email-delivery configuration (a single row,
+    id=1): where to send mail through and whether the notification
+    service is switched on at all. Kept in the database rather than env
+    vars so a platform admin can change it -- and send a test email --
+    from the admin UI without a redeploy."""
+
+    __tablename__ = "notification_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    smtp_host: Mapped[str] = mapped_column(String(255), nullable=False, default="mailpit")
+    smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=1025)
+    smtp_username: Mapped[str | None] = mapped_column(String(255))
+    smtp_password: Mapped[str | None] = mapped_column(String(255))
+    # STARTTLS on a plain connection vs. an implicit-TLS (SMTPS) socket.
+    smtp_use_tls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    smtp_use_ssl: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    from_address: Mapped[str] = mapped_column(String(255), nullable=False, default="VoxelLabel <no-reply@voxellabel.local>")
+    # Where the links in emails point (the admin-ui/workbench origin).
+    platform_base_url: Mapped[str] = mapped_column(String(512), nullable=False, default="http://localhost:5173")
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class NotificationPreference(Base):
+    """One user's opt-in/out for each kind of email. A user with no row
+    gets every kind (the defaults below) -- rows only exist once someone
+    changes something."""
+
+    __tablename__ = "notification_preferences"
+
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)  # Keycloak "sub" claim
+    email_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notify_new_job: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notify_status_change: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class JobNotificationState(Base):
+    """What the notification service last saw for one Annotation/Review
+    card -- its assignee, computed status and every case's state. A
+    job's status is derived on read, not written (see admin-service's
+    compute_job_status), so there is no single write path to hook; the
+    service instead re-derives all of this on a timer and treats any
+    difference from this row as the event to notify about."""
+
+    __tablename__ = "job_notification_state"
+
+    card_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="CASCADE"), primary_key=True
+    )
+    assigned_user_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    # {case_id: state} -- see admin-service's job_case_states for the values.
+    # Observed for completeness; only job-level changes are emailed.
+    case_states: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    observed_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class NotificationLog(Base):
+    """Every email the notification service decided about -- sent,
+    failed (with the SMTP error) or skipped (with why: delivery off, the
+    user opted out, no email address on their account). The admin UI's
+    delivery log. No FK to the card: the record should outlive it."""
+
+    __tablename__ = "notification_log"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255))
+    # "job_assigned", "job_status_changed", "test"
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    # "sent" | "failed" | "skipped"
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class RegistrationRequest(Base):
+    """A self-service "I'd like an account" submission from the public
+    registration page -- no Keycloak user exists yet. An admin reviews
+    it on the Users page; approving creates the real account (with a
+    random temporary password, same as the admin's own "create user"
+    flow) and emails the person their credentials, rejecting just tells
+    them no. Kept even after a decision, as the audit trail of who
+    asked and who decided."""
+
+    __tablename__ = "registration_requests"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Free-text "why do you need access" the requester can add -- shown
+    # to the admin, never required.
+    note: Mapped[str | None] = mapped_column(Text)
+    # "pending" | "approved" | "rejected"
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    decided_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[str | None] = mapped_column(String(255))  # the admin's Keycloak subject
+    rejection_reason: Mapped[str | None] = mapped_column(Text)

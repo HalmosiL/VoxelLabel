@@ -19,11 +19,8 @@ interface PanelProps {
   cases: CaseSummary[];
   // This study's members -- the only people a job can be assigned to.
   assignees: Assignee[];
-  // Read-only board (viewer/annotator/reviewer): every field is disabled
-  // except the status of a job card assigned to `meSubject` (the
-  // backend's own self-service carve-out), which stays editable.
+  // Read-only board (viewer/annotator/reviewer): every field is disabled.
   readOnly: boolean;
-  meSubject: string | null;
   studyId: string;
   hasIncomingEdge: boolean;
   onClose: () => void;
@@ -42,7 +39,6 @@ export default function WorkflowPropertiesPanel({
   cases,
   assignees,
   readOnly,
-  meSubject,
   studyId,
   hasIncomingEdge,
   onClose,
@@ -89,28 +85,7 @@ export default function WorkflowPropertiesPanel({
         )}
         {/* A disabled <fieldset> disables every form control and button
             inside it at once -- the whole panel goes read-only without
-            threading a flag through every field component. The one
-            exception (an assignee changing their own job's status) is
-            rendered outside it, in TaskFields. */}
-        {readOnly &&
-          (card.type === "annotation" || card.type === "review") &&
-          card.config.assigned_user_id === meSubject && (
-            <label className="field rounded-lg border border-brand-100 bg-brand-50/50 p-3">
-              <span className="label">Your job status</span>
-              <select
-                className="input"
-                value={(card.config.status as string) ?? "todo"}
-                onChange={(e) => onPatch(card.id, { config: { ...card.config, status: e.target.value } })}
-              >
-                {Object.entries(TASK_STATUS_STYLE).map(([value, style]) => (
-                  <option key={value} value={value}>
-                    {style.label}
-                  </option>
-                ))}
-              </select>
-              <span className="hint">This job is assigned to you -- you can update its status.</span>
-            </label>
-          )}
+            threading a flag through every field component. */}
         <fieldset disabled={readOnly} className="contents">
         <Header card={card} onClose={onClose} onPatch={onPatch} onDelete={onDelete} />
 
@@ -738,23 +713,20 @@ function TaskFields({
         </select>
         {assignees.length === 0 && <span className="hint">Add members to the study to assign this job.</span>}
       </label>
-      <label className="field">
+      <div className="field">
         <span className="label">Status</span>
-        {/* An assignee may flip their own job's status even on a read-only
-            board (the backend allows exactly this) -- a standalone form
-            control escapes the surrounding disabled fieldset. */}
-        <select
-          className="input"
-          value={status}
-          onChange={(e) => onPatch(card.id, { config: { ...card.config, status: e.target.value } })}
-        >
-          {Object.entries(TASK_STATUS_STYLE).map(([value, style]) => (
-            <option key={value} value={value}>
-              {style.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        {/* Read-only: computed by the backend from the cases' real
+            annotation state (compute_job_status) on every read, so it
+            can neither drift nor be set by hand. */}
+        <span className={`badge ${(TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo).badge} w-fit`}>
+          <span className={`badge-dot ${(TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo).dot}`} />
+          {(TASK_STATUS_STYLE[status] ?? TASK_STATUS_STYLE.todo).label}
+        </span>
+        <span className="hint">
+          Follows the cases by itself: In progress once any case is started or sent back, Done once every case is
+          {card.type === "review" ? " decided" : " annotated"}.
+        </span>
+      </div>
       {card.type === "review" ? (
         <p className="hint">Running this card always refreshes its "(approved)" and "(rejected)" Dataset cards.</p>
       ) : (

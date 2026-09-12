@@ -16,6 +16,7 @@ from app.api.workflow import (
     _cumulative_ratios,
     _dedupe_sorted,
     _is_stale,
+    _job_status_from_entries,
     _matches_filter,
     _output_count,
     _split_case_ids,
@@ -225,3 +226,70 @@ def test_output_count_none_when_never_run() -> None:
 # mock) were removed once the Clinical Trial module got a real model +
 # MCP server -- see test_llm_client.py for the real chat loop's own
 # pure-function tests.
+
+
+def test_job_status_annotation_todo_when_every_case_is_untouched() -> None:
+    latest_per_case: dict = {}
+    assert _job_status_from_entries(["c1", "c2"], latest_per_case, review=False) == "todo"
+
+
+def test_job_status_annotation_todo_with_no_cases_at_all() -> None:
+    assert _job_status_from_entries([], {}, review=False) == "todo"
+
+
+def test_job_status_annotation_done_when_every_case_is_submitted_or_approved() -> None:
+    latest_per_case = {"c1": _entry(AnnotationStatus.SUBMITTED), "c2": _entry(AnnotationStatus.APPROVED)}
+    assert _job_status_from_entries(["c1", "c2"], latest_per_case, review=False) == "done"
+
+
+def test_job_status_annotation_in_progress_when_a_draft_is_mixed_in() -> None:
+    latest_per_case = {"c1": _entry(AnnotationStatus.SUBMITTED), "c2": _entry(AnnotationStatus.DRAFT)}
+    assert _job_status_from_entries(["c1", "c2"], latest_per_case, review=False) == "in_progress"
+
+
+def test_job_status_annotation_in_progress_when_a_case_is_rejected() -> None:
+    latest_per_case = {"c1": _entry(AnnotationStatus.SUBMITTED), "c2": _entry(AnnotationStatus.REJECTED)}
+    assert _job_status_from_entries(["c1", "c2"], latest_per_case, review=False) == "in_progress"
+
+
+def test_job_status_annotation_in_progress_when_some_done_and_some_never_touched() -> None:
+    """Not literally spelled out by the "in-progress-or-rejected" rule,
+    but a job with 1 of 3 cases already annotated is clearly under way,
+    not "todo" -- anything short of *every* case being untouched or
+    *every* case being done falls to in_progress."""
+    latest_per_case = {"c1": _entry(AnnotationStatus.APPROVED)}
+    assert _job_status_from_entries(["c1", "c2", "c3"], latest_per_case, review=False) == "in_progress"
+
+
+def test_job_status_annotation_looks_up_case_ids_as_uuid_objects() -> None:
+    """Regression test: card.output_case_ids (JSONB) comes back as plain
+    strings, but _latest_annotation_per_case's dict is keyed by the
+    native UUID objects the DB query returns -- a naive `dict.get(cid)`
+    using the string case_ids directly always misses, silently making
+    every case look untouched (a real bug found while verifying this
+    against live data: a job with a draft and two done cases came back
+    "todo" instead of "in_progress")."""
+    import uuid
+
+    cid = uuid.uuid4()
+    latest_per_case = {cid: _entry(AnnotationStatus.APPROVED)}
+    assert _job_status_from_entries([str(cid)], latest_per_case, review=False) == "done"
+
+
+def test_job_status_review_todo_when_nothing_has_ever_been_submitted() -> None:
+    assert _job_status_from_entries(["c1"], {}, review=True) == "todo"
+
+
+def test_job_status_review_in_progress_when_a_case_is_awaiting_a_decision() -> None:
+    latest_per_case = {"c1": _entry(AnnotationStatus.APPROVED), "c2": _entry(AnnotationStatus.SUBMITTED)}
+    assert _job_status_from_entries(["c1", "c2"], latest_per_case, review=True) == "in_progress"
+
+
+def test_job_status_review_done_when_everything_submitted_is_approved_or_rejected() -> None:
+    latest_per_case = {"c1": _entry(AnnotationStatus.APPROVED), "c2": _entry(AnnotationStatus.REJECTED)}
+    assert _job_status_from_entries(["c1", "c2"], latest_per_case, review=True) == "done"
+
+
+def test_job_status_review_done_when_everything_is_rejected() -> None:
+    latest_per_case = {"c1": _entry(AnnotationStatus.REJECTED)}
+    assert _job_status_from_entries(["c1"], latest_per_case, review=True) == "done"

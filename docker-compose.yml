@@ -187,6 +187,9 @@ services:
       # Where the db-backup service writes dumps -- listed/triggered/
       # downloaded through this service's /admin/backups endpoints.
       BACKUPS_DIR: /backups
+      # The notification service's background loop (app/notifications)
+      # runs in this process; set to 0 on all but one replica.
+      NOTIFICATIONS_POLLER_ENABLED: "1"
     volumes:
       - db-backups:/backups
     ports:
@@ -278,6 +281,18 @@ services:
   # from the browser (all ports above are published to the host), not
   # server-to-server, so no runtime env wiring is needed here beyond the
   # build-time defaults in admin-ui/src/config.ts.
+  # Local mail sandbox for the notification service: catches every
+  # email the platform sends (nothing leaves the machine) and shows it
+  # at http://localhost:8025. The default delivery settings point here
+  # (host "mailpit", port 1025); a real deployment points them at a
+  # real SMTP server from the admin UI's Notifications page instead.
+  mailpit:
+    image: axllent/mailpit:v1.20
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
   admin-ui:
     restart: unless-stopped
     deploy:

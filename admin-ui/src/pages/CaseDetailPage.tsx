@@ -25,6 +25,8 @@ import {
 } from "../api/dataApi";
 import { getIngestionJob, uploadDicom } from "../api/ingestionApi";
 import { useMe } from "../auth/MeContext";
+import { useRegisterGuide } from "../guide/GuideContext";
+import { CASE_STEPS } from "../guide/workbenchSteps";
 import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
 import ImagingStudyModal from "../components/ImagingStudyModal";
@@ -32,6 +34,7 @@ import Modal from "../components/Modal";
 import SectionHeader from "../components/SectionHeader";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon, PencilIcon } from "../components/icons";
+import { refreshViewerHandoffOnClick, withViewerHandoff } from "../auth/viewerHandoff";
 import { ANNOTATOR_UI_URL } from "../config";
 
 /** Appends `&jobId=<id>` when this Case page was reached via a My Jobs
@@ -41,11 +44,16 @@ import { ANNOTATOR_UI_URL } from "../config";
  * Next case arrows find their place in the job's case list) and this
  * Case page's own URL as `returnUrl`, so the viewer's "Back" arrow
  * (opened in a new tab, so there's no browser history to go back to)
- * can return here instead of to ct-annotator's own picker. */
-function viewerUrl(seriesId: string, studyId: string, caseId: string, jobId: string | null): string {
+ * can return here instead of to ct-annotator's own picker. Also hands
+ * ct-annotator this session's tokens so opening the viewer doesn't
+ * mean signing in twice -- see auth/viewerHandoff.ts. */
+function viewerUrl(seriesId: string, studyId: string, caseId: string, jobId: string | null, viewAs: string): string {
   const url = `${ANNOTATOR_UI_URL}/viewer/series/${seriesId}?studyId=${studyId}&caseId=${caseId}`;
   const withJob = jobId ? `${url}&jobId=${jobId}` : url;
-  return `${withJob}&returnUrl=${encodeURIComponent(window.location.href)}`;
+  // An admin's "View as" choice travels along (the viewer is another
+  // origin, so it can't read this app's storage); nothing for plain admin.
+  const withRole = viewAs === "admin" ? withJob : `${withJob}&viewAs=${viewAs}`;
+  return withViewerHandoff(`${withRole}&returnUrl=${encodeURIComponent(window.location.href)}`);
 }
 
 /** One case, top to bottom: who/what it is (with the free-text notes
@@ -69,6 +77,7 @@ export default function CaseDetailPage() {
   }
 
   useEffect(refreshCase, [caseId]);
+  useRegisterGuide("case", CASE_STEPS, caseInfo !== null);
 
   if (!caseId || !caseInfo) return error ? <p className="alert-error">{error}</p> : null;
   const editable = canManage(caseInfo.study_id);
@@ -79,7 +88,7 @@ export default function CaseDetailPage() {
 
       <nav className="flex items-center gap-1.5 text-xs text-gray-400">
         {jobId ? (
-          <Link to={`/my-jobs/${jobId}`} className="font-medium text-brand-600 hover:text-brand-700">
+          <Link to={`/my-jobs/${jobId}`} className="font-medium text-brand-600 hover:text-brand-700" data-guide="back-to-job">
             ← Back to the job
           </Link>
         ) : (
@@ -145,7 +154,7 @@ function CaseHeader({
   }
 
   return (
-    <div className="card">
+    <div className="card" data-guide="case-header">
       {error && <p className="alert-error mb-3">{error}</p>}
       <div className="grid gap-6 lg:grid-cols-[1fr,minmax(280px,1fr)]">
         <div className="flex flex-col gap-3">
@@ -279,6 +288,7 @@ function ImagingSection({
   jobId: string | null;
   editable: boolean;
 }) {
+  const { viewAs } = useMe();
   const [imagingStudies, setImagingStudies] = useState<ImagingStudy[]>([]);
   const [series, setSeries] = useState<CaseSeries[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -346,7 +356,7 @@ function ImagingSection({
   }
 
   return (
-    <div className="card">
+    <div className="card" data-guide="imaging">
       <SectionHeader
         title="Imaging"
         action={
@@ -417,6 +427,7 @@ function ImagingSection({
                 <ul className="divide-y divide-gray-50 border-t border-gray-100">
                   {studySeries.map((s) => (
                     <li key={s.id} className="flex items-center gap-4 px-4 py-2.5 transition-colors hover:bg-brand-50/30">
+                      {/* The tour points at the first series' viewer button on the page. */}
                       <div className="w-10 flex-shrink-0">
                         <Thumbnail url={s.thumbnail_url} label={s.series_description ?? undefined} />
                       </div>
@@ -431,7 +442,14 @@ function ImagingSection({
                       <button onClick={() => setOpenSeriesId(s.id)} className="btn-secondary btn-sm">
                         Images
                       </button>
-                      <a href={viewerUrl(s.id, studyId, caseId, jobId)} target="_blank" rel="noreferrer" className="btn-primary btn-sm">
+                      <a
+                        href={viewerUrl(s.id, studyId, caseId, jobId, viewAs)}
+                        onClick={refreshViewerHandoffOnClick}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-primary btn-sm"
+                        data-guide={s.id === series[0]?.id ? "open-viewer" : undefined}
+                      >
                         Open in Viewer
                       </a>
                     </li>
@@ -495,6 +513,7 @@ function SeriesInstancesModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { viewAs } = useMe();
   const [instances, setInstances] = useState<Instance[]>([]);
   const [seriesDescription, setSeriesDescription] = useState(series?.series_description ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -582,7 +601,13 @@ function SeriesInstancesModal({
           ) : (
             <span />
           )}
-          <a href={viewerUrl(seriesId, studyId, caseId, jobId)} target="_blank" rel="noreferrer" className="btn-primary btn-sm">
+          <a
+            href={viewerUrl(seriesId, studyId, caseId, jobId, viewAs)}
+            onClick={refreshViewerHandoffOnClick}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-primary btn-sm"
+          >
             Open in Viewer
           </a>
         </div>
@@ -621,7 +646,7 @@ function DocumentsSection({ caseId, editable }: { caseId: string; editable: bool
   }
 
   return (
-    <div className="card">
+    <div className="card" data-guide="documents">
       <SectionHeader
         title="Documents"
         action={

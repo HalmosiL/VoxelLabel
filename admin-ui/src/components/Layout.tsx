@@ -1,10 +1,11 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import Avatar from "./Avatar";
-import { BriefcaseIcon, LogoutIcon } from "./icons";
+import { BriefcaseIcon, LogoutIcon, QuestionMarkCircleIcon } from "./icons";
 import WorkbenchLayout from "./WorkbenchLayout";
 import { logout } from "../auth/logout";
-import { useMe } from "../auth/MeContext";
+import { useMe, VIEW_AS_OPTIONS } from "../auth/MeContext";
+import { GuideProvider, useGuideControls } from "../guide/GuideContext";
 import keycloak from "../keycloak";
 
 const navGroups = [
@@ -22,6 +23,7 @@ const navGroups = [
       { to: "/annotation-types", label: "Annotation Types", icon: TagIcon },
       { to: "/deidentification-profiles", label: "De-identification", icon: ShieldIcon },
       { to: "/users", label: "Users", icon: UsersIcon },
+      { to: "/notifications", label: "Notifications", icon: BellIcon },
       { to: "/system", label: "System", icon: ServerIcon },
     ],
   },
@@ -38,23 +40,42 @@ const memberNavGroups = [{ label: "Workspace", items: navGroups[0].items.slice(0
  * My Jobs page and the surfaces it opens; everyone else the full sidebar
  * with the screens their role can actually use. */
 export default function Layout() {
-  const { isAdmin, me, jobsOnly } = useMe();
+  const { isAdmin, me, jobsOnly, viewAs } = useMe();
   if (jobsOnly) return <WorkbenchLayout />;
-  return <AdminLayout isAdmin={isAdmin} membershipCount={me?.memberships.length ?? 0} />;
+  // GuideProvider here too (not just the workbench), so an admin or data
+  // manager on My Jobs / a job page gets the same tour and Tutorial
+  // button an annotator does -- the pages register their tours either
+  // way; without a provider that registration was a silent no-op.
+  return (
+    <GuideProvider>
+      <AdminLayout isAdmin={isAdmin} membershipCount={me?.memberships.length ?? 0} viewAs={viewAs} />
+    </GuideProvider>
+  );
 }
 
-function AdminLayout({ isAdmin, membershipCount }: { isAdmin: boolean; membershipCount: number }) {
+function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; membershipCount: number; viewAs: string }) {
   const username = (keycloak.tokenParsed?.preferred_username as string) ?? "user";
+  const guide = useGuideControls();
   const groups = isAdmin ? navGroups : memberNavGroups;
-  const roleChip = isAdmin
+  const simulatedLabel = viewAs === "admin" ? null : VIEW_AS_OPTIONS.find((o) => o.value === viewAs)?.label;
+  const roleChip = simulatedLabel
+    ? `Viewing as ${simulatedLabel}`
+    : isAdmin
     ? "Global admin"
     : membershipCount > 0
       ? `Member of ${membershipCount} stud${membershipCount === 1 ? "y" : "ies"}`
       : "No study access yet";
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-64 flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 backdrop-blur-sm">
+    // h-screen, not min-h-screen: this row has to be exactly one
+    // viewport tall, not "at least" -- its outer ancestor (App.tsx) is
+    // itself h-screen/overflow-hidden (so the admin rail stays put
+    // regardless of route), which only works if every layout nested
+    // inside it scrolls its own content internally (the <main> below)
+    // rather than growing taller than the viewport itself. A page whose
+    // content doesn't fit couldn't be scrolled to at all otherwise.
+    <div className="flex h-screen">
+      <aside className="flex h-screen w-64 flex-shrink-0 flex-col overflow-y-auto border-r border-gray-200/70 bg-white/80 backdrop-blur-sm">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white shadow-sm shadow-brand-600/30">
             VL
@@ -65,7 +86,7 @@ function AdminLayout({ isAdmin, membershipCount }: { isAdmin: boolean; membershi
           </div>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-5 px-3 pt-2">
+        <nav className="flex flex-1 flex-col gap-5 px-3 pt-2" data-guide="sidebar-nav">
           {groups.map((group) => (
             <div key={group.label}>
               <div className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
@@ -101,7 +122,19 @@ function AdminLayout({ isAdmin, membershipCount }: { isAdmin: boolean; membershi
           ))}
         </nav>
 
-        <div className="flex items-center gap-2.5 border-t border-gray-200/70 p-4">
+        {guide.available && (
+          <div className="px-3 pb-3" data-guide="tutorial-button">
+            <button
+              onClick={guide.start}
+              title="Replay the guided tour of this page"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-100"
+            >
+              <QuestionMarkCircleIcon className="h-4 w-4" />
+              Tutorial
+            </button>
+          </div>
+        )}
+        <div className="flex items-center gap-2.5 border-t border-gray-200/70 p-4" data-guide="account">
           <Avatar id={username} />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-sm font-medium text-gray-700">{username}</span>
@@ -179,6 +212,14 @@ function ShieldIcon({ className }: { className?: string }) {
   );
 }
 
+
+function BellIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+    </svg>
+  );
+}
 
 function ServerIcon({ className }: { className?: string }) {
   return (

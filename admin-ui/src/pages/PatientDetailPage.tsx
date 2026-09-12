@@ -9,16 +9,23 @@ import ImagingStudyModal from "../components/ImagingStudyModal";
 import Thumbnail from "../components/Thumbnail";
 import { DocumentIcon } from "../components/icons";
 import { describeApiError } from "../api/client";
+import { PATIENT_DETAIL_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 export default function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
   const [cases, setCases] = useState<PatientCase[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useRegisterGuide("patient", PATIENT_DETAIL_STEPS, loaded, false);
 
   function refresh() {
     if (!patientId) return;
     listPatientCases(patientId)
-      .then(setCases)
+      .then((list) => {
+        setCases(list);
+        setLoaded(true);
+      })
       .catch((err) => setError(describeApiError(err)));
   }
 
@@ -35,14 +42,15 @@ export default function PatientDetailPage() {
       {error && <p className="alert-error">{error}</p>}
 
       {cases.length === 0 && <EmptyState message="This patient has no cases." />}
-      {cases.map((c) => (
-        <PatientCaseCard key={c.id} patientCase={c} onChanged={refresh} />
+      {cases.map((c, i) => (
+        <PatientCaseCard key={c.id} patientCase={c} onChanged={refresh} first={i === 0} />
       ))}
     </div>
   );
 }
 
-function PatientCaseCard({ patientCase, onChanged }: { patientCase: PatientCase; onChanged: () => void }) {
+/** `first`: only the first card carries the page tour's data-guide anchors. */
+function PatientCaseCard({ patientCase, onChanged, first }: { patientCase: PatientCase; onChanged: () => void; first: boolean }) {
   const [openImagingStudyId, setOpenImagingStudyId] = useState<string | null>(null);
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
 
@@ -50,13 +58,13 @@ function PatientCaseCard({ patientCase, onChanged }: { patientCase: PatientCase;
   const openDocument = patientCase.documents.find((d) => d.id === openDocumentId) ?? null;
 
   return (
-    <div className="card">
+    <div className="card" data-guide={first ? "patient-case" : undefined}>
       <div className="mb-4 flex items-start justify-between gap-4">
         <div className="flex items-center gap-2">
           <span className="badge-blue">{patientCase.study_name}</span>
           {patientCase.accession_number && <span className="hint font-mono">{patientCase.accession_number}</span>}
         </div>
-        <Link to={`/studies/${patientCase.study_id}/cases/${patientCase.id}`} className="btn-secondary btn-sm">
+        <Link to={`/studies/${patientCase.study_id}/cases/${patientCase.id}`} className="btn-secondary btn-sm" data-guide={first ? "open-case" : undefined}>
           Open case
         </Link>
       </div>
@@ -71,7 +79,7 @@ function PatientCaseCard({ patientCase, onChanged }: { patientCase: PatientCase;
         </div>
       )}
 
-      <div className="mb-4">
+      <div className="mb-4" data-guide={first ? "imaging" : undefined}>
         <h3 className="mb-2 text-sm font-medium text-gray-700">Imaging</h3>
         {patientCase.imaging_studies.length === 0 ? (
           <p className="hint">No imaging in this case yet.</p>
@@ -90,7 +98,7 @@ function PatientCaseCard({ patientCase, onChanged }: { patientCase: PatientCase;
         )}
       </div>
 
-      <div>
+      <div data-guide={first ? "documents" : undefined}>
         <h3 className="mb-2 text-sm font-medium text-gray-700">Documents</h3>
         {patientCase.documents.length === 0 ? (
           <p className="hint">No documents in this case yet.</p>

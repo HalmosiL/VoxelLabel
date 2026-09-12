@@ -13,6 +13,8 @@ import PageHeader from "../components/PageHeader";
 import TaskCardsPanel from "../components/TaskCardsPanel";
 import VersionsPanel from "../components/VersionsPanel";
 import WorkflowSummaryPanel from "../components/WorkflowSummaryPanel";
+import { STUDY_DETAIL_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 export default function StudyDetailPage() {
   const { studyId } = useParams<{ studyId: string }>();
@@ -29,11 +31,13 @@ export default function StudyDetailPage() {
   }
 
   useEffect(refresh, [studyId]);
+  useRegisterGuide("study", STUDY_DETAIL_STEPS, study !== null, false);
 
   if (!studyId) return null;
 
   return (
     <div className="flex flex-col gap-6">
+      <div data-guide="study-header">
       <PageHeader
         title={study?.name ?? "Study"}
         subtitle={study?.description ?? undefined}
@@ -51,10 +55,14 @@ export default function StudyDetailPage() {
           </div>
         }
       />
+      </div>
       {error && <p className="alert-error">{error}</p>}
 
-      <MembersPanel studyId={studyId} canAdminister={canAdminister(studyId)} />
-      <CasesPanel studyId={studyId} canManage={canManage(studyId)} />
+      {/* Plain wrappers so the page tour can spotlight each panel without
+          reaching into the panel components. */}
+      <div data-guide="members"><MembersPanel studyId={studyId} canAdminister={canAdminister(studyId)} /></div>
+      <div data-guide="cases"><CasesPanel studyId={studyId} canManage={canManage(studyId)} /></div>
+      <div data-guide="annotations">
       <TaskCardsPanel
         studyId={studyId}
         cardType="annotation"
@@ -62,6 +70,8 @@ export default function StudyDetailPage() {
         icon={<PencilIcon className="h-4 w-4" />}
         progressLabel="annotated"
       />
+      </div>
+      <div data-guide="reviews">
       <TaskCardsPanel
         studyId={studyId}
         cardType="review"
@@ -69,8 +79,10 @@ export default function StudyDetailPage() {
         icon={<DocumentIcon className="h-4 w-4" />}
         progressLabel="reviewed"
       />
-      <WorkflowSummaryPanel studyId={studyId} />
-      <DatasetsPanel studyId={studyId} />
+      </div>
+      <div data-guide="workflow-summary"><WorkflowSummaryPanel studyId={studyId} /></div>
+      <div data-guide="datasets"><DatasetsPanel studyId={studyId} /></div>
+      <div data-guide="versions">
       <VersionsPanel
         studyId={studyId}
         canManage={canManage(studyId)}
@@ -79,6 +91,7 @@ export default function StudyDetailPage() {
         // above -- the simplest correct thing is a full page reload.
         onRestored={() => window.location.reload()}
       />
+      </div>
 
       {editOpen && study && (
         <EditStudyModal

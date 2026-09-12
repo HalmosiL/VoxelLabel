@@ -2,11 +2,15 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
+  approveRegistrationRequest,
   createKeycloakUser,
   deleteKeycloakUser,
   getKeycloakUser,
   KeycloakUser,
   listKeycloakUsers,
+  listRegistrationRequests,
+  RegistrationRequest,
+  rejectRegistrationRequest,
   resetKeycloakPassword,
   updateKeycloakUser,
 } from "../api/adminApi";
@@ -17,6 +21,8 @@ import EmptyState from "../components/EmptyState";
 import { TrashIcon } from "../components/icons";
 import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
+import { USERS_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 /** Global user management: every realm account, with edit (name, email,
  * enabled, platform-admin flag), password reset, delete, and a view of
@@ -32,10 +38,19 @@ export default function UsersPage() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<KeycloakUser | null>(null);
   const [resetting, setResetting] = useState<KeycloakUser | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<RegistrationRequest[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useRegisterGuide("users", USERS_STEPS, loaded, false);
 
   function refresh() {
     listKeycloakUsers()
-      .then(setUsers)
+      .then((list) => {
+        setUsers(list);
+        setLoaded(true);
+      })
+      .catch((err) => setError(describeApiError(err)));
+    listRegistrationRequests("pending")
+      .then(setPendingRequests)
       .catch((err) => setError(describeApiError(err)));
   }
 
@@ -97,7 +112,7 @@ export default function UsersPage() {
         title="Users"
         subtitle="Every account in this platform's realm. Study roles are granted on each study's Members panel."
         action={
-          <button onClick={() => setCreating(true)} className="btn-primary btn-sm">
+          <button onClick={() => setCreating(true)} className="btn-primary btn-sm" data-guide="new-user">
             New user
           </button>
         }
@@ -112,6 +127,15 @@ export default function UsersPage() {
         </div>
       )}
 
+      <RegistrationRequestsPanel
+        requests={pendingRequests}
+        onDecided={(message) => {
+          setNotice(message);
+          refresh();
+        }}
+        onError={setError}
+      />
+
       <div className="flex items-center justify-between gap-3">
         <input
           className="input max-w-sm"
@@ -119,13 +143,14 @@ export default function UsersPage() {
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Search by name, username or email…"
           aria-label="Search users"
+          data-guide="user-search"
         />
         <p className="hint">
           {visible.length} of {users.length} account{users.length === 1 ? "" : "s"}
         </p>
       </div>
 
-      <div className="table-wrap">
+      <div className="table-wrap" data-guide="users-table">
         <table>
           <thead>
             <tr>
@@ -235,6 +260,131 @@ export default function UsersPage() {
         />
       )}
     </div>
+  );
+}
+
+/** Pending "I'd like an account" submissions from the public register.html
+ * page -- approving creates the real Keycloak account (a random one-time
+ * password, emailed to them) and rejecting just declines it, both with
+ * one click. Hidden entirely once there's nothing pending, so it never
+ * competes for attention with the users table on a quiet day. */
+function RegistrationRequestsPanel({
+  requests,
+  onDecided,
+  onError,
+}: {
+  requests: RegistrationRequest[];
+  onDecided: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState<RegistrationRequest | null>(null);
+
+  async function handleApprove(req: RegistrationRequest) {
+    setBusyId(req.id);
+    try {
+      await approveRegistrationRequest(req.id);
+      onDecided(`Approved ${req.username} -- they've been emailed a temporary password.`);
+    } catch (err) {
+      onError(describeApiError(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (requests.length === 0) return null;
+
+  return (
+    <div className="card flex flex-col gap-3" data-testid="registration-requests" data-guide="registration-requests">
+      <div className="flex items-center justify-between">
+        <h2 className="section-title">
+          Registration requests
+          <span className="badge-blue ml-2">{requests.length} pending</span>
+        </h2>
+      </div>
+      <p className="hint -mt-1">Submitted through the public registration page. Approve to create their account, or decline with an optional reason.</p>
+      <div className="flex flex-col divide-y divide-gray-100">
+        {requests.map((req) => (
+          <div key={req.id} className="flex items-start justify-between gap-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-800">
+                {req.first_name} {req.last_name} <span className="font-normal text-gray-400">@{req.username}</span>
+              </div>
+              <div className="truncate text-xs text-gray-500">{req.email}</div>
+              {req.note && <div className="mt-1 rounded-md bg-gray-50 px-2.5 py-1.5 text-xs italic text-gray-600">"{req.note}"</div>}
+              <div className="mt-1 text-[11px] text-gray-400">Requested {new Date(req.created_at).toLocaleString()}</div>
+            </div>
+            <div className="flex flex-shrink-0 items-center gap-1.5">
+              <button onClick={() => handleApprove(req)} disabled={busyId === req.id} className="btn-primary btn-sm">
+                Approve
+              </button>
+              <button onClick={() => setRejecting(req)} disabled={busyId === req.id} className="btn-secondary btn-sm">
+                Decline
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {rejecting && (
+        <RejectRequestModal
+          request={rejecting}
+          onClose={() => setRejecting(null)}
+          onRejected={(message) => {
+            setRejecting(null);
+            onDecided(message);
+          }}
+          onError={onError}
+        />
+      )}
+    </div>
+  );
+}
+
+function RejectRequestModal({
+  request,
+  onClose,
+  onRejected,
+  onError,
+}: {
+  request: RegistrationRequest;
+  onClose: () => void;
+  onRejected: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      await rejectRegistrationRequest(request.id, reason.trim() || undefined);
+      onRejected(`Declined ${request.username}'s request.`);
+    } catch (err) {
+      onError(describeApiError(err));
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title={`Decline ${request.username}'s request`} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <label className="field">
+          <span className="label">Reason (optional -- included in the email they get)</span>
+          <textarea className="input min-h-[80px]" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={2000} autoFocus />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-secondary btn-sm">
+            Cancel
+          </button>
+          <button type="submit" disabled={submitting} className="btn-primary btn-sm">
+            {submitting ? "Declining…" : "Decline request"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -177,6 +177,66 @@ def _case_status(entry, review: bool) -> str:
     return "done" if status in (AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED) else "pending"
 
 
+def _job_status_from_entries(case_ids: list[str], latest_per_case: dict, review: bool) -> str:
+    """The decision half of `compute_job_status`, split out so it's
+    testable without a database -- takes already-fetched entries (see
+    `_latest_annotation_per_case`) instead of fetching them itself.
+
+    Annotation: "done" once every case's latest Annotation is
+    submitted-or-approved; "todo" while every case is still completely
+    untouched (no Annotation at all); anything in between -- a draft in
+    progress, a case sent back REJECTED, or some cases done and others
+    still untouched -- reads as "in_progress".
+
+    Review: cases with nothing ever submitted aren't part of a Review
+    card's real scope (see `_cases_with_annotated_status`'s own
+    comment), so only cases carrying an Annotation at all are
+    considered. "in_progress" the moment any of them is still SUBMITTED
+    and awaiting a decision; "done" once every one of them has been
+    APPROVED or REJECTED; "todo" if none has anything submitted yet."""
+    if review:
+        entries = list(latest_per_case.values())
+        if not entries:
+            return "todo"
+        if any(entry[1] == AnnotationStatus.SUBMITTED for entry in entries):
+            return "in_progress"
+        if all(entry[1] in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED) for entry in entries):
+            return "done"
+        return "in_progress"
+
+    if not case_ids:
+        return "todo"
+    # `latest_per_case` is keyed by the native UUID objects
+    # `_latest_annotation_per_case`'s own query returns, but
+    # `card.output_case_ids` (JSONB) comes back as plain strings -- str()
+    # both sides so the lookup below actually matches instead of always
+    # missing (which would silently make every case look untouched).
+    latest_by_str_id = {str(cid): entry for cid, entry in latest_per_case.items()}
+    entries = [latest_by_str_id.get(str(cid)) for cid in case_ids]
+    if all(entry is not None and entry[1] in _ANNOTATED_STATUSES for entry in entries):
+        return "done"
+    if all(entry is None for entry in entries):
+        return "todo"
+    return "in_progress"
+
+
+def compute_job_status(db: Session, card: WorkflowCard) -> str:
+    """The Annotation/Review card's own todo/in_progress/done status,
+    derived fresh from its cases' real annotation state every time this
+    is called -- not a value someone has to remember to set (or a
+    client-side nudge that only fires after a save/review action *in
+    that specific job*, which can go stale the moment a change happens
+    elsewhere, e.g. a reviewer rejecting a case while nobody has the
+    Annotation job open). Always correct, because it's never stored.
+    See `_job_status_from_entries` for the actual decision rules."""
+    case_ids = card.output_case_ids or []
+    if not case_ids:
+        return "todo"
+    review = card.type == WorkflowCardType.REVIEW
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at)
+    return _job_status_from_entries(case_ids, latest_per_case, review)
+
+
 def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
     """The Annotation/Review card's case scope, each case's title
     alongside its status (see `_case_status`) -- shared by list_my_jobs
@@ -246,3 +306,40 @@ def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
             case["pending_annotation_id"] = str(entry[0]) if entry and entry[1] == AnnotationStatus.SUBMITTED else None
         result.append(case)
     return result
+
+
+def job_case_states(db: Session, card: WorkflowCard) -> dict[str, str]:
+    """Every case in the card's scope with a finer state than
+    `_case_status`'s three buckets -- what the notification service
+    watches for changes worth an email (see app/notifications/events.py):
+
+    Annotation card: "not_started" (no Annotation at all), "in_progress"
+    (a draft), "annotated" (submitted, awaiting review), "approved",
+    "rejected" (sent back).
+    Review card: only cases with something submitted at all (the card's
+    real scope, see `_cases_with_annotated_status`): "awaiting_review",
+    "approved", "rejected" -- and "in_progress" for the rare draft."""
+    case_ids = card.output_case_ids or []
+    if not case_ids:
+        return {}
+    review = card.type == WorkflowCardType.REVIEW
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at)
+    latest_by_str_id = {str(cid): entry for cid, entry in latest_per_case.items()}
+    states: dict[str, str] = {}
+    for cid in case_ids:
+        entry = latest_by_str_id.get(str(cid))
+        if entry is None:
+            if not review:
+                states[str(cid)] = "not_started"
+            continue
+        status = entry[1]
+        if status == AnnotationStatus.DRAFT:
+            states[str(cid)] = "in_progress"
+        elif status == AnnotationStatus.SUBMITTED:
+            states[str(cid)] = "awaiting_review" if review else "annotated"
+        elif status == AnnotationStatus.APPROVED:
+            states[str(cid)] = "approved"
+        else:
+            states[str(cid)] = "rejected"
+    return states
+

@@ -71,6 +71,9 @@ import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
 import WorkflowPropertiesPanel from "../components/workflow/WorkflowPropertiesPanel";
+import { QuestionMarkCircleIcon } from "../components/icons";
+import { BOARD_STEPS } from "../guide/adminSteps";
+import { GuideProvider, useGuideControls, useRegisterGuide } from "../guide/GuideContext";
 import FlowEdge from "../components/workflow/edges/FlowEdge";
 import {
   annotateFlowEdges,
@@ -114,7 +117,7 @@ function isEditableTarget(): boolean {
   return active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
 }
 
-export default function WorkflowBoardPage() {
+function WorkflowBoardPageInner() {
   const { studyId } = useParams<{ studyId: string }>();
   if (!studyId) return null;
   return (
@@ -130,7 +133,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   // Assignable people = this study's members (a non-member could never
   // open the study's data anyway), with names resolved server-side.
   const [assignees, setAssignees] = useState<{ id: string; label: string }[]>([]);
-  const { me, canManage, roleFor } = useMe();
+  const { canManage, roleFor } = useMe();
   // Editing the board (cards, edges, Run, config) needs data_manager or
   // admin; everyone else gets a read-only board -- same rule the backend
   // enforces on every write endpoint, mirrored so the UI doesn't offer
@@ -658,11 +661,13 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const selectedCard = selectedNodes.length === 1 ? selectedNodes[0].data.card : null;
   const hasIncomingEdge = selectedCard ? realEdges.some((e) => e.target === selectedCard.id) : false;
   const chatCard = chatCardId ? (nodes.find((n) => n.id === chatCardId)?.data.card ?? null) : null;
+  const guide = useGuideControls();
+  useRegisterGuide("board", BOARD_STEPS, study !== null, false);
 
   return (
     <div className="flex h-screen flex-col">
       <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200/70 bg-white px-5 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" data-guide="board-header">
           <Link to={`/studies/${studyId}`} className="btn-secondary btn-sm">
             ← Back
           </Link>
@@ -675,11 +680,22 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowConsortExport(true)} className="btn-secondary btn-sm">
+          {guide.available && (
+            <button
+              onClick={guide.start}
+              data-guide="board-tutorial"
+              title="Replay the guided tour of the board"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-100"
+            >
+              <QuestionMarkCircleIcon className="h-4 w-4" />
+              Tutorial
+            </button>
+          )}
+          <button onClick={() => setShowConsortExport(true)} className="btn-secondary btn-sm" data-guide="consort-export">
             CONSORT export
           </button>
           {canEdit && (
-          <>
+          <div className="flex items-center gap-2" data-guide="board-toolbar">
           <button
             onClick={() => setSavingTemplate(true)}
             disabled={selectedNodes.length === 0}
@@ -702,7 +718,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           >
             Redo
           </button>
-          </>
+          </div>
           )}
         </div>
       </header>
@@ -722,6 +738,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             continuous user-chosen value, not one of a fixed set). */}
         {canEdit && (
         <aside
+          data-guide="board-library"
           className="flex flex-shrink-0 flex-col border-r border-gray-200/70 bg-white/80 transition-[width]"
           style={{ width: sidebarTab === "store" ? storeSidebarWidth : 224 }}
         >
@@ -767,6 +784,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
         <div
           className="relative flex-1"
+          data-guide="board-canvas"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           onContextMenu={(e) => e.preventDefault()}
@@ -821,7 +839,6 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
           cases={cases}
           assignees={assignees}
           readOnly={!canEdit}
-          meSubject={me?.subject ?? null}
           studyId={studyId}
           hasIncomingEdge={hasIncomingEdge}
           onClose={() => setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))}
@@ -849,5 +866,17 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
         {showConsortExport && <ConsortExportPage studyId={studyId} onClose={() => setShowConsortExport(false)} />}
       </div>
     </div>
+  );
+}
+
+/** The board is routed outside Layout (it owns the whole viewport), so
+ * it brings its own GuideProvider -- the same tour machinery every other
+ * page gets from the sidebar shell -- and its own Tutorial button in
+ * the header. */
+export default function WorkflowBoardPage() {
+  return (
+    <GuideProvider>
+      <WorkflowBoardPageInner />
+    </GuideProvider>
   );
 }

@@ -14,6 +14,43 @@ const MANAGE_ROLES = new Set(["admin", "data_manager"]);
  * point of that role.) */
 const WORKBENCH_ROLES = new Set(["annotator", "reviewer"]);
 
+/** A global admin can look at the UI "as" another role, to test what an
+ * annotator, reviewer or data manager would see, without a second
+ * account. Purely a frontend simulation: the token stays the admin's,
+ * so every backend call still succeeds -- what changes is which nav,
+ * pages and controls the UI shows. Persisted per browser so it survives
+ * reloads and the switch between the admin and workbench layouts. */
+export type ViewAs = "admin" | "data_manager" | "reviewer" | "annotator";
+export const VIEW_AS_OPTIONS: { value: ViewAs; label: string }[] = [
+  { value: "admin", label: "Admin" },
+  { value: "data_manager", label: "Data manager" },
+  { value: "reviewer", label: "Reviewer" },
+  { value: "annotator", label: "Annotator" },
+];
+const VIEW_AS_KEY = "vl.viewAs";
+
+function isViewAs(v: string | null): v is ViewAs {
+  return VIEW_AS_OPTIONS.some((o) => o.value === v);
+}
+
+/** A `?viewAs=` in the URL wins -- that's how the viewer (a different
+ * origin, so no shared storage) hands the mode back on its Back link --
+ * then this browser's remembered value, then plain "admin". */
+function readViewAs(): ViewAs {
+  const fromUrl = new URLSearchParams(window.location.search).get("viewAs");
+  try {
+    if (isViewAs(fromUrl)) {
+      if (fromUrl === "admin") window.localStorage.removeItem(VIEW_AS_KEY);
+      else window.localStorage.setItem(VIEW_AS_KEY, fromUrl);
+      return fromUrl;
+    }
+    const v = window.localStorage.getItem(VIEW_AS_KEY);
+    return isViewAs(v) ? v : "admin";
+  } catch {
+    return isViewAs(fromUrl) ? fromUrl : "admin";
+  }
+}
+
 interface MeValue {
   me: Me | null;
   /** True while the first /admin/me request is still in flight. */
@@ -32,6 +69,11 @@ interface MeValue {
    * annotation/review surfaces, none of the study/patient/configuration
    * screens. Admins, data managers and viewers see the full UI. */
   jobsOnly: boolean;
+  /** True for a real global admin -- the only one who may switch view. */
+  canSwitchView: boolean;
+  /** The role the UI is currently shown as ("admin" = no simulation). */
+  viewAs: ViewAs;
+  setViewAs: (role: ViewAs) => void;
   refresh: () => void;
 }
 
@@ -46,6 +88,17 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
+  const [viewAs, setViewAsState] = useState<ViewAs>(readViewAs);
+
+  const setViewAs = useCallback((role: ViewAs) => {
+    setViewAsState(role);
+    try {
+      if (role === "admin") window.localStorage.removeItem(VIEW_AS_KEY);
+      else window.localStorage.setItem(VIEW_AS_KEY, role);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,18 +119,27 @@ export function MeProvider({ children }: { children: ReactNode }) {
     };
   }, [version]);
 
+  const realAdmin = Boolean(me?.is_admin);
+  // The simulated role applies to every study: a global admin has no
+  // memberships of their own, so "view as annotator" means "an
+  // annotator in each study" -- the closest thing to a real one.
+  const simulated: ViewAs | null = realAdmin && viewAs !== "admin" ? viewAs : null;
+
   const roleFor = useCallback(
     (studyId: string): string | null => {
       if (!me) return null;
+      if (simulated) return simulated;
       if (me.is_admin) return "admin";
       return me.memberships.find((m) => m.study_id === studyId)?.role ?? null;
     },
-    [me]
+    [me, simulated]
   );
 
   const value = useMemo<MeValue>(() => {
-    const isAdmin = Boolean(me?.is_admin);
-    const workbenchUser = !isAdmin && (me?.memberships ?? []).every((m) => WORKBENCH_ROLES.has(m.role));
+    const isAdmin = realAdmin && !simulated;
+    const workbenchUser = simulated
+      ? WORKBENCH_ROLES.has(simulated)
+      : !isAdmin && (me?.memberships ?? []).every((m) => WORKBENCH_ROLES.has(m.role));
     return {
       me,
       loading,
@@ -86,9 +148,12 @@ export function MeProvider({ children }: { children: ReactNode }) {
       canManage: (studyId) => MANAGE_ROLES.has(roleFor(studyId) ?? ""),
       canAdminister: (studyId) => roleFor(studyId) === "admin",
       jobsOnly: isClinicianApp || workbenchUser,
+      canSwitchView: realAdmin && !isClinicianApp,
+      viewAs: simulated ?? "admin",
+      setViewAs,
       refresh: () => setVersion((v) => v + 1),
     };
-  }, [me, loading, roleFor]);
+  }, [me, loading, roleFor, realAdmin, simulated, setViewAs]);
 
   if (loading) {
     return (

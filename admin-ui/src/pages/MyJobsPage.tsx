@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { getMyNotificationPreferences, NotificationPreference, updateMyNotificationPreferences } from "../api/adminApi";
 import { describeApiError } from "../api/client";
 import { listMyJobs, MyJob } from "../api/workflowApi";
 import { useMe } from "../auth/MeContext";
+import { refreshViewerHandoffOnClick, withViewerHandoff } from "../auth/viewerHandoff";
+import { ANNOTATOR_UI_URL } from "../config";
+import { useRegisterGuide } from "../guide/GuideContext";
+import { MY_JOBS_STEPS } from "../guide/workbenchSteps";
 import { TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
-import { DocumentIcon, PencilIcon } from "../components/icons";
+import { DocumentIcon, PencilIcon, SparklesIcon } from "../components/icons";
 
 // todo/in_progress surface first -- those are the jobs actually waiting
 // on the user; done ones sink to the bottom as a record, not a queue.
@@ -17,15 +22,27 @@ const STATUS_ORDER: Record<string, number> = { todo: 0, in_progress: 1, done: 2 
  * reviewer lives on this one page (see MeContext.jobsOnly); for a data
  * manager or admin it is the same list with a shortcut to the board. */
 export default function MyJobsPage() {
-  const { jobsOnly } = useMe();
-  const [jobs, setJobs] = useState<MyJob[] | null>(null);
+  const { jobsOnly, viewAs, me } = useMe();
+  const [rawJobs, setRawJobs] = useState<MyJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     listMyJobs()
-      .then(setJobs)
+      .then(setRawJobs)
       .catch((err) => setError(describeApiError(err)));
   }, []);
+
+  // Reviewer is a strict subset of Annotator, never the other way
+  // round: a reviewer only ever reviews, so annotation jobs -- even a
+  // real one this account happens to be individually assigned, since
+  // assignment is independent of a person's study role -- never belong
+  // on a reviewer's list. Recognises both a real reviewer-only account
+  // (every membership is "reviewer", jobsOnly is true for that reason)
+  // and an admin simulating "Reviewer" via View as, which otherwise
+  // still sees this admin account's own real assignments untouched.
+  const isReviewerOnly =
+    viewAs !== "admin" ? viewAs === "reviewer" : jobsOnly && (me?.memberships.length ?? 0) > 0 && me!.memberships.every((m) => m.role === "reviewer");
+  const jobs = isReviewerOnly ? (rawJobs?.filter((j) => j.card_type === "review") ?? null) : rawJobs;
 
   const pending = jobs?.filter(needsAttention) ?? null;
   const active = pending ? [...pending].sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99)) : null;
@@ -33,10 +50,19 @@ export default function MyJobsPage() {
   const review = active?.filter((j) => j.card_type === "review") ?? [];
   const quietCount = jobs ? jobs.length - (pending?.length ?? 0) : 0;
 
+  // The tour points at the first card on the page as its example.
+  const exampleId = annotation[0]?.card_id ?? review[0]?.card_id ?? null;
+  useRegisterGuide("workbench", MY_JOBS_STEPS, jobs !== null);
+
   return (
     <div className="flex flex-col gap-8">
+      <TutorialSection />
+
       <div>
-        <h1 className="page-title">My Jobs</h1>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h1 className="page-title">My Jobs</h1>
+          <EmailNotificationsToggle />
+        </div>
         {active && active.length > 0 && (
           <p className="mt-1 text-sm text-gray-500">
             {countLabel(annotation.length, "annotation job")}
@@ -58,8 +84,10 @@ export default function MyJobsPage() {
         </div>
       )}
 
-      {annotation.length > 0 && <JobSection title="Annotation" jobs={annotation} showBoardLink={!jobsOnly} />}
-      {review.length > 0 && <JobSection title="Review" jobs={review} showBoardLink={!jobsOnly} />}
+      {annotation.length > 0 && (
+        <JobSection title="Annotation" guide="annotation-section" jobs={annotation} showBoardLink={!jobsOnly} exampleId={exampleId} />
+      )}
+      {review.length > 0 && <JobSection title="Review" guide="review-section" jobs={review} showBoardLink={!jobsOnly} exampleId={exampleId} />}
 
       {quietCount > 0 && (
         <p className="hint">
@@ -103,20 +131,34 @@ function countLabel(n: number, noun: string): string {
   return n === 0 ? "" : `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
-function JobSection({ title, jobs, showBoardLink }: { title: string; jobs: MyJob[]; showBoardLink: boolean }) {
+function JobSection({
+  title,
+  guide,
+  jobs,
+  showBoardLink,
+  exampleId,
+}: {
+  title: string;
+  guide: string;
+  jobs: MyJob[];
+  showBoardLink: boolean;
+  exampleId: string | null;
+}) {
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{title}</h2>
+      <h2 className="text-[11px] font-semibold uppercase tracking-wider text-gray-400" data-guide={guide}>
+        {title}
+      </h2>
       <div className="flex flex-col gap-3">
         {jobs.map((job) => (
-          <JobCard key={job.card_id} job={job} showBoardLink={showBoardLink} />
+          <JobCard key={job.card_id} job={job} showBoardLink={showBoardLink} guideExample={job.card_id === exampleId} />
         ))}
       </div>
     </section>
   );
 }
 
-function JobCard({ job, showBoardLink }: { job: MyJob; showBoardLink: boolean }) {
+function JobCard({ job, showBoardLink, guideExample }: { job: MyJob; showBoardLink: boolean; guideExample: boolean }) {
   const style = TASK_STATUS_STYLE[job.status] ?? TASK_STATUS_STYLE.todo;
   const isReview = job.card_type === "review";
   const Icon = isReview ? DocumentIcon : PencilIcon;
@@ -136,7 +178,7 @@ function JobCard({ job, showBoardLink }: { job: MyJob; showBoardLink: boolean })
       : `All ${cases} annotated`;
 
   return (
-    <div className="card flex items-center gap-4 !p-5">
+    <div className="card flex items-center gap-4 !p-5" data-guide={guideExample ? "job-card" : undefined}>
       <span
         className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${
           isReview ? "bg-violet-50 text-violet-600" : "bg-brand-50 text-brand-600"
@@ -168,10 +210,83 @@ function JobCard({ job, showBoardLink }: { job: MyJob; showBoardLink: boolean })
             Board
           </Link>
         )}
-        <Link to={`/my-jobs/${job.card_id}`} className="btn-secondary btn-sm">
+        <Link to={`/my-jobs/${job.card_id}`} className="btn-secondary btn-sm" data-guide={guideExample ? "job-open" : undefined}>
           Open
         </Link>
       </div>
     </div>
+  );
+}
+
+/** A permanent, always-on practice job -- unlike every other card on
+ * this page it never comes from the backend and never goes away, so
+ * there's always at least one job to click into (a brand-new account
+ * with nothing real assigned yet included) and the guided tour always
+ * has somewhere to run. Amber throughout, deliberately unlike the blue
+ * (annotation) and violet (review) real-job cards, so it reads as
+ * "practice" at a glance rather than as one more real assignment. */
+function TutorialSection() {
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-[11px] font-semibold uppercase tracking-wider text-amber-500">Practice</h2>
+      <a
+        href={withViewerHandoff(`${ANNOTATOR_UI_URL}/tutorial`)}
+        onClick={refreshViewerHandoffOnClick}
+        target="_blank"
+        rel="noreferrer"
+        className="group flex items-center gap-4 rounded-2xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm transition-shadow hover:shadow-md"
+      >
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600">
+          <SparklesIcon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-gray-900">Tutorial job</p>
+            <span className="rounded-full bg-amber-200/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+              Always available
+            </span>
+          </div>
+          <p className="mt-0.5 text-sm text-gray-600">
+            A real CT scan to practice on -- walks you through annotating and reviewing. Nothing here is saved or seen by
+            anyone else.
+          </p>
+        </div>
+        <span className="flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-amber-500/30 transition-colors group-hover:bg-amber-600">
+          <SparklesIcon className="h-4 w-4" />
+          Start the tutorial
+        </span>
+      </a>
+    </section>
+  );
+}
+
+/** The person's own opt-out for the notification service's emails --
+ * one switch here (the admin's Notifications page has the per-kind
+ * detail). Shows the address the emails go to so "why no email?" is
+ * answered on the spot. */
+function EmailNotificationsToggle() {
+  const [pref, setPref] = useState<NotificationPreference | null>(null);
+  useEffect(() => {
+    getMyNotificationPreferences().then(setPref).catch(() => setPref(null));
+  }, []);
+  if (!pref) return null;
+  return (
+    <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700" data-testid="email-notifications-toggle">
+      <input
+        type="checkbox"
+        checked={pref.email_enabled}
+        onChange={async (e) => {
+          const next = e.target.checked;
+          setPref({ ...pref, email_enabled: next });
+          try {
+            setPref(await updateMyNotificationPreferences({ email_enabled: next }));
+          } catch {
+            setPref(pref);
+          }
+        }}
+      />
+      Email me about my jobs
+      <span className="text-xs text-gray-400">{pref.email ? `(${pref.email})` : "(no email on your account)"}</span>
+    </label>
   );
 }

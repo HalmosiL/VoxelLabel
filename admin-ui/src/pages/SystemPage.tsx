@@ -5,6 +5,8 @@ import { describeApiError } from "../api/client";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
 import { TrashIcon } from "../components/icons";
+import { SYSTEM_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 const POLL_MS = 5000;
 
@@ -22,6 +24,7 @@ export default function SystemPage() {
   const [overview, setOverview] = useState<BackupsOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useRegisterGuide("system", SYSTEM_STEPS, overview !== null, false);
 
   function refresh() {
     listBackups()
@@ -75,7 +78,7 @@ export default function SystemPage() {
         title="System"
         subtitle="Database backups and maintenance. Object storage (images, documents, masks) is backed up separately -- see the README."
         action={
-          <button onClick={handleBackupNow} className="btn-primary btn-sm" disabled={busy || Boolean(running) || !overview?.available}>
+          <button onClick={handleBackupNow} className="btn-primary btn-sm" disabled={busy || Boolean(running) || !overview?.available} data-guide="backup-now">
             {running ? "Backup running…" : "Back up now"}
           </button>
         }
@@ -91,6 +94,7 @@ export default function SystemPage() {
 
       {status && (
         <div
+          data-guide="backup-status"
           className={`rounded-lg border px-3.5 py-2.5 text-sm ${
             status.state === "failed"
               ? "border-red-200 bg-red-50 text-red-700"
@@ -104,7 +108,7 @@ export default function SystemPage() {
         </div>
       )}
 
-      <div className="card">
+      <div className="card" data-guide="backups">
         <h2 className="section-title mb-1">Backups</h2>
         <p className="hint mb-4">
           Taken automatically once a day and kept for 14 days (see the db-backup service in docker-compose.yml). Each
@@ -153,7 +157,7 @@ export default function SystemPage() {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card" data-guide="restoring">
         <h2 className="section-title mb-1">Restoring</h2>
         <p className="hint">
           Restoring replaces the whole database with the chosen backup. From the platform's checkout, on the host:

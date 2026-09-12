@@ -9,6 +9,8 @@ import {
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
 import { describeApiError } from "../api/client";
+import { DEID_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 export default function DeidentificationProfilesPage() {
   const [profiles, setProfiles] = useState<DeidentificationProfile[]>([]);
@@ -23,6 +25,7 @@ export default function DeidentificationProfilesPage() {
   }
 
   useEffect(refresh, []);
+  useRegisterGuide("deidentification", DEID_STEPS, true, false);
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -45,11 +48,11 @@ export default function DeidentificationProfilesPage() {
       {error && <p className="alert-error">{error}</p>}
 
       {profiles.length === 0 && <EmptyState message="No profiles yet -- create one below." />}
-      {profiles.map((profile) => (
-        <ProfileCard key={profile.id} profile={profile} onRuleAdded={refresh} />
+      {profiles.map((profile, i) => (
+        <ProfileCard key={profile.id} profile={profile} onRuleAdded={refresh} first={i === 0} />
       ))}
 
-      <div className="card">
+      <div className="card" data-guide="new-profile">
         <h2 className="section-title mb-4">New profile</h2>
         <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-4">
           <label className="field flex-1">
@@ -74,7 +77,8 @@ export default function DeidentificationProfilesPage() {
   );
 }
 
-function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfile; onRuleAdded: () => void }) {
+/** `first`: only the first profile carries the page tour's data-guide anchors. */
+function ProfileCard({ profile, onRuleAdded, first }: { profile: DeidentificationProfile; onRuleAdded: () => void; first: boolean }) {
   const [dicomTag, setDicomTag] = useState("(0010,0010)");
   const [action, setAction] = useState("hash");
   const [replacementValue, setReplacementValue] = useState("");
@@ -92,7 +96,7 @@ function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfil
   }
 
   return (
-    <div className="card">
+    <div className="card" data-guide={first ? "profile" : undefined}>
       <div className="mb-4 flex items-center gap-3">
         <span className="stat-icon bg-brand-50 text-brand-600" style={{ height: "2.25rem", width: "2.25rem" }}>
           <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
@@ -138,7 +142,7 @@ function ProfileCard({ profile, onRuleAdded }: { profile: DeidentificationProfil
         </table>
       </div>
 
-      <form onSubmit={handleAddRule} className="flex flex-wrap items-end gap-3">
+      <form onSubmit={handleAddRule} className="flex flex-wrap items-end gap-3" data-guide={first ? "add-rule" : undefined}>
         <label className="field">
           <span className="label">DICOM tag</span>
           <input

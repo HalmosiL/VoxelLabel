@@ -7,6 +7,8 @@ import { PatientSummary, searchPatients } from "../api/dataApi";
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
 import PageHeader from "../components/PageHeader";
+import { PATIENTS_STEPS } from "../guide/adminSteps";
+import { useRegisterGuide } from "../guide/GuideContext";
 
 const PAGE_SIZE = 50;
 
@@ -17,6 +19,8 @@ export default function PatientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showNewPatient, setShowNewPatient] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  useRegisterGuide("patients", PATIENTS_STEPS, loaded, false);
 
   // Searched and paged on the server (the patient table spans every
   // study, so it's the one list that grows without bound).
@@ -25,6 +29,7 @@ export default function PatientsPage() {
       .then(({ items, total: count }) => {
         setPatients(items);
         setTotal(count);
+        setLoaded(true);
       })
       .catch((err) => setError(describeApiError(err)));
   }
@@ -51,7 +56,7 @@ export default function PatientsPage() {
       {error && <p className="alert-error">{error}</p>}
 
       <div className="flex items-end justify-between gap-4">
-        <label className="field w-80">
+        <label className="field w-80" data-guide="patient-search">
           <span className="label">Search by patient ID</span>
           <input
             className="input"
@@ -60,7 +65,7 @@ export default function PatientsPage() {
             placeholder="Paste or type a patient pseudonym ID…"
           />
         </label>
-        <button onClick={() => setShowNewPatient(true)} className="btn-primary self-end">
+        <button onClick={() => setShowNewPatient(true)} className="btn-primary self-end" data-guide="new-patient">
           New patient
         </button>
       </div>
@@ -76,7 +81,7 @@ export default function PatientsPage() {
         />
       )}
 
-      <div className="table-wrap">
+      <div className="table-wrap" data-guide="patients-table">
         <table>
           <thead>
             <tr>
