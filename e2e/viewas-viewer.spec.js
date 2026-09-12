@@ -107,9 +107,14 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
   const hasObjects = (await v.locator("aside button", { hasText: "Accept" }).count()) === 1;
   check("viewer: review card renders with the pending annotation's objects", hasObjects);
   if (hasObjects) {
+    // A real review job can have many objects to decide, not just one --
+    // loop until they're all decided (bounded generously, and checking
+    // the count first so a transient empty render breaks out instead of
+    // hanging a click() for 30s).
     let guard = 0;
-    while (await v.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 10) {
-      await v.locator("aside button", { hasText: "Accept" }).click(); await v.waitForTimeout(250);
+    while (await v.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 60) {
+      if ((await v.locator("aside button", { hasText: "Accept" }).count()) === 0) break;
+      await v.locator("aside button", { hasText: "Accept" }).first().click(); await v.waitForTimeout(250);
     }
     check("viewer: submit review enabled once every object is decided", !(await v.locator("header button", { hasText: "Submit review" }).isDisabled()));
     await v.locator("header button", { hasText: "Submit review" }).click(); await v.waitForTimeout(2500);

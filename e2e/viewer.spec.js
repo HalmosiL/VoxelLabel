@@ -74,7 +74,16 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     const present = {};
     for (const tl of tools) present[tl] = await page.locator(`[data-testid="tool-${tl}"]`).count();
     check("toolbar tools present", Object.values(present).every((n) => n === 1), present);
-    check("paint disabled without object", await page.locator('[data-testid="tool-paint"]').isDisabled());
+    // Only meaningful on a case with no objects yet -- a rerun against
+    // the same shared fixture case (this spec creates a real object
+    // every time it runs) legitimately already has one, so paint is
+    // already enabled; skip the "without object" assertion then rather
+    // than fail on stale-state, mirroring the labelCount idempotency
+    // just below.
+    const preExistingObjects = await page.locator('[data-testid^="object-"]').count();
+    if (preExistingObjects === 0) {
+      check("paint disabled without object", await page.locator('[data-testid="tool-paint"]').isDisabled());
+    }
     // add label + object
     const labelCount = await page.locator('[data-testid^="label-"]').count();
     if (labelCount === 0) {
@@ -199,9 +208,12 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     await page.fill('textarea[placeholder="Comment for the annotator…"]', "Boundary too generous on the medial side.");
     await page.locator("aside button", { hasText: "Reject" }).click();
     await page.waitForTimeout(300);
+    // See viewas-viewer.spec.js's comment: bound generously and check
+    // the count first, since a real job can have many objects to decide.
     let guard = 0;
-    while (await page.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 10) {
-      await page.locator("aside button", { hasText: "Accept" }).click();
+    while (await page.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 60) {
+      if ((await page.locator("aside button", { hasText: "Accept" }).count()) === 0) break;
+      await page.locator("aside button", { hasText: "Accept" }).first().click();
       await page.waitForTimeout(300);
     }
     check("all objects decided", !(await page.locator("header button", { hasText: "Submit review" }).isDisabled()));

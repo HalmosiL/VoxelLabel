@@ -15,7 +15,9 @@ admin-ui/.env
 # Claude Code local session config -- not project code.
 .claude/
 
-# screenshots the e2e specs drop while running
-e2e/*.png
+# screenshots and result dumps the e2e specs drop while running (**, not
+# *, since some land in e2e/guide/ -- a bare e2e/*.png misses those)
+e2e/**/*.png
+e2e/*-results.json
 e2e/node_modules/
 e2e/package-lock.json

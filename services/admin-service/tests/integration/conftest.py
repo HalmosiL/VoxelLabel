@@ -21,9 +21,19 @@ from shared_auth import CurrentUser, get_current_user
 from shared_models import database
 from shared_models.models import Base
 
-assert database.DATABASE_URL.rstrip("/").split("/")[-1].endswith("_test"), (
-    "integration tests need DATABASE_URL pointing at a *_test database -- refusing to truncate anything else"
-)
+if not database.DATABASE_URL.rstrip("/").split("/")[-1].endswith("_test"):
+    # A plain `assert` here would abort the whole pytest session with a
+    # collection error -- pytest always imports every conftest.py under
+    # rootdir up front (for fixture/plugin discovery), regardless of
+    # tests/conftest.py's collect_ignore_glob, which only filters test
+    # *items*, not this eager conftest walk. `pytest.skip(...,
+    # allow_module_level=True)` is the documented way to bail out of a
+    # module at import time -- it cleanly excludes this directory
+    # instead of failing the plain unit-test run.
+    pytest.skip(
+        "integration tests need DATABASE_URL pointing at a *_test database -- refusing to truncate anything else",
+        allow_module_level=True,
+    )
 os.environ.setdefault("NOTIFICATIONS_POLLER_ENABLED", "0")
 
 from app.main import app  # noqa: E402 -- after the env guard on purpose
