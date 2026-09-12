@@ -170,6 +170,23 @@ async function tabletContext(browser, landscape) {
     check(`${label}: Panel opens the side panel over the panes`, (await page.locator('[data-testid="side-panel"]').count()) === 1);
     const closeBtn = await center(page.locator('[data-testid="side-panel"] button').first()); await page.touchscreen.tap(closeBtn.x, closeBtn.y); await page.waitForTimeout(300);
     check(`${label}: ✕ closes it again`, (await page.locator('[data-testid="side-panel"]').count()) === 0);
+    // Every pane's own back/forward arrows: one slice per tap, and a
+    // hold repeats (a finger can't hit one slice of 256 on the slider).
+    const paneCount = await page.locator('[data-guide="panes"] > div').count();
+    check(`${label}: every pane has back and forward slice arrows`, (await page.locator('[data-testid="slice-prev"]').count()) === paneCount && (await page.locator('[data-testid="slice-next"]').count()) === paneCount);
+    const firstSlider = page.locator('[data-guide="panes"] input[type=range]').first();
+    const sliceValue = async () => Number(await firstSlider.inputValue());
+    const startSlice = await sliceValue();
+    const nextArrow = await center(page.locator('[data-testid="slice-next"]').first());
+    await page.touchscreen.tap(nextArrow.x, nextArrow.y); await page.waitForTimeout(250);
+    check(`${label}: a tap on the arrow steps exactly one slice`, (await sliceValue()) === startSlice + 1, { startSlice, now: await sliceValue() });
+    const prevArrow = await center(page.locator('[data-testid="slice-prev"]').first());
+    await page.touchscreen.tap(prevArrow.x, prevArrow.y); await page.waitForTimeout(250);
+    check(`${label}: the back arrow steps back one`, (await sliceValue()) === startSlice);
+    check(`${label}: the arrows are finger-sized`, nextArrow.h >= 24 && nextArrow.w >= 24, nextArrow);
+    await page.mouse.move(nextArrow.x, nextArrow.y); await page.mouse.down(); await page.waitForTimeout(1200); await page.mouse.up(); await page.waitForTimeout(300);
+    check(`${label}: holding the arrow repeats`, (await sliceValue()) > startSlice + 3, { startSlice, now: await sliceValue() });
+
     const toolBtn = page.locator('[data-testid="tool-paint"], [data-guide="tool-paint"] button').first();
     check(`${label}: toolbar buttons are finger-sized`, (await toolBtn.boundingBox()).height >= 40);
     check(`${label}: footer shows touch hints`, /Pinch=Zoom/.test(await page.locator('[data-guide="footer"]').innerText()));
