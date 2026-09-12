@@ -323,7 +323,7 @@ their card, and side panels turn into drawers where there isn't room:
   | drag (paint, erase, box) | one finger |
   | scroll to zoom | pinch with two fingers |
   | drag to pan when zoomed | two-finger drag (any tool), or one finger with the Cursor tool |
-  | Ctrl/Cmd+scroll to change slice | the slider under each pane |
+  | Ctrl/Cmd+scroll to change slice | the arrows under each pane (one slice per tap, hold to run) or its slider |
   | double-click to reset the zoom | double-tap |
   | Alt+click for the HU value | long-press (hold ~half a second) |
   | Ctrl/Cmd+click to jump all planes | two-finger tap |
