@@ -20,6 +20,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api import audit
 from app.llm_client import run_llm_turn
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
@@ -167,6 +168,7 @@ def create_workflow_card(
         config=body.config,
     )
     db.add(card)
+    audit.record(db, user, "card.create", "workflow_card", card.id, {"study_id": str(study_id), "type": body.type.value, "title": body.title})
     db.commit()
     db.refresh(card)
     autosave(db, card.study_id, user.subject)
@@ -224,6 +226,9 @@ def update_workflow_card(
         # intended outcome.
         card.config = {**card.config, **body.config}
 
+    changed = [k for k, v in body.model_dump().items() if v is not None and k not in ("position_x", "position_y", "width", "height")]
+    if changed:  # a pure drag/resize is board noise, not an audited change
+        audit.record(db, user, "card.update", "workflow_card", card.id, {"study_id": str(card.study_id), "fields": changed, "config_keys": sorted(body.config.keys()) if body.config else None})
     db.commit()
     db.refresh(card)
     autosave(db, card.study_id, user.subject)
@@ -241,6 +246,7 @@ def delete_workflow_card(
     delete): this is board scratch space, not clinical data."""
     card = _card_or_404(db, card_id)
     require_study_role(db, str(card.study_id), user, allowed_roles=_WRITE_ROLES)
+    audit.record(db, user, "card.delete", "workflow_card", card.id, {"study_id": str(card.study_id), "type": card.type.value, "title": card.title})
     db.delete(card)
     db.commit()
     autosave(db, card.study_id, user.subject)
@@ -497,6 +503,8 @@ def run_workflow_card(
 
     run_card_with_ripple(db, card)
     db.refresh(card)
+    audit.record(db, user, "card.run", "workflow_card", card.id, {"study_id": str(card.study_id), "type": card.type.value, "title": card.title})
+    db.commit()
     autosave(db, card.study_id, user.subject)
     return _serialize_card(db, card, {card.id: card}, {})
 

@@ -4,6 +4,13 @@
 # not take the others down with it. The ceilings are generous relative
 # to observed usage (see docker stats) -- raise one if a service gets
 # OOM-killed rather than removing it.
+#
+# Every `${VAR:-default}` below is read from .env (copy .env.example)
+# -- the defaults reproduce the local-dev stack exactly (everything at
+# localhost), a test server sets the PUBLIC_* URLs to its own hostname
+# and its own passwords. See INSTALL.md. The GPU reservation for Ollama
+# lives in docker-compose.gpu.yml (opt-in, hosts without an NVIDIA GPU
+# would fail to start otherwise).
 services:
   postgres:
     restart: unless-stopped
@@ -13,11 +20,11 @@ services:
           memory: 768m
     image: postgres:16
     environment:
-      POSTGRES_USER: ctplatform
-      POSTGRES_PASSWORD: ctplatform
-      POSTGRES_DB: ctplatform
+      POSTGRES_USER: ${POSTGRES_USER:-ctplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ctplatform}
+      POSTGRES_DB: ${POSTGRES_DB:-ctplatform}
     ports:
-      - "5432:5432"
+      - "${BIND_INTERNAL:-127.0.0.1}:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
@@ -29,7 +36,7 @@ services:
           memory: 128m
     image: redis:7
     ports:
-      - "6379:6379"
+      - "${BIND_INTERNAL:-127.0.0.1}:6379:6379"
 
   minio:
     restart: unless-stopped
@@ -40,16 +47,20 @@ services:
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
+      # 9000 must stay reachable from browsers: presigned image/document
+      # URLs point straight at it (see PUBLIC_MINIO_URL).
       - "9000:9000"
-      - "9001:9001"
+      - "${BIND_INTERNAL:-127.0.0.1}:9001:9001"
     volumes:
       - minio-data:/data
 
-  # Dev-mode Keycloak (in-memory, single node). Production uses the
-  # Keycloak Operator with its own HA Postgres -- see infra/k8s/README.md.
+  # Dev-mode Keycloak (single node, no HTTPS of its own). Fine for a test
+  # server behind a firewall or a TLS-terminating reverse proxy (then add
+  # docker-compose.proxy.yml, see INSTALL.md); production uses the Keycloak
+  # Operator with its own HA Postgres -- see infra/k8s/README.md.
   keycloak:
     restart: unless-stopped
     deploy:
@@ -59,8 +70,10 @@ services:
     image: quay.io/keycloak/keycloak:24.0
     command: start-dev
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Behind a TLS-terminating reverse proxy add docker-compose.proxy.yml
+      # (Keycloak refuses an empty KC_PROXY_HEADERS, so it can't live here).
     ports:
       - "8080:8080"
     volumes:
@@ -76,15 +89,18 @@ services:
       context: .
       dockerfile: services/ingestion-service/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
       REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       # Only this API container actually signs PyTorch export URLs (see
       # app/storage.py's presigned_export_url) -- needs the
       # browser-reachable host, not the internal one above.
-      OBJECT_STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${PUBLIC_MINIO_URL:-http://localhost:9000}
+      KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
+      ADMIN_UI_ORIGINS: ${ADMIN_UI_ORIGINS:-http://localhost:5173,http://localhost:5174,http://127.0.0.1:45678}
     ports:
       - "8001:8000"
     depends_on:
@@ -103,9 +119,11 @@ services:
       dockerfile: services/ingestion-service/Dockerfile
     command: ["celery", "-A", "app.worker", "worker", "--loglevel=info"]
     environment:
-      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
       REDIS_URL: redis://redis:6379/0
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     depends_on:
       - postgres
       - redis
@@ -121,14 +139,17 @@ services:
       context: .
       dockerfile: services/data-service/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
       # Unlike ingestion-service, this is only ever used to *sign* presigned
       # URLs (no real network call to MinIO happens) -- the signed URL must
       # use the hostname the *browser* will actually fetch it from, which is
       # the published port, not the internal docker-compose service name.
-      OBJECT_STORAGE_ENDPOINT: http://localhost:9000
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      OBJECT_STORAGE_ENDPOINT: ${PUBLIC_MINIO_URL:-http://localhost:9000}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
+      ADMIN_UI_ORIGINS: ${ADMIN_UI_ORIGINS:-http://localhost:5173,http://localhost:5174,http://127.0.0.1:45678}
     ports:
       - "8002:8000"
     depends_on:
@@ -145,9 +166,10 @@ services:
       context: .
       dockerfile: services/annotation-service/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
+      KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
+      ADMIN_UI_ORIGINS: ${ADMIN_UI_ORIGINS:-http://localhost:5173,http://localhost:5174,http://127.0.0.1:45678}
     ports:
       - "8003:8000"
     depends_on:
@@ -163,15 +185,18 @@ services:
       context: .
       dockerfile: services/admin-service/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      OBJECT_STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
-      KEYCLOAK_ISSUER: http://localhost:8080/realms/ct-platform
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${PUBLIC_MINIO_URL:-http://localhost:9000}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: ct-platform
       KEYCLOAK_ADMIN_CLIENT_ID: admin-service-account
-      KEYCLOAK_ADMIN_CLIENT_SECRET: admin-service-account-secret
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-admin-service-account-secret}
+      ADMIN_UI_ORIGINS: ${ADMIN_UI_ORIGINS:-http://localhost:5173,http://localhost:5174,http://127.0.0.1:45678}
       # The Clinical Trial module's chat loop: a real small local model
       # (via Ollama) driven through a real MCP server's tools.
       OLLAMA_BASE_URL: http://ollama:11434
@@ -182,7 +207,7 @@ services:
       # against 4b's ~8-20s. granite4.1:3b was faster still but has no
       # thinking mode at all -- ruled out once chain-of-thought became a
       # real requirement, not just a nice-to-have.
-      OLLAMA_MODEL: qwen3:1.7b
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:1.7b}
       MCP_SERVER_URL: http://mcp-server:8000/mcp
       # Where the db-backup service writes dumps -- listed/triggered/
       # downloaded through this service's /admin/backups endpoints.
@@ -211,9 +236,9 @@ services:
           memory: 256m
     environment:
       PGHOST: postgres
-      PGUSER: ctplatform
-      PGPASSWORD: ctplatform
-      PGDATABASE: ctplatform
+      PGUSER: ${POSTGRES_USER:-ctplatform}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-ctplatform}
+      PGDATABASE: ${POSTGRES_DB:-ctplatform}
       BACKUP_INTERVAL_SECONDS: "86400"
       BACKUP_RETENTION_DAYS: "14"
     volumes:
@@ -237,24 +262,24 @@ services:
       context: .
       dockerfile: services/mcp-server/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@postgres:5432/ctplatform
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
       # For read_document -- a real fetch from inside this container, so
       # the internal hostname (same reasoning as ingestion-service).
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
       OBJECT_STORAGE_BUCKET: ct-pixel-data
-      OBJECT_STORAGE_ACCESS_KEY: minioadmin
-      OBJECT_STORAGE_SECRET_KEY: minioadmin
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     depends_on:
       - postgres
       - minio
 
   # Runs the actual small local language model the Clinical Trial
-  # Assistant card talks to. Reserves the host's NVIDIA GPU (needs the
-  # driver + nvidia-container-toolkit installed on the host, confirmed
-  # working via `docker run --gpus all ... nvidia-smi`) -- CPU-only
-  # would also work, just much slower. The model itself isn't baked into
-  # the image -- pull it once with `docker compose exec ollama ollama
-  # pull <model>`.
+  # Assistant card talks to. CPU-only as written here; add
+  # docker-compose.gpu.yml (`-f docker-compose.yml -f docker-compose.gpu.yml`)
+  # on a host with an NVIDIA driver + nvidia-container-toolkit. The model
+  # itself isn't baked into the image -- pull it once with
+  # `docker compose exec ollama ollama pull <model>` (scripts/setup-test-server.sh
+  # does this for you).
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
@@ -266,33 +291,29 @@ services:
     volumes:
       - ollama-data:/root/.ollama
     ports:
-      - "11434:11434"
+      - "${BIND_INTERNAL:-127.0.0.1}:11434:11434"
     deploy:
       resources:
         limits:
           memory: 4g
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
-  # Browser-facing React app -- talks to the four APIs and Keycloak directly
-  # from the browser (all ports above are published to the host), not
-  # server-to-server, so no runtime env wiring is needed here beyond the
-  # build-time defaults in admin-ui/src/config.ts.
   # Local mail sandbox for the notification service: catches every
   # email the platform sends (nothing leaves the machine) and shows it
-  # at http://localhost:8025. The default delivery settings point here
+  # at http://<host>:8025. The default delivery settings point here
   # (host "mailpit", port 1025); a real deployment points them at a
   # real SMTP server from the admin UI's Notifications page instead.
   mailpit:
     image: axllent/mailpit:v1.20
     restart: unless-stopped
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "${BIND_INTERNAL:-127.0.0.1}:8025:8025"
+      - "${BIND_INTERNAL:-127.0.0.1}:1025:1025"
 
+  # Browser-facing React app -- talks to the four APIs and Keycloak
+  # directly from the browser (all ports above are published to the
+  # host), not server-to-server. Those URLs are baked in AT BUILD TIME
+  # (Vite), which is why they're build args here: change PUBLIC_* in
+  # .env and rebuild this image.
   admin-ui:
     restart: unless-stopped
     deploy:
@@ -302,6 +323,13 @@ services:
     build:
       context: .
       dockerfile: admin-ui/Dockerfile
+      args:
+        VITE_KEYCLOAK_URL: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}
+        VITE_INGESTION_API: ${PUBLIC_INGESTION_API:-http://localhost:8001}
+        VITE_DATA_API: ${PUBLIC_DATA_API:-http://localhost:8002}
+        VITE_ANNOTATION_API: ${PUBLIC_ANNOTATION_API:-http://localhost:8003}
+        VITE_ADMIN_API: ${PUBLIC_ADMIN_API:-http://localhost:8004}
+        VITE_ANNOTATOR_UI_URL: ${PUBLIC_ANNOTATOR_UI_URL:-http://localhost:5174}
     ports:
       - "5173:80"
 

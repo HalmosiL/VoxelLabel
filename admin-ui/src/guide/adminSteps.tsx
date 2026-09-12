@@ -343,6 +343,12 @@ export const SYSTEM_STEPS: GuideStep[] = [
     body: "A full restore is a command on the host, shown here, and replaces the whole database. For a mistake inside one study, use that study's Version history instead -- it restores without touching anything else.",
     placement: "top",
   },
+  {
+    target: "audit-log",
+    title: "Audit log",
+    body: "Who changed what, platform-wide: studies created or renamed, members added or removed, cases, accounts, workflow cards and runs, version restores, registration decisions. Newest first. Annotations aren't listed here -- each keeps its own version history on the case.",
+    placement: "top",
+  },
 ];
 
 export const BOARD_STEPS: GuideStep[] = [

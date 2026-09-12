@@ -1,0 +1,13 @@
+# Opt-in override for running behind a TLS-terminating reverse proxy
+# (nginx/Caddy/Traefik in front, browsers use https://...). Keycloak
+# must trust the proxy's X-Forwarded-* headers to build the right
+# issuer/redirects; without a proxy this MUST NOT be set (Keycloak 24
+# refuses to start on an empty/unknown value, which is why it isn't a
+# plain .env variable).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+services:
+  keycloak:
+    environment:
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME_STRICT: "false"

@@ -1,4 +1,4 @@
-.PHONY: up down test test-ingestion test-data test-annotation test-admin migrate
+.PHONY: up down test test-ingestion test-data test-annotation test-admin migrate setup
 
 up:
 	docker compose up --build
@@ -25,3 +25,7 @@ test-admin:
 
 migrate:
 	cd infra/migrations && alembic upgrade head
+
+# First-time (and any-time) setup of the whole stack from .env -- see INSTALL.md.
+setup:
+	scripts/setup-test-server.sh

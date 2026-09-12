@@ -13,6 +13,7 @@ from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import Study, StudyMembership, StudyRole
 
+from app.api import audit
 from app.keycloak_admin import create_user, delete_user, get_user, list_realm_users, reset_password, set_admin_role, update_user
 
 router = APIRouter(prefix="/admin", tags=["admin:users"])
@@ -79,14 +80,17 @@ class CreateUserBody(BaseModel):
 
 
 @router.post("/users")
-def create_keycloak_user(body: CreateUserBody, user: CurrentUser = Depends(get_current_user)) -> dict:
+def create_keycloak_user(body: CreateUserBody, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     _require_global_admin(user)
     try:
-        return create_user(body.username, body.email, body.first_name, body.last_name, body.password, body.is_admin)
+        created = create_user(body.username, body.email, body.first_name, body.last_name, body.password, body.is_admin)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:
             raise HTTPException(status_code=409, detail="A user with this username or email already exists")
         raise
+    audit.record(db, user, "user.create", "user", created["id"], {"username": body.username, "is_admin": body.is_admin})
+    db.commit()
+    return created
 
 
 class UpdateUserBody(BaseModel):
@@ -130,7 +134,7 @@ def get_keycloak_user(user_id: str, db: Session = Depends(get_db), user: Current
 
 @router.patch("/users/{user_id}")
 def update_keycloak_user(
-    user_id: str, body: UpdateUserBody, user: CurrentUser = Depends(get_current_user)
+    user_id: str, body: UpdateUserBody, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)
 ) -> dict:
     """Edit profile fields, enable/disable the account, grant/revoke the
     global admin flag. An admin can't lock themselves out (disable or
@@ -141,16 +145,19 @@ def update_keycloak_user(
     try:
         if body.is_admin is not None:
             set_admin_role(user_id, body.is_admin)
-        return update_user(
+        updated = update_user(
             user_id, first_name=body.first_name, last_name=body.last_name, email=body.email, enabled=body.enabled
         )
     except httpx.HTTPStatusError as exc:
         raise _keycloak_error(exc) from exc
+    audit.record(db, user, "user.update", "user", user_id, {k: v for k, v in body.model_dump().items() if v is not None})
+    db.commit()
+    return updated
 
 
 @router.post("/users/{user_id}/reset-password", status_code=204)
 def reset_keycloak_password(
-    user_id: str, body: ResetPasswordBody, user: CurrentUser = Depends(get_current_user)
+    user_id: str, body: ResetPasswordBody, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)
 ) -> None:
     _require_global_admin(user)
     if len(body.password) < 8:
@@ -159,6 +166,8 @@ def reset_keycloak_password(
         reset_password(user_id, body.password, body.temporary)
     except httpx.HTTPStatusError as exc:
         raise _keycloak_error(exc) from exc
+    audit.record(db, user, "user.reset_password", "user", user_id, {"temporary": body.temporary})
+    db.commit()
 
 
 @router.delete("/users/{user_id}", status_code=204)
@@ -177,5 +186,6 @@ def delete_keycloak_user(
     except httpx.HTTPStatusError as exc:
         raise _keycloak_error(exc) from exc
     db.query(StudyMembership).filter_by(user_id=user_id).delete()
+    audit.record(db, user, "user.delete", "user", user_id)
     db.commit()
 

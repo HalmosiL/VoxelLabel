@@ -15,6 +15,7 @@ from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case, Study, StudyMembership, StudyRole
 
+from app.api import audit
 from app.keycloak_admin import list_realm_users
 from app.storage import presigned_study_cover_image_url, upload_study_cover_image
 from app.versioning import autosave
@@ -132,6 +133,8 @@ def create_study(
     _require_global_admin(user)
     study = Study(name=name, description=description)
     db.add(study)
+    db.flush()
+    audit.record(db, user, "study.create", "study", study.id, {"name": name})
     db.commit()
     return {"id": str(study.id), "name": study.name}
 
@@ -149,10 +152,15 @@ def update_study(
         raise HTTPException(status_code=404, detail="Study not found")
     _require_study_admin(db, study_id, user)
 
-    if name is not None:
+    changes = {}
+    if name is not None and name != study.name:
+        changes["name"] = {"from": study.name, "to": name}
         study.name = name
-    if description is not None:
+    if description is not None and description != study.description:
+        changes["description"] = {"from": study.description, "to": description}
         study.description = description
+    if changes:
+        audit.record(db, user, "study.update", "study", study.id, changes)
     db.commit()
     autosave(db, study.id, user.subject)
     return {"id": str(study.id), "name": study.name, "description": study.description}
@@ -200,6 +208,7 @@ def delete_study(
             _delete_case_cascade(db, case)
 
     db.query(StudyMembership).filter_by(study_id=study_id).delete()
+    audit.record(db, user, "study.delete", "study", study.id, {"name": study.name, "cases_deleted": len(cases)})
     db.delete(study)
     db.commit()
 
@@ -264,6 +273,7 @@ def add_study_member(
         db.add(membership)
     else:
         membership.role = role
+    audit.record(db, user, "member.add" if created else "member.change_role", "study", study_id, {"user_id": user_id, "role": role.value})
     db.commit()
     autosave(db, study_id, user.subject)
     return {**_serialize_member(membership, _user_directory()), "study_id": study_id, "created": created}
@@ -285,6 +295,7 @@ def remove_study_member(
         raise HTTPException(status_code=404, detail="Membership not found")
     if user_id == user.subject and not _is_global_admin(user):
         raise HTTPException(status_code=409, detail="You cannot remove your own admin membership")
+    audit.record(db, user, "member.remove", "study", study_id, {"user_id": user_id, "role": membership.role.value})
     db.delete(membership)
     db.commit()
     autosave(db, study_id, user.subject)

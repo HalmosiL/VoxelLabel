@@ -23,6 +23,9 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 TEST_USERNAME="${TEST_USERNAME:-platform-admin}"
 TEST_PASSWORD="${TEST_PASSWORD:-platform-admin}"
 ADMIN_UI_ORIGIN="${ADMIN_UI_ORIGIN:-http://localhost:5173}"
+# Comma-separated extra browser origins to allow on the same client: the
+# ct-annotator viewer and the clinician desktop app's local server.
+EXTRA_ORIGINS="${EXTRA_ORIGINS:-http://localhost:5174,http://127.0.0.1:45678}"
 SERVICE_ACCOUNT_CLIENT_ID="${SERVICE_ACCOUNT_CLIENT_ID:-admin-service-account}"
 SERVICE_ACCOUNT_CLIENT_SECRET="${SERVICE_ACCOUNT_CLIENT_SECRET:-admin-service-account-secret}"
 
@@ -53,13 +56,16 @@ curl -sf -X POST "$KEYCLOAK_URL/admin/realms" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d "{\"realm\": \"$REALM\", \"enabled\": true, \"displayName\": \"CT Annotation Platform\"}" >/dev/null
 
-echo "Creating client '$CLIENT_ID' ..."
+echo "Creating client '$CLIENT_ID' (origins: $ADMIN_UI_ORIGIN, $EXTRA_ORIGINS) ..."
 # redirectUris/webOrigins allow the admin-ui (a browser app, standard
 # Authorization Code + PKCE flow) to log in via this client. directAccessGrants
 # stays enabled too, for the password-grant testing shown in this repo's docs.
 curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM/clients" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "{\"clientId\": \"$CLIENT_ID\", \"enabled\": true, \"publicClient\": true, \"directAccessGrantsEnabled\": true, \"standardFlowEnabled\": true, \"protocol\": \"openid-connect\", \"redirectUris\": [\"$ADMIN_UI_ORIGIN/*\"], \"webOrigins\": [\"$ADMIN_UI_ORIGIN\"]}" >/dev/null
+  -d "$(jq -n --arg id "$CLIENT_ID" --arg origins "$ADMIN_UI_ORIGIN,$EXTRA_ORIGINS" '
+        ($origins | split(",") | map(select(length > 0))) as $o |
+        {clientId: $id, enabled: true, publicClient: true, directAccessGrantsEnabled: true, standardFlowEnabled: true,
+         protocol: "openid-connect", redirectUris: ($o | map(. + "/*")), webOrigins: $o}')" >/dev/null
 
 CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$CLIENT_ID" \
   -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')

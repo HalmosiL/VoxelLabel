@@ -1,0 +1,54 @@
+# Runs on every push and pull request: each backend service's pytest
+# suite (pure-logic tests, no database needed -- see each service's
+# tests/ docstrings), the admin-ui type-check + production build, and a
+# `docker compose config` sanity check of the deployment file.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: pytest (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [ingestion-service, data-service, annotation-service, admin-service]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+      - name: Install
+        run: |
+          pip install -e libs/shared-models -e libs/shared-auth
+          pip install -r services/${{ matrix.service }}/requirements.txt pytest
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        run: pytest -q
+
+  admin-ui:
+    name: admin-ui build (tsc + vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: admin-ui/package-lock.json
+      - run: npm ci
+        working-directory: admin-ui
+      - run: npm run build
+        working-directory: admin-ui
+
+  compose:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env && docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.proxy.yml config --quiet

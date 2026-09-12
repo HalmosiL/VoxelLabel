@@ -1,0 +1,16 @@
+# Opt-in override: give Ollama the host's NVIDIA GPU. Needs the NVIDIA
+# driver + nvidia-container-toolkit on the host (check with
+# `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Without this file the model runs on CPU -- correct, just much slower.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

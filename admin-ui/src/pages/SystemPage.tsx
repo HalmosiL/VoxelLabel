@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { BackupsOverview, deleteBackup, downloadBackup, listBackups, requestBackup } from "../api/adminApi";
+import { AuditEntry, BackupsOverview, deleteBackup, downloadBackup, listAuditLog, listBackups, requestBackup } from "../api/adminApi";
 import { describeApiError } from "../api/client";
 import EmptyState from "../components/EmptyState";
 import PageHeader from "../components/PageHeader";
@@ -24,6 +24,7 @@ export default function SystemPage() {
   const [overview, setOverview] = useState<BackupsOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   useRegisterGuide("system", SYSTEM_STEPS, overview !== null, false);
 
   function refresh() {
@@ -36,6 +37,12 @@ export default function SystemPage() {
     refresh();
     const handle = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(handle);
+  }, []);
+
+  useEffect(() => {
+    listAuditLog(200)
+      .then((r) => setAudit(r.entries))
+      .catch((err) => setError(describeApiError(err)));
   }, []);
 
   async function handleBackupNow() {
@@ -170,6 +177,68 @@ export default function SystemPage() {
           mistakes rarely need this -- every study keeps its own version history (Study page → Version history) that can
           be restored without touching the rest of the platform.
         </p>
+      </div>
+
+      <AuditLogCard entries={audit} />
+    </div>
+  );
+}
+
+/** Who did what, platform-wide: studies, cases, memberships, accounts,
+ * workflow cards, versions, registration requests -- newest first.
+ * Annotations aren't here; they carry their own version history. */
+function AuditLogCard({ entries }: { entries: AuditEntry[] | null }) {
+  return (
+    <div className="card" data-guide="audit-log" data-testid="audit-log">
+      <h2 className="section-title mb-1">Audit log</h2>
+      <p className="hint mb-4">
+        Every administrative change -- who, what, when. Annotations keep their own history on the case itself.
+      </p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Who</th>
+              <th>Action</th>
+              <th>Entity</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries === null && (
+              <tr>
+                <td colSpan={5} className="py-4 text-center text-gray-400">Loading…</td>
+              </tr>
+            )}
+            {entries?.length === 0 && (
+              <tr>
+                <td colSpan={5}>
+                  <EmptyState message="Nothing recorded yet -- changes made from now on appear here." />
+                </td>
+              </tr>
+            )}
+            {entries?.map((e) => (
+              <tr key={e.id}>
+                <td className="whitespace-nowrap text-sm text-gray-500">{e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+                <td className="text-sm text-gray-700">{e.actor}</td>
+                <td>
+                  <span className="badge-blue">{e.action}</span>
+                </td>
+                <td className="text-sm text-gray-500">
+                  {e.entity_type} <span className="font-mono text-xs text-gray-400">{e.entity_id.slice(0, 8)}…</span>
+                </td>
+                <td>
+                  {e.diff && Object.keys(e.diff).length > 0 ? (
+                    <code className="code-chip">{JSON.stringify(e.diff)}</code>
+                  ) : (
+                    <span className="text-gray-300">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

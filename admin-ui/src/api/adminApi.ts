@@ -366,6 +366,26 @@ export function deleteKeycloakUser(userId: string): Promise<void> {
   return apiFetch(base, `/admin/users/${userId}`, { method: "DELETE" });
 }
 
+// ---------------------------------------------------------------- audit log
+
+export interface AuditEntry {
+  id: string;
+  created_at: string | null;
+  actor_id: string;
+  /** Username when Keycloak could resolve it, else the bare subject id. */
+  actor: string;
+  /** "<entity>.<verb>", e.g. "study.update", "member.add", "card.run". */
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  diff: Record<string, unknown> | null;
+}
+
+/** Newest first; global admin only. See admin-service's api/audit.py. */
+export function listAuditLog(limit = 100): Promise<{ entries: AuditEntry[] }> {
+  return apiFetch(base, `/admin/audit-log?limit=${limit}`);
+}
+
 // ---------------------------------------------------------------- registration requests
 
 export interface RegistrationRequest {

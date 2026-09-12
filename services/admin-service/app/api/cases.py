@@ -15,6 +15,7 @@ from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap
 
+from app.api import audit
 from app.api.imaging import _delete_instance
 from app.api.studies import _require_global_admin
 from app.api.workflow import _cascade_new_case
@@ -62,6 +63,7 @@ def create_patient(
     study to scope an ordinary study-role check against."""
     _require_global_admin(user)
     patient = _get_or_create_patient(db, external_patient_id)
+    audit.record(db, user, "patient.create", "patient", patient.id)
     db.commit()
     return {"id": str(patient.id), "pseudonym_id": patient.pseudonym_id}
 
@@ -105,6 +107,8 @@ def create_case(
         comment=comment,
     )
     db.add(case)
+    db.flush()
+    audit.record(db, user, "case.create", "case", case.id, {"study_id": str(study_id), "patient_id": str(patient.id), "accession_number": accession_number})
     db.commit()
 
     # Push the new case through the board on its own -- every "all_cases"
@@ -150,6 +154,10 @@ def update_case(
     if comment is not None:
         case.comment = comment or None
 
+    audit.record(db, user, "case.update", "case", case.id, {
+        "study_id": str(case.study_id),
+        "fields": [k for k, v in (("accession_number", accession_number), ("case_date", case_date), ("type", type), ("title", title), ("comment", comment)) if v is not None],
+    })
     db.commit()
     autosave(db, case.study_id, user.subject)
     return {
@@ -214,6 +222,7 @@ def delete_case(
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     study_id_for_version = case.study_id
+    audit.record(db, user, "case.delete", "case", case.id, {"study_id": str(case.study_id), "title": case.title})
     _delete_case_cascade(db, case)
     db.commit()
     autosave(db, study_id_for_version, user.subject)

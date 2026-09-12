@@ -28,6 +28,7 @@ from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import NotificationLog, NotificationSettings, RegistrationRequest
 
+from app.api import audit
 from app.keycloak_admin import create_user, list_realm_users
 from app.notifications.events import get_settings
 from app.notifications.mailer import send_email
@@ -192,6 +193,7 @@ def approve_registration_request(
     req.decided_at = datetime.now(timezone.utc)
     req.decided_by = user.subject
     db.add(req)
+    audit.record(db, user, "registration.approve", "registration_request", req.id, {"username": req.username, "user_id": created["id"]})
 
     settings = get_settings(db)
     subject, text, html = compose_approved(req, created["username"], temporary_password, settings.platform_base_url)
@@ -217,6 +219,7 @@ def reject_registration_request(
     req.decided_by = user.subject
     req.rejection_reason = (body.reason or "").strip() or None
     db.add(req)
+    audit.record(db, user, "registration.reject", "registration_request", req.id, {"username": req.username, "reason": req.rejection_reason})
 
     settings = get_settings(db)
     subject, text, html = compose_rejected(req, req.rejection_reason)

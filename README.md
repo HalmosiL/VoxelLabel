@@ -28,10 +28,16 @@ infra/
 Every service is independently runnable, testable, and documented -- see
 each `services/*/README.md` and `admin-ui/README.md`.
 
+## Installing on a server
+
+See [`INSTALL.md`](INSTALL.md) -- a from-scratch walkthrough for a
+test server (Docker only on the host, one setup script, `.env` is the
+only thing to edit).
+
 ## Running locally
 
 ```bash
-cp .env.example .env   # adjust if needed
+cp .env.example .env   # the defaults are the local stack; nothing to edit
 docker compose up --build
 ```
 
@@ -48,9 +54,9 @@ services, and admin-ui. Ports:
 | Keycloak | 8080 |
 | MinIO console | 9001 |
 
-**First-time setup:**
+**First-time setup:** `scripts/setup-test-server.sh` does all of it (realm, migrations, viewer annotation types, local model) -- or by hand:
 1. `./infra/keycloak/setup-dev-realm.sh` -- provisions the `ct-platform` realm, client (incl. admin-ui login redirect), and a test admin user (see `infra/keycloak/README.md`). Safe to re-run.
-2. Apply DB migrations: `make migrate` (see `infra/migrations/README.md`).
+2. Apply DB migrations: `scripts/migrate.sh` (containerized; or `make migrate` with a local alembic, see `infra/migrations/README.md`).
 3. Open http://localhost:5173, log in as `platform-admin` / `platform-admin`.
 
 ## Running a single service outside Docker
@@ -71,9 +77,12 @@ make test-ingestion    # one service
 
 ## Status
 
-Backend + admin-ui both exist and have been verified end to end (real
-DICOM upload through ingestion -> object storage -> data-service ->
-annotation-service, driven through the actual browser UI, not just
-curl). Not yet implemented: Kubernetes Ingress/cert wiring for a real
-domain, CI, dataset snapshot endpoints, and the annotator DICOM viewer
-client (deferred -- see `ARCHITECTURE.md`).
+Backend + admin-ui verified end to end (real DICOM upload through
+ingestion -> object storage -> data-service -> annotation-service,
+driven through the actual browser UI). The annotation/review viewer
+lives in the sibling `ct-annotator` repo; the clinician desktop app in
+`clinician-app/`. CI runs each service's tests and the admin-ui build
+on every push (`.github/workflows/ci.yml`). Not yet done: Kubernetes
+Ingress/cert wiring for a real domain (the compose stack + INSTALL.md
+is the supported deployment), Windows/macOS clinician-app installers
+(configured, unbuilt).

@@ -12,6 +12,7 @@ from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Study, StudyVersion
 
+from app.api import audit
 from app.api.studies import _user_directory
 from app.versioning import diff_summary, record_version, restore_version, snapshot_study
 
@@ -112,7 +113,10 @@ def restore(
     study = _study_or_404(db, study_id)
     require_study_role(db, study_id, user, allowed_roles=["admin"])
     version = _version_or_404(db, study_id, version_id)
-    return restore_version(db, study, version, user.subject)
+    result = restore_version(db, study, version, user.subject)
+    audit.record(db, user, "study.restore_version", "study", study.id, {"version_id": str(version_id), "version_number": version.number})
+    db.commit()
+    return result
 
 
 @router.delete("/{version_id}", status_code=204)
@@ -125,5 +129,6 @@ def delete_version(
     _study_or_404(db, study_id)
     require_study_role(db, study_id, user, allowed_roles=["admin"])
     version = _version_or_404(db, study_id, version_id)
+    audit.record(db, user, "study.delete_version", "study", version.study_id, {"version_id": str(version_id), "version_number": version.number})
     db.delete(version)
     db.commit()

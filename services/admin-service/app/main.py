@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.annotation_types import router as annotation_types_router
+from app.api.audit import router as audit_router
 from app.api.cases import router as cases_router
 from app.api.clinical_data import router as clinical_data_router
 from app.api.deidentification import router as deidentification_router
@@ -55,6 +56,7 @@ app.include_router(backups_router)
 app.include_router(notifications_router)
 app.include_router(registration_router)
 app.include_router(registration_public_router)
+app.include_router(audit_router)
 
 
 @app.get("/health")
