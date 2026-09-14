@@ -52,3 +52,23 @@ def test_versions_capture_changes_and_restore_them(client):
     assert client.delete(f"/admin/studies/{sid}/versions/{vid}").status_code == 403
     client.as_admin()
     assert client.delete(f"/admin/studies/{sid}/versions/{vid}").status_code == 204
+
+
+def test_annotation_type_schema_can_be_widened_in_place(client):
+    """A registered type grows a field (ct-annotator's segmentation_volume
+    gained per-object attributes) by replacing its schema; the version
+    bumps, the same schema again is a no-op, unknown names 404."""
+    client.as_admin()
+    v1 = {"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": False}
+    v2 = {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "object"}}, "additionalProperties": False}
+    assert client.post("/admin/annotation-types", params={"name": "growing"}, json=v1).status_code == 200
+    r = client.put("/admin/annotation-types/growing/schema", json=v2)
+    assert r.status_code == 200 and r.json()["changed"] is True and r.json()["schema_version"] == 2
+    again = client.put("/admin/annotation-types/growing/schema", json=v2).json()
+    assert again["changed"] is False and again["schema_version"] == 2
+    listed = next(t for t in client.get("/admin/annotation-types").json() if t["name"] == "growing")
+    assert listed["json_schema"] == v2
+    assert client.put("/admin/annotation-types/nope/schema", json=v2).status_code == 404
+    client.as_user("someone-else")
+    assert client.put("/admin/annotation-types/growing/schema", json=v1).status_code == 403
+

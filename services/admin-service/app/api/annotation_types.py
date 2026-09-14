@@ -39,6 +39,32 @@ def create_annotation_type(
     return {"id": str(annotation_type.id), "name": annotation_type.name}
 
 
+@router.put("/{name}/schema")
+def update_annotation_type_schema(
+    name: str,
+    json_schema: dict,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Replaces a registered type's JSON Schema in place and bumps its
+    schema_version -- how a type grows a field (ct-annotator's
+    segmentation_volume gained per-object `attributes` and per-label
+    `fields` this way) without re-registering under a new name.
+    Existing annotations are untouched: the schema only gates new
+    writes, so widen, don't narrow, or older payloads would fail to
+    re-save."""
+    _require_global_admin(user)
+    annotation_type = db.query(AnnotationType).filter_by(name=name).first()
+    if annotation_type is None:
+        raise HTTPException(status_code=404, detail=f"Annotation type '{name}' not found")
+    if annotation_type.json_schema == json_schema:
+        return {"id": str(annotation_type.id), "name": annotation_type.name, "schema_version": annotation_type.schema_version, "changed": False}
+    annotation_type.json_schema = json_schema
+    annotation_type.schema_version = (annotation_type.schema_version or 1) + 1
+    db.commit()
+    return {"id": str(annotation_type.id), "name": annotation_type.name, "schema_version": annotation_type.schema_version, "changed": True}
+
+
 @router.get("")
 def list_annotation_types(
     db: Session = Depends(get_db),
