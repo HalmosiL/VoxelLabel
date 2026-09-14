@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import Avatar from "./Avatar";
-import { BriefcaseIcon, LogoutIcon, QrIcon, QuestionMarkCircleIcon } from "./icons";
+import { BriefcaseIcon, ClipboardListIcon, LogoutIcon, QrIcon, QuestionMarkCircleIcon } from "./icons";
 import ShareQrModal from "./ShareQrModal";
 import WorkbenchLayout from "./WorkbenchLayout";
 import { logout } from "../auth/logout";
@@ -26,6 +26,7 @@ const navGroups = [
       { to: "/annotation-types", label: "Annotation Types", icon: TagIcon },
       { to: "/deidentification-profiles", label: "De-identification", icon: ShieldIcon },
       { to: "/users", label: "Users", icon: UsersIcon },
+      { to: "/jobs", label: "Jobs", icon: ClipboardListIcon },
       { to: "/notifications", label: "Notifications", icon: BellIcon },
       { to: "/system", label: "System", icon: ServerIcon },
     ],

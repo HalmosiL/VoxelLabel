@@ -251,6 +251,24 @@ export function listMyJobs(): Promise<MyJob[]> {
   return apiFetch(base, "/admin/my-jobs");
 }
 
+export interface AllJobsEntry {
+  study_id: string;
+  study_name: string | null;
+  card_id: string;
+  card_title: string;
+  card_type: WorkflowCardType;
+  assigned_user_id: string | null;
+  status: string;
+  progress: { annotated: number; total: number };
+}
+
+/** Every Annotation/Review card on the whole platform, across every
+ * Study, with who it's assigned to -- backs the admin-only "Jobs" page.
+ * Global admin only. */
+export function listAllJobs(): Promise<AllJobsEntry[]> {
+  return apiFetch(base, "/admin/jobs");
+}
+
 export interface WorkflowCardCase {
   id: string;
   title: string | null;

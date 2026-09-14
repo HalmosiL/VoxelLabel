@@ -221,6 +221,25 @@ export const DEID_STEPS: GuideStep[] = [
   },
 ];
 
+export const JOBS_STEPS: GuideStep[] = [
+  {
+    title: "Jobs",
+    body: "Every Annotation and Review job on the platform, across every Study, in one table -- not just the ones on a single study's own board.",
+  },
+  {
+    target: "filters",
+    title: "Search and narrow it down",
+    body: "Search matches the study, the job's title or its assignee's name. The status and type dropdowns narrow further; the assignee dropdown jumps straight to everything one person holds, or everything nobody does yet.",
+    placement: "bottom",
+  },
+  {
+    target: "table",
+    title: "Study, assignee, status, progress",
+    body: "A red \u201cUnassigned\u201d flags a job nobody can work -- the same flag the study's own board shows. Status follows the cases by itself; the job's title links to its board to reassign it or dig into the cases.",
+    placement: "top",
+  },
+];
+
 export const USERS_STEPS: GuideStep[] = [
   {
     title: "Accounts",

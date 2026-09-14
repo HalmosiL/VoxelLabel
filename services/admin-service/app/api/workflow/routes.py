@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api import audit
+from app.api.studies import _require_global_admin
 from app.llm_client import run_llm_turn
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
@@ -31,7 +32,7 @@ from .engine import run_card_with_ripple
 from .graph import _card_or_404, _dataset_output_ids, _has_study_role, _materialized_children
 from .schemas import LlmChatIn, WorkflowCardIn, WorkflowCardPatch, WorkflowEdgeIn
 from .serialize import _serialize_card, _serialize_edge
-from .status import _cases_with_annotated_status, compute_job_status
+from .status import _annotation_progress, _cases_with_annotated_status, compute_job_status
 from app.versioning import autosave
 
 router = APIRouter(prefix="/admin", tags=["admin:workflow"])
@@ -343,6 +344,56 @@ def get_surface_config(
             config["labels"] = _upstream_annotation_labels(db, card)
 
     return {**config, "card_type": card.type.value, "status": compute_job_status(db, card)}
+
+
+@router.get("/jobs")
+def list_all_jobs(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Every Annotation/Review card on the whole platform, across every
+    Study, with who it's assigned to -- the admin-only counterpart to
+    My Jobs (which is scoped to the calling user). Global-admin only:
+    unlike list_my_jobs, being the assignee isn't the access grant here,
+    and no per-study role would legitimately cover every study at once
+    the way this listing does.
+
+    Progress reuses `_annotation_progress` (the same {annotated, total}
+    counts the board's own card serialization shows) rather than the
+    heavier `_cases_with_annotated_status` (per-case titles + reviewer
+    comments) -- this listing is a scan-the-whole-platform overview, not
+    a place to act on any one case, so the lighter query is what its job
+    actually needs."""
+    _require_global_admin(user)
+    cards = (
+        db.query(WorkflowCard)
+        .filter(WorkflowCard.type.in_([WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW]))
+        .order_by(WorkflowCard.created_at, WorkflowCard.id)
+        .all()
+    )
+    studies_by_id = {s.id: s for s in db.query(Study).filter(Study.id.in_({c.study_id for c in cards})).all()}
+
+    result = []
+    for card in cards:
+        study = studies_by_id.get(card.study_id)
+        is_review = card.type == WorkflowCardType.REVIEW
+        case_ids = card.output_case_ids or []
+        progress = _annotation_progress(
+            db, case_ids, review=is_review, since=None if is_review else card.created_at
+        )
+        result.append(
+            {
+                "study_id": str(card.study_id),
+                "study_name": study.name if study else None,
+                "card_id": str(card.id),
+                "card_title": card.title,
+                "card_type": card.type.value,
+                "assigned_user_id": card.config.get("assigned_user_id"),
+                "status": compute_job_status(db, card),
+                "progress": progress,
+            }
+        )
+    return result
 
 
 @router.get("/my-jobs")

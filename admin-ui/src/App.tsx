@@ -8,6 +8,7 @@ import AnnotationTypesPage from "./pages/AnnotationTypesPage";
 import CaseDetailPage from "./pages/CaseDetailPage";
 import DeidentificationProfilesPage from "./pages/DeidentificationProfilesPage";
 import JobDetailPage from "./pages/JobDetailPage";
+import JobsPage from "./pages/JobsPage";
 import MyJobsPage from "./pages/MyJobsPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import PatientDetailPage from "./pages/PatientDetailPage";
@@ -119,6 +120,14 @@ function AppRoutes() {
           element={
             <FullUiOnly>
               <UsersPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/jobs"
+          element={
+            <FullUiOnly>
+              <JobsPage />
             </FullUiOnly>
           }
         />

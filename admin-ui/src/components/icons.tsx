@@ -205,3 +205,18 @@ export function QrIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/** "Jobs" nav icon -- three rows fading down, each a leading tile plus a
+ * bar, standing for a scan-everything list. */
+export function ClipboardListIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <rect x="2" y="3" width="3" height="3" rx="1" />
+      <rect x="7" y="3" width="11" height="3" rx="1" />
+      <rect x="2" y="8.5" width="3" height="3" rx="1" opacity={0.75} />
+      <rect x="7" y="8.5" width="11" height="3" rx="1" opacity={0.75} />
+      <rect x="2" y="14" width="3" height="3" rx="1" opacity={0.5} />
+      <rect x="7" y="14" width="11" height="3" rx="1" opacity={0.5} />
+    </svg>
+  );
+}

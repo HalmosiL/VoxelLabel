@@ -58,6 +58,29 @@ def test_my_jobs_lists_only_the_assignees_jobs(client, db):
     assert client.get("/admin/my-jobs").json() == []
 
 
+def test_list_all_jobs_is_admin_only_and_covers_every_studys_jobs(client, db):
+    """GET /admin/jobs (the admin-only Jobs page's data source): every
+    Annotation/Review card on the platform, its assignee (or none), and
+    its study -- not scoped to the caller's own assignments the way
+    /admin/my-jobs is, and refused to anyone without the global admin
+    role, including a study's own data_manager."""
+    sid, cases, series, ann, rev = _pipeline(client, db)
+    unassigned = _card(client, sid, "annotation", "Second cohort", {}, x=900)
+
+    client.as_user(DM_SUBJECT)
+    assert client.get("/admin/jobs").status_code == 403
+
+    client.as_admin()
+    jobs = {j["card_id"]: j for j in client.get("/admin/jobs").json()}
+    assert {ann["id"], rev["id"], unassigned["id"]} <= jobs.keys()
+    assert jobs[ann["id"]]["assigned_user_id"] == ANNOTATOR_SUBJECT
+    assert jobs[ann["id"]]["card_type"] == "annotation"
+    assert jobs[ann["id"]]["study_id"] == sid and jobs[ann["id"]]["study_name"]
+    assert jobs[rev["id"]]["assigned_user_id"] == REVIEWER_SUBJECT
+    assert jobs[unassigned["id"]]["assigned_user_id"] is None
+    assert set(jobs[ann["id"]]["progress"].keys()) == {"annotated", "total"}
+
+
 def test_job_status_follows_the_cases(client, db):
     sid, cases, series, ann, rev = _pipeline(client, db)
     assert _job(client, ANNOTATOR_SUBJECT, ann["id"])["status"] == "todo"
