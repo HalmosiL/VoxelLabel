@@ -1,0 +1,199 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply text-gray-900 antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background-color: #f8fafc;
+    background-image: radial-gradient(circle at 0% 0%, rgba(79, 70, 229, 0.06), transparent 45%),
+      radial-gradient(circle at 100% 0%, rgba(99, 102, 241, 0.05), transparent 40%);
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white shadow-sm shadow-brand-600/20 hover:bg-brand-700 hover:shadow-md hover:shadow-brand-600/30;
+  }
+  .btn-secondary {
+    @apply btn border border-gray-200 bg-white text-gray-700 shadow-sm hover:border-gray-300 hover:bg-gray-50;
+  }
+  .btn-danger {
+    @apply btn border border-gray-200 bg-white text-red-600 shadow-sm hover:border-red-200 hover:bg-red-50;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs;
+  }
+
+  .card {
+    @apply rounded-2xl border border-gray-100 bg-white/90 p-6 shadow-sm backdrop-blur-sm transition-shadow;
+  }
+
+  .field {
+    @apply flex flex-col gap-1;
+  }
+  .label {
+    @apply text-sm font-medium text-gray-700;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition-shadow focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20;
+  }
+
+  .table-wrap {
+    @apply overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm backdrop-blur-sm;
+  }
+  table {
+    @apply min-w-full divide-y divide-gray-100;
+  }
+  thead {
+    @apply bg-gray-50/80;
+  }
+  th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500;
+  }
+  tbody {
+    @apply divide-y divide-gray-50;
+  }
+  td {
+    @apply px-4 py-3 text-sm text-gray-700;
+  }
+  tbody tr {
+    @apply transition-colors hover:bg-brand-50/40;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .badge-dot {
+    @apply h-1.5 w-1.5 rounded-full;
+  }
+  .badge-gray {
+    @apply badge bg-gray-100 text-gray-700;
+  }
+  .badge-blue {
+    @apply badge bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200;
+  }
+  .badge-green {
+    @apply badge bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200;
+  }
+  .badge-red {
+    @apply badge bg-red-50 text-red-700 ring-1 ring-inset ring-red-200;
+  }
+
+  .alert-error {
+    @apply rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700;
+  }
+  .hint {
+    @apply text-sm text-gray-500;
+  }
+
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight text-gray-900;
+  }
+  .page-subtitle {
+    @apply mt-1 text-sm text-gray-500;
+  }
+  .section-title {
+    @apply text-base font-semibold text-gray-900;
+  }
+
+  .code-chip {
+    @apply break-all rounded-md bg-gray-50 px-1.5 py-0.5 font-mono text-xs text-gray-600 ring-1 ring-inset ring-gray-200;
+  }
+
+  .stat-card {
+    @apply flex items-center gap-4 rounded-2xl border border-gray-100 bg-white/90 p-5 shadow-sm backdrop-blur-sm;
+  }
+  .stat-icon {
+    @apply flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl;
+  }
+  .stat-value {
+    @apply text-2xl font-semibold text-gray-900;
+  }
+  .stat-label {
+    @apply text-sm text-gray-500;
+  }
+
+  .empty-state {
+    @apply flex flex-col items-center justify-center gap-2 py-12 text-center text-gray-400;
+  }
+
+  .avatar {
+    @apply flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white;
+  }
+}
+
+/* ── Touch / tablet ────────────────────────────────────────────────────
+   Media features, not screen sizes (a landscape tablet is laptop-wide):
+   `pointer: coarse` = a finger, which needs bigger targets than a
+   cursor, especially on the range sliders (slice, brush size, window)
+   whose default thumb is a few pixels wide. */
+@media (pointer: coarse) {
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 2rem;
+    background: transparent;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: #3a3a55;
+  }
+  input[type="range"]::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: #3a3a55;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 24px;
+    height: 24px;
+    margin-top: -9px;
+    border-radius: 9999px;
+    border: 2px solid #15152a;
+    background: #60a5fa;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 9999px;
+    border: 2px solid #15152a;
+    background: #60a5fa;
+  }
+  input[type="range"].accent-amber-500::-webkit-slider-thumb {
+    background: #f59e0b;
+  }
+  input[type="range"].accent-amber-500::-moz-range-thumb {
+    background: #f59e0b;
+  }
+  select {
+    min-height: 2.5rem;
+  }
+}
+@media (pointer: coarse) {
+  /* Every button becomes at least a finger wide/tall (min-, so the
+     larger ones keep their size); the small icon buttons in the pane
+     headers and side panel are what this is for. */
+  button {
+    min-height: 2.25rem;
+    min-width: 2.25rem;
+  }
+}
+
+/* Mobile browsers: 100vh is the viewport WITHOUT the browser's own
+   bars, so an h-screen app frame is taller than what's actually
+   visible -- the bottom (footer, sliders, the end of a side panel) sits
+   under the toolbar and, with the frame's own overflow hidden, can't
+   be scrolled to. 100dvh is the visible height, live. Overrides every
+   h-screen in the app frame in one place. */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh;
+  }
+}

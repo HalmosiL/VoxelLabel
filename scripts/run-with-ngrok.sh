@@ -15,12 +15,16 @@
 # and the edge proxy (both apps keep running locally after that, just
 # no longer reachable from outside).
 #
-# Expects ct-annotator checked out as a sibling of this repo (../ct-annotator).
+# Looks for ct-annotator two ways: as a ./ct-annotator subdirectory of
+# this repo (the current layout -- both apps in one checkout), or, for
+# anyone still on the older two-checkout layout, as a sibling
+# (../ct-annotator).
 # One-time setup this script assumes is already done:
 #   ~/.local/bin/ngrok installed, `ngrok config add-authtoken <token>` run once.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-CT_ANNOTATOR_DIR="$(cd "$(pwd)/../ct-annotator" 2>/dev/null && pwd || true)"
+CT_ANNOTATOR_DIR="$(cd "$(pwd)/ct-annotator" 2>/dev/null && pwd || true)"
+[ -z "$CT_ANNOTATOR_DIR" ] && CT_ANNOTATOR_DIR="$(cd "$(pwd)/../ct-annotator" 2>/dev/null && pwd || true)"
 
 PROXY_PORT="${PROXY_PORT:-8090}"
 EDGE_NAME="ctplatform-ngrok-edge"

@@ -5,13 +5,18 @@ against Ubuntu 22.04/24.04) with Docker. Everything runs in containers;
 the host needs Docker, `git`, `curl`, `jq` and `python3` (for two small
 setup scripts) and nothing else.
 
-The platform is two checkouts side by side:
+The platform is one checkout, with the viewer nested inside it:
 
 ```
 ~/voxellabel/
-  Annotator-Pipline/   the platform: Keycloak, Postgres, MinIO, the four APIs, admin-ui, mail sandbox, backups, local LLM
-  ct-annotator/        the viewer (annotation/review surface) + its thin backend
+  Annotator-Pipline/          the platform: Keycloak, Postgres, MinIO, the four APIs, admin-ui, mail sandbox, backups, local LLM
+    ct-annotator/              the viewer (annotation/review surface) + its thin backend
 ```
+
+(An older layout, with `ct-annotator/` cloned separately as a sibling
+of `Annotator-Pipline/` instead of nested inside it, still works --
+every script here looks in `./ct-annotator` first and falls back to
+`../ct-annotator`.)
 
 Ports the **browser** must be able to reach on the server (open them in
 the firewall / security group): `5173` (admin UI), `5174` (viewer),
@@ -48,11 +53,11 @@ CPU without one (slower).
 ```bash
 mkdir -p ~/voxellabel && cd ~/voxellabel
 git clone https://github.com/HalmosiL/VoxelLabel.git Annotator-Pipline
-git clone <ct-annotator repo URL> ct-annotator
 ```
 
-(Or copy the two directories over with `rsync`/`scp` if the server
-can't reach GitHub.)
+`ct-annotator/` is already inside this checkout -- nothing separate to
+clone. (No GitHub access from the server? Copy the checkout over with
+`rsync`/`scp` from a machine that has it instead.)
 
 ## 3. Configure `.env` -- the one step that needs thought
 
@@ -95,7 +100,7 @@ Rules that will bite if ignored:
 Then the viewer's own `.env`, with the *same* values:
 
 ```bash
-cd ~/voxellabel/ct-annotator
+cd ~/voxellabel/Annotator-Pipline/ct-annotator
 cp .env.example .env
 nano .env    # PUBLIC_KEYCLOAK_URL, PUBLIC_ADMIN_UI_URL, PUBLIC_ANNOTATOR_UI_URL,
              # PUBLIC_ANNOTATOR_API=http://ct-test.example.org:8010, MINIO_ROOT_USER/PASSWORD
@@ -114,24 +119,51 @@ What it does, in order (all idempotent -- re-run it any time):
 2. `docker compose up -d` -- Postgres, Redis, MinIO, Keycloak, the four
    APIs + ingestion worker, admin-ui, Mailpit, the backup service,
    Ollama and the MCP server.
-3. Waits for Keycloak, then `infra/keycloak/setup-dev-realm.sh`:
-   creates the `ct-platform` realm, its OIDC client with **all three
-   browser origins** (admin UI, viewer, clinician app), the `admin`
-   role, the `platform-admin` user and the service account
-   admin-service uses.
-4. `scripts/migrate.sh` -- applies every database migration from inside
+3. Creates the MinIO bucket every service stores DICOM/document/mask
+   data in (`mc mb --ignore-existing` -- MinIO never creates this on
+   its own, and nothing else in this repo did either before this step
+   existed, so skipping it is the difference between a working upload
+   and every one of them failing deep inside the ingestion service with
+   no clue in the browser why).
+4. Waits for Keycloak, then `infra/keycloak/setup-dev-realm.sh`:
+   creates the `ct-platform` realm (HTTPS not required, since this
+   guide's own "plain ports" setup never puts TLS in front of it), its
+   OIDC client with **all three browser origins** (admin UI, viewer,
+   clinician app), the `admin` role, the `platform-admin` user and the
+   service account admin-service uses -- and, on every rerun (not just
+   the first), reconciles the client's origins against the current
+   `.env` even if the realm already existed, so changing a `PUBLIC_*`
+   URL later and rerunning this script is enough on its own.
+5. `scripts/migrate.sh` -- applies every database migration from inside
    a container (no Python needed on the host).
-5. If `../ct-annotator` exists: registers the viewer's annotation types
-   and adds its origin to the Keycloak client.
-6. Pulls the local model (`qwen3:1.7b`, ~1.4 GB). `SKIP_OLLAMA=1` to skip;
+6. If `ct-annotator/` (or `../ct-annotator`) exists: registers the
+   viewer's annotation types and adds its origin to the Keycloak client.
+7. Pulls the local model (`qwen3:1.7b`, ~1.4 GB). `SKIP_OLLAMA=1` to skip;
    `GPU=1` to also apply `docker-compose.gpu.yml`.
+
+Postgres and Keycloak each fix their root/admin credentials from
+`POSTGRES_PASSWORD`/`KEYCLOAK_ADMIN_PASSWORD` **once**, the first time
+they boot with an empty volume -- changing `.env` afterward and
+rerunning this script does not change either password retroactively.
+If a rerun's migration step fails with "password authentication
+failed" (or the realm step fails silently right after "Creating
+realm..."), the fix is to drop that one service's volume and let it
+reinitialize:
+```bash
+docker compose stop postgres   # or: keycloak
+docker compose rm -f postgres
+docker volume rm voxellabel_postgres-data   # matches your compose project's name
+scripts/setup-test-server.sh
+```
+(MinIO doesn't have this problem -- its root credentials are read fresh
+from `.env` on every boot.)
 
 Takes ~10 minutes the first time (image builds + model pull).
 
 ## 5. Start the viewer
 
 ```bash
-cd ~/voxellabel/ct-annotator
+cd ~/voxellabel/Annotator-Pipline/ct-annotator
 docker compose up -d --build
 ```
 
@@ -163,7 +195,7 @@ and the approval email carries their one-time password.
 | Task | How |
 |---|---|
 | See what's running / logs | `docker compose ps` · `docker compose logs -f admin-service` |
-| Update to a new version | `git pull` in both checkouts, then `scripts/setup-test-server.sh` (rebuilds, restarts, migrates) and `docker compose up -d --build` in ct-annotator |
+| Update to a new version | `git pull` (one checkout, brings both apps), then `scripts/setup-test-server.sh` (rebuilds, restarts, migrates) and `docker compose up -d --build` in `ct-annotator/` |
 | Database backups | Automatic daily, 14 kept, plus **System → Back up now** in the admin UI; files in the `db-backups` volume, downloadable from that page |
 | Restore a backup | `scripts/restore-db.sh <file>` (stops the APIs, restores, restarts) -- for one study's mistake use its **Version history** instead |
 | Object storage backup | MinIO's `minio-data` volume holds every DICOM/document/mask -- back it up separately (e.g. `mc mirror` or a volume snapshot) |

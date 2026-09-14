@@ -9,8 +9,10 @@
 #   cp .env.example .env   # edit PUBLIC_* + passwords first!
 #   scripts/setup-test-server.sh
 #
-# Optional env: CT_ANNOTATOR_DIR (path to the ct-annotator checkout,
-# default ../ct-annotator) -- its setup scripts are run too when found;
+# Optional env: CT_ANNOTATOR_DIR (path to the ct-annotator checkout --
+# looks for a ./ct-annotator subdirectory of this repo first, falling
+# back to a sibling ../ct-annotator for the older two-checkout layout)
+# -- its setup scripts are run too when found;
 # GPU=1 to include docker-compose.gpu.yml; SKIP_OLLAMA=1 to skip the
 # model pull (a few GB).
 set -euo pipefail
@@ -76,7 +78,12 @@ SERVICE_ACCOUNT_CLIENT_SECRET="${KEYCLOAK_ADMIN_CLIENT_SECRET:-admin-service-acc
 echo "==> Applying database migrations"
 scripts/migrate.sh
 
-CT_ANNOTATOR_DIR="${CT_ANNOTATOR_DIR:-../ct-annotator}"
+if [ -z "${CT_ANNOTATOR_DIR:-}" ]; then
+  if [ -d "./ct-annotator/scripts" ]; then CT_ANNOTATOR_DIR="./ct-annotator"
+  elif [ -d "../ct-annotator/scripts" ]; then CT_ANNOTATOR_DIR="../ct-annotator"
+  else CT_ANNOTATOR_DIR="./ct-annotator"
+  fi
+fi
 if [ -d "$CT_ANNOTATOR_DIR/scripts" ]; then
   echo "==> Registering the viewer's annotation types + its origin on the Keycloak client ($CT_ANNOTATOR_DIR)"
   python3 "$CT_ANNOTATOR_DIR/scripts/register_annotation_type.py" \

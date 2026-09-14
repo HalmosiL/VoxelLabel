@@ -1,0 +1,128 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 1283 >>
+stream
+BT
+/F1 18 Tf
+50 780 Td
+(Chest CT report  \(practice case\)) Tj
+/F1 11 Tf
+0 -28 Td
+(Patient: PRACTICE-001   Sex: -   Age: -          Study date: 2026-01-15) Tj
+0 -16 Td
+(Referring: Pulmonology outpatient clinic        Modality: CT, non-contrast) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(CLINICAL QUESTION) Tj
+0 -16 Td
+(Follow-up of a solitary pulmonary nodule seen on a screening study.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(TECHNIQUE) Tj
+0 -16 Td
+(Low-dose, non-contrast helical CT of the chest, 1.0 mm reconstructions,) Tj
+0 -16 Td
+(lung and mediastinal windows. Coronal and sagittal reformats.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(FINDINGS) Tj
+0 -16 Td
+(Lungs: A well-circumscribed, solid nodule in the right lower lobe,) Tj
+0 -16 Td
+(approximately 9 x 8 mm, unchanged in size compared with the prior study.) Tj
+0 -16 Td
+(No new nodules. No consolidation, no ground-glass opacity.) Tj
+0 -16 Td
+(Pleura: No effusion, no pneumothorax.) Tj
+0 -16 Td
+(Mediastinum: No enlarged lymph nodes \(short axis < 10 mm\).) Tj
+0 -16 Td
+(Heart and great vessels: Normal calibre. No pericardial effusion.) Tj
+0 -16 Td
+(Bones: No suspicious lesion. Mild degenerative change of the thoracic spine.) Tj
+0 -16 Td
+(Upper abdomen \(partially imaged\): Unremarkable.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(\(continued on page 2\)) Tj
+0 -16 Td
+ET
+endstream
+endobj
+3 0 obj
+<< /Length 896 >>
+stream
+BT
+/F1 18 Tf
+50 780 Td
+(Chest CT report  \(practice case\) - page 2) Tj
+/F1 11 Tf
+0 -28 Td
+(IMPRESSION) Tj
+0 -16 Td
+(1. Stable 9 mm solid right lower lobe nodule; no interval growth.) Tj
+0 -16 Td
+(2. No other significant thoracic finding.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(RECOMMENDATION) Tj
+0 -16 Td
+(Follow-up low-dose CT in 12 months per the local nodule protocol.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(ANNOTATION TASK \(for the tutorial\)) Tj
+0 -16 Td
+(Outline the right lower lobe nodule on every slice where it is visible.) Tj
+0 -16 Td
+(Use the Paint tool on the axial pane; check the coronal and sagittal panes) Tj
+0 -16 Td
+(to make sure the outline is closed in all three directions.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(This document is synthetic practice material. It describes no real person.) Tj
+0 -16 Td
+() Tj
+0 -16 Td
+(Reported by: Practice Radiologist                Verified: 2026-01-16) Tj
+0 -16 Td
+ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Contents 2 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Contents 3 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+6 0 obj
+<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000001420 00000 n 
+0000002367 00000 n 
+0000002493 00000 n 
+0000002619 00000 n 
+0000002682 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+2731
+%%EOF

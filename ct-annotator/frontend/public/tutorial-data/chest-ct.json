@@ -1,0 +1,10 @@
+{
+ "width": 256,
+ "height": 256,
+ "numSlices": 95,
+ "targetX": 140.7,
+ "targetY": 112.3,
+ "targetSlice": 47,
+ "sourceSeries": "765d3d34-67c4-4d99-9796-950208a54228",
+ "note": "Real, de-identified chest CT already loaded on the platform (LIDC-IDRI research sample, CT THORAX W/CONTRAST) -- the FULL series, downsampled 2x in-plane for a smaller bundled asset. Raw Hounsfield values -- window/level math is genuine, not a filter."
+}

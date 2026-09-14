@@ -1,0 +1,55 @@
+# ct-annotator as a production pair: the thin FastAPI backend and the
+# viewer served as a static build behind nginx (not the Vite dev server
+# -- a dev server ships hundreds of unbundled modules per page load,
+# which the clinician desktop shell's Electron window choked on with
+# ERR_INSUFFICIENT_RESOURCES). Both use the host network so they reach
+# the main platform at its published localhost ports exactly like a
+# browser does (see backend/app/config.py).
+#
+# Every `${VAR:-default}` is read from .env (copy .env.example): the
+# defaults are the local dev stack; a test server sets the PUBLIC_*
+# URLs to its hostname -- they're baked into the frontend at build time.
+# Start with:
+#   docker compose up -d --build
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    network_mode: host
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]
+    environment:
+      # Must equal the URL browsers log in at (it's the `iss` claim in every token).
+      KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
+      # Always the internal address, even when KEYCLOAK_ISSUER above is
+      # public -- this is a server-to-server call (fetching signing
+      # keys), not something a browser makes, so there's no reason to
+      # round-trip it through a public tunnel/proxy.
+      KEYCLOAK_JWKS_URL: http://localhost:8080/realms/ct-platform/protocol/openid-connect/certs
+      # host network: the platform's services are on this host's own ports.
+      DATA_SERVICE_URL: http://localhost:8002
+      ANNOTATION_SERVICE_URL: http://localhost:8003
+      ADMIN_SERVICE_URL: http://localhost:8004
+      OBJECT_STORAGE_ENDPOINT: http://localhost:9000
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_ANNOTATOR_UI_URL:-http://localhost:5174}
+    deploy:
+      resources:
+        limits:
+          memory: 1500m
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_KEYCLOAK_URL: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}
+        VITE_ADMIN_UI_URL: ${PUBLIC_ADMIN_UI_URL:-http://localhost:5173}
+        VITE_ANNOTATOR_API: ${PUBLIC_ANNOTATOR_API:-http://localhost:8010}
+        VITE_BASE_PATH: ${PUBLIC_ANNOTATOR_BASE_PATH:-/}
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    deploy:
+      resources:
+        limits:
+          memory: 64m
