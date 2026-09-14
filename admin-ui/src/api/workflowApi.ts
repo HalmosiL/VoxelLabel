@@ -217,9 +217,8 @@ export interface SurfaceConfig {
   tools: string[];
   panes: string[];
   show_3d: boolean;
-  labels?: { name: string; color: string }[];
-  // The Review Surface's per-label checklist -- see ReviewSurfaceFields.
-  review_form?: { label: string; fields: { name: string; kind: "check" | "choice"; options?: string[] }[] }[];
+  // Each label may carry a per-object form -- see AnnotationSurfaceFields.
+  labels?: { name: string; color: string; fields?: { name: string; kind: "check" | "choice" | "scale"; options?: string[]; min?: number; max?: number }[] }[];
 }
 
 /** The Surface card's config connected to this Annotation/Review card,

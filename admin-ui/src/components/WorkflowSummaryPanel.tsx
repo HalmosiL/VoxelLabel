@@ -66,15 +66,13 @@ function describeCard(card: WorkflowCard): string {
       const tools = (card.config.tools as string[] | undefined)?.length ?? 0;
       const panes = (card.config.panes as string[] | undefined)?.length ?? 0;
       const show3d = card.config.show_3d === true;
-      return `${tools} tools · ${panes} panes · 3D ${show3d ? "on" : "off"}`;
+      const labels = (card.config.labels as { fields?: unknown[] }[] | undefined) ?? [];
+      const fields = labels.reduce((n, l) => n + (l.fields?.length ?? 0), 0);
+      return `${tools} tools · ${panes} panes · 3D ${show3d ? "on" : "off"}${labels.length ? ` · ${labels.length} label${labels.length === 1 ? "" : "s"}` : ""}${fields ? ` · ${fields}-field form` : ""}`;
     }
     case "review_surface": {
       const panes = (card.config.panes as string[] | undefined)?.length ?? 0;
-      const fields = ((card.config.review_form as { fields?: unknown[] }[] | undefined) ?? []).reduce(
-        (n, g) => n + (g.fields?.length ?? 0),
-        0
-      );
-      return `${panes} panes · no tools · no 3D${fields ? ` · ${fields}-field checklist` : ""}`;
+      return `${panes} panes · no tools · no 3D`;
     }
     default:
       return "";

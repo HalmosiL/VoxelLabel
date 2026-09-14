@@ -138,23 +138,39 @@ def test_card_changes_are_audited_but_drags_are_not(client, db):
     assert client.get("/admin/audit-log", params={"entity_id": ann["id"]}).json()["entries"][0]["action"] == "card.delete"
 
 
-def test_surface_config_carries_the_review_surfaces_checklist(client, db):
-    """A Review Surface's per-label checklist (what ct-annotator's review
-    card shows next to the comment box) rides along in surface-config;
-    a job without one gets an empty list, never a missing key."""
+def test_review_jobs_surface_config_carries_the_annotation_labels_and_their_forms(client, db):
+    """The per-object form lives on the Annotation Surface's labels
+    (Nodule -> Type, Calcified, Confidence); a Review job, whose own
+    surface has no labels, gets those same labels through its input
+    chain so the reviewer sees the form the annotator filled."""
     sid, _, _, ann, rev = _pipeline(client, db)
     client.as_user(REVIEWER_SUBJECT)
-    assert client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()["review_form"] == []
+    assert client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()["labels"] == []
 
     client.as_admin()
-    form = [{"label": "Nodule", "fields": [{"name": "Type", "kind": "choice", "options": ["solid", "sub-solid"]}, {"name": "Calcified", "kind": "check"}]}]
-    surface = _card(client, sid, "review_surface", "Review surface", {"panes": ["axial"], "review_form": form}, x=600)
-    _edge(client, sid, surface["id"], rev["id"], source_handle="surface_config", target_handle="surface_config")
+    labels = [{"name": "Nodule", "color": "#ef4444", "fields": [
+        {"name": "Type", "kind": "choice", "options": ["solid", "sub-solid"]},
+        {"name": "Calcified", "kind": "check"},
+        {"name": "Confidence", "kind": "scale", "min": 1, "max": 5},
+    ]}]
+    surface = _card(client, sid, "annotation_surface", "Nodule surface", {"tools": ["paint"], "panes": ["axial"], "labels": labels}, x=300)
+    _edge(client, sid, surface["id"], ann["id"], source_handle="surface_config", target_handle="surface_config")
 
+    client.as_user(ANNOTATOR_SUBJECT)
+    assert client.get(f"/admin/workflow-cards/{ann['id']}/surface-config").json()["labels"] == labels
     client.as_user(REVIEWER_SUBJECT)
     config = client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()
-    assert config["review_form"] == form
-    assert config["panes"] == ["axial"] and config["tools"] == [] and config["show_3d"] is False
-    # An Annotation job's surface-config never carries a checklist it wasn't given.
-    client.as_user(ANNOTATOR_SUBJECT)
-    assert client.get(f"/admin/workflow-cards/{ann['id']}/surface-config").json()["review_form"] == []
+    assert config["labels"] == labels
+    assert config["tools"] == [] and config["show_3d"] is False
+
+    # Through a materialized "(annotated)" dataset between the two jobs, too.
+    client.as_admin()
+    board = client.get(f"/admin/studies/{sid}/workflow").json()
+    rev_input = next(e for e in board["edges"] if e["target_card_id"] == rev["id"] and e["target_handle"] == "input")
+    assert client.delete(f"/admin/workflow-edges/{rev_input['id']}").status_code in (200, 204)
+    mid = _card(client, sid, "dataset", "Annotate (annotated)", {"mode": "manual", "case_ids": []}, x=450)
+    db.execute(__import__("sqlalchemy").text("UPDATE workflow_cards SET materialized_source_card_id = :src, materialized_source_handle = 'annotated' WHERE id = :id"), {"src": ann["id"], "id": mid["id"]})
+    db.commit()
+    _edge(client, sid, mid["id"], rev["id"])
+    client.as_user(REVIEWER_SUBJECT)
+    assert client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()["labels"] == labels

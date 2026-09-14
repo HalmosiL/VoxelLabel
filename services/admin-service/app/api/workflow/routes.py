@@ -252,6 +252,24 @@ def delete_workflow_card(
     autosave(db, card.study_id, user.subject)
 
 
+def _upstream_annotation_labels(db: Session, review_card: WorkflowCard) -> list[dict]:
+    """The pre-defined labels (with their per-object forms) of the
+    Annotation job a Review card reads its cases from: follow the
+    review's "input" edge to its source -- the Annotation card itself,
+    or the Dataset that card materialized ("<job> (annotated)") -- and
+    read that Annotation card's own Surface. Empty when the chain isn't
+    there (a review fed by a hand-picked dataset, no surface, ...)."""
+    edge = db.query(WorkflowEdge).filter_by(target_card_id=review_card.id, target_handle="input").first()
+    source = db.get(WorkflowCard, edge.source_card_id) if edge else None
+    if source is not None and source.type == WorkflowCardType.DATASET and source.materialized_source_card_id:
+        source = db.get(WorkflowCard, source.materialized_source_card_id)
+    if source is None or source.type != WorkflowCardType.ANNOTATION:
+        return []
+    surface_edge = db.query(WorkflowEdge).filter_by(target_card_id=source.id, target_handle="surface_config").first()
+    surface = db.get(WorkflowCard, surface_edge.source_card_id) if surface_edge else None
+    return list(surface.config.get("labels", [])) if surface is not None else []
+
+
 @router.get("/workflow-cards/{card_id}/surface-config")
 def get_surface_config(
     card_id: uuid.UUID,
@@ -284,10 +302,12 @@ def get_surface_config(
     when a series has no saved labels yet, never overwriting an
     annotator's own already-in-progress work.
 
-    `review_form` is the Review Surface's per-label checklist (groups of
-    check/choice fields, e.g. Nodule -> Type: solid/sub-solid) that
-    ct-annotator's review card shows next to the comment box; the
-    reviewer's answers are stored on the objects themselves.
+    Each label may carry `fields` -- the per-object form (check / choice
+    / scale, e.g. Nodule -> Type: solid/sub-solid, Calcified,
+    Confidence 1-5) an annotator fills for every instance next to its
+    comment, and the reviewer sees on the review card. A Review job's
+    labels are the upstream Annotation job's (see
+    _upstream_annotation_labels), since a Review Surface has none.
 
     `card_type` (the underlying job's own type, "annotation" or
     "review") rides along in every response so ct-annotator can tell a
@@ -311,11 +331,16 @@ def get_surface_config(
             "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
             "show_3d": surface.config.get("show_3d", True),
             "labels": surface.config.get("labels", []),
-            "review_form": surface.config.get("review_form", []),
         }
 
     if is_review:
         config = {**config, "tools": [], "show_3d": False}
+        # A Review Surface holds no labels, but the reviewer still needs
+        # the labels' per-object forms (Nodule -> Type, Calcified, ...)
+        # to read and complete what the annotator filled: take them from
+        # the Annotation job this review reads its cases from.
+        if not config["labels"]:
+            config["labels"] = _upstream_annotation_labels(db, card)
 
     return {**config, "card_type": card.type.value, "status": compute_job_status(db, card)}
 
