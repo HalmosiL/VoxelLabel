@@ -332,4 +332,8 @@ def get_clinical_data_file_url(
 
     if item.object_storage_key is None:
         raise HTTPException(status_code=404, detail="This item has no attached file")
-    return {"url": presigned_clinical_data_url(item.object_storage_key)}
+    # The storage key rides along for the same reason as get_pixel_data_url's:
+    # a server-side caller (ct-annotator's inline document preview) reads the
+    # object straight from the bucket, since the presigned URL is signed for
+    # the *browser-facing* host and isn't reachable from inside the network.
+    return {"url": presigned_clinical_data_url(item.object_storage_key), "storage_key": item.object_storage_key}

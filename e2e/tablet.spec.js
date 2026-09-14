@@ -218,6 +218,38 @@ async function tabletContext(browser, landscape) {
     await t.twoFingerTap({ x: a.x + 40, y: a.y - 40 }, 30); await page.waitForTimeout(400);
     const sAfter = await sliders();
     check(`${label}: two-finger tap jumps all planes`, JSON.stringify(sBefore) !== JSON.stringify(sAfter), { sBefore, sAfter });
+
+    // Pane headers carry the real viewer's Maximize/Restore + Hide, and
+    // the header's eye strip has the 3D toggle too.
+    const tapIt = async (loc) => { const c = await center(loc); await page.touchscreen.tap(c.x, c.y); await page.waitForTimeout(350); };
+    const paneCols = () => page.locator('[data-guide="panes"] > div').count();
+    check(`${label}: every pane has maximize + hide buttons`, (await page.locator('[data-testid="pane-maximize"]').count()) === paneCount && (await page.locator('[data-testid="pane-hide"]').count()) === paneCount);
+    await tapIt(page.locator('[data-testid="pane-maximize"]').nth(2));
+    check(`${label}: maximize leaves one pane`, (await paneCols()) === 1);
+    await tapIt(page.locator('[data-testid="pane-maximize"]').first());
+    check(`${label}: restore brings them back`, (await paneCols()) === paneCount);
+    const eyeStrip = page.locator("header div.p-0\\.5 button");
+    check(`${label}: header toggles cover 3 MPR panes + 3D`, (await eyeStrip.count()) === 4, await eyeStrip.count());
+    await tapIt(eyeStrip.nth(3)); await page.waitForTimeout(600);
+    check(`${label}: 3D toggle adds the 3D pane`, (await paneCols()) === paneCount + 1);
+    await tapIt(eyeStrip.nth(3));
+
+    // Documents -> the bundled practice report, rendered in-page by
+    // PDF.js (not an <iframe>, which shows one page on iPadOS).
+    await tapIt(page.locator("header button", { hasText: /^Documents/ }));
+    await tapIt(page.locator("header li button").first());
+    await page.waitForSelector('[data-testid="pdf-page-counter"]', { timeout: 30000 }); await page.waitForTimeout(1200);
+    check(`${label}: the practice report opens as an in-page PDF preview`, /1 \/ 2/.test(await page.locator('[data-testid="pdf-page-counter"]').innerText()));
+    const inked = await page.evaluate(() => { const c = document.querySelector("[data-pdf-page='1']"); const d = c.getContext("2d").getImageData(0, 0, c.width, Math.min(c.height, 400)).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 100) n++; return n; });
+    check(`${label}: the PDF page is actually drawn`, inked > 200, inked);
+    const docBox = await page.locator('[data-testid="document-panel"]').boundingBox();
+    check(`${label}: the document takes about half the screen next to the panes`, docBox.width < (await page.viewportSize()).width * 0.6, docBox);
+    await tapIt(page.locator('[data-testid="pdf-controls"] button[aria-label="Next page"]'));
+    check(`${label}: › goes to page 2`, /2 \/ 2/.test(await page.locator('[data-testid="pdf-page-counter"]').innerText()));
+    check(`${label}: still no sideways scrolling with the document open`, await noSidewaysScroll(page));
+    await tapIt(page.locator('[data-testid="document-panel-close"]'));
+    check(`${label}: ✕ closes the document`, (await page.locator('[data-testid="document-panel"]').count()) === 0);
+
     await page.screenshot({ path: landscape ? "tablet-tutorial-landscape.png" : "tablet-tutorial-portrait.png" });
     check(`${label}: no page errors`, errors.length === 0, errors.slice(0, 3));
     await ctx.close();

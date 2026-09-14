@@ -94,6 +94,15 @@ badge** (automatic), **Case N of M ← →** (step through the job's
 cases), **Documents** (the case's reports beside the images), **Save**
 (draft) and **Mark as Annotated** (hand in for review), **Tutorial**.
 
+**Documents** opens a report in a panel beside the images -- nothing is
+downloaded and the viewer stays where it is. A PDF is shown page by
+page (‹ › to step, − / + to zoom, the percentage resets to fit the
+panel's width), text and images directly. Drag the panel's left edge
+to resize it; on a tablet, **Full** / **Half** switches between reading
+comfortably and reading next to the panes. Each pane's header has
+**Maximize** (that pane alone, full width; again to restore) and
+**Hide**; hidden panes come back from the eye buttons in the header.
+
 Objects (sidebar): labels come from the job's config; **+ New
 instance** creates an object of a label; a row selects it; the lock
 icon protects an object from edits; double-click jumps every pane to
@@ -334,6 +343,12 @@ their card, and side panels turn into drawers where there isn't room:
   the header's **Panel** button and closes with its ✕. The footer
   line shows the gestures for the current tool. A second finger landing
   mid-stroke cancels that stroke -- lift both and start again.
+
+  A case's **Documents** open beside the images at half the screen
+  (**Full** for the whole screen), PDFs rendered page by page -- so a
+  report can be read while annotating without a download. The
+  tutorial's practice case has one such report, and its panes carry
+  the same Maximize/Hide buttons and 3D toggle as a real case.
 
 ## 18. Clinician desktop app
 
