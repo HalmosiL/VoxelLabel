@@ -239,11 +239,13 @@ Top to bottom, each a panel:
   - **Annotation surface / Review surface**: connected to a job via the
     *surface config* handle; restricts the viewer's tools, panes and
     3D for that job. On the Annotation surface each pre-defined label
-    (e.g. "Nodule") can carry a **form**: *tick* fields (yes/no flags,
-    e.g. Calcified), *pick one* fields with comma-separated options
-    (e.g. Type: solid, sub-solid, ground-glass) and *scale* fields
-    with a from/to range (e.g. Confidence 1-5). Every instance of that
-    label gets the form in the viewer, next to its comment.
+    (e.g. "Nodule") can carry a **form** -- *Add form* / *Edit form*
+    next to the label opens its editor: fields with a name and a kind
+    (*Tick* = yes/no, e.g. Calcified; *Pick one* = options typed as
+    chips, e.g. Type: solid, sub-solid, ground-glass; *Scale* = a
+    from/to range, e.g. Confidence 1-5), reorderable, with a live
+    preview of the viewer's object row. Every instance of that label
+    gets the form in the viewer, next to its comment.
   - **Note**, **Milestone**: documentation on the canvas.
   - **Criterion**: an eligibility rule written in plain language,
     evaluated by the local LLM over each case's documents -- yes/no per

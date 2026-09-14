@@ -5,6 +5,7 @@ import { CaseSummary } from "../../api/dataApi";
 import { SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
 import { TrashIcon } from "../icons";
 import { RUNNABLE_TYPES } from "./handleRules";
+import LabelFormModal, { LabelField } from "./LabelFormModal";
 import PytorchExportModal from "./PytorchExportModal";
 import { TASK_STATUS_STYLE } from "./statusStyle";
 
@@ -804,17 +805,10 @@ const SURFACE_PANE_OPTIONS: { value: string; label: string }[] = [
 // would have created themselves.
 const SURFACE_LABEL_COLOR_PALETTE = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
 
-// A label's per-object form (same shape as ct-annotator's
+// A label's per-object form (LabelField, same shape as ct-annotator's
 // components/ObjectForm.tsx): what an annotator fills for every
-// instance next to its comment, and the reviewer sees on the review card.
-interface LabelField {
-  name: string;
-  kind: "check" | "choice" | "scale";
-  options?: string[];
-  min?: number;
-  max?: number;
-}
-
+// instance next to its comment, and the reviewer sees on the review
+// card. Edited in LabelFormModal.
 interface SurfaceLabel {
   name: string;
   color: string;
@@ -833,6 +827,8 @@ function AnnotationSurfaceFields({
   const show3d = card.config.show_3d !== false;
   const surfaceLabels = (card.config.labels as SurfaceLabel[] | undefined) ?? [];
   const [newLabelName, setNewLabelName] = useState("");
+  // Which label's form is open in the editor dialog (index into surfaceLabels).
+  const [formEditorIndex, setFormEditorIndex] = useState<number | null>(null);
 
   function toggleTool(value: string) {
     const next = new Set(tools);
@@ -926,12 +922,18 @@ function AnnotationSurfaceFields({
                     title="Change color"
                   />
                   <span className="flex-1 truncate text-xs text-gray-700">{l.name}</span>
-                  <span className="text-[10px] text-gray-400">{(l.fields ?? []).length ? `${(l.fields ?? []).length} field${(l.fields ?? []).length === 1 ? "" : "s"}` : "no form"}</span>
                   <button onClick={() => removeSurfaceLabel(i)} className="text-gray-400 hover:text-red-600" title="Remove label">
                     <TrashIcon className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <LabelFieldsEditor fields={l.fields ?? []} onChange={(fields) => setLabelFields(i, fields)} />
+                <div className="flex items-center gap-2 pl-7">
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-gray-500" data-testid="label-form-summary">
+                    {(l.fields ?? []).length ? (l.fields ?? []).map((f) => f.name || "(unnamed)").join(" · ") : "No form -- comment only"}
+                  </span>
+                  <button type="button" onClick={() => setFormEditorIndex(i)} className="btn-secondary btn-sm flex-shrink-0" data-testid="edit-label-form">
+                    {(l.fields ?? []).length ? "Edit form" : "Add form"}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -948,70 +950,18 @@ function AnnotationSurfaceFields({
           </button>
         </form>
       </div>
-    </div>
-  );
-}
-
-/** One label's form: its fields with kind, options (pick one) or range
- * (scale). Everything is saved straight into the card's config. */
-function LabelFieldsEditor({ fields, onChange }: { fields: LabelField[]; onChange: (next: LabelField[]) => void }) {
-  function update(index: number, patch: Partial<LabelField>) {
-    onChange(fields.map((f, i) => (i === index ? { ...f, ...patch } : f)));
-  }
-  function add(kind: LabelField["kind"]) {
-    const field: LabelField = kind === "choice" ? { name: "", kind, options: [] } : kind === "scale" ? { name: "", kind, min: 1, max: 5 } : { name: "", kind };
-    onChange([...fields, field]);
-  }
-  const KIND_LABEL: Record<LabelField["kind"], string> = { check: "tick", choice: "pick one", scale: "scale" };
-  return (
-    <div className="flex flex-col gap-1 pl-1" data-testid="label-fields">
-      {fields.map((field, fi) => (
-        <div key={fi} className="flex flex-col gap-1" data-testid="label-field">
-          <div className="flex items-center gap-1.5">
-            <span className="w-14 flex-shrink-0 text-[10px] uppercase tracking-wide text-gray-400">{KIND_LABEL[field.kind]}</span>
-            <input
-              className="input min-w-0 flex-1"
-              value={field.name}
-              onChange={(e) => update(fi, { name: e.target.value })}
-              placeholder={field.kind === "check" ? "e.g. Calcified" : field.kind === "scale" ? "e.g. Confidence" : "e.g. Type"}
-              aria-label="Field name"
-            />
-            <button onClick={() => onChange(fields.filter((_, i) => i !== fi))} className="text-gray-400 hover:text-red-600" title="Remove this field">
-              <TrashIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          {field.kind === "choice" && (
-            <div className="pl-[3.9rem] pr-5">
-              <input
-                className="input w-full min-w-0"
-                value={(field.options ?? []).join(", ")}
-                onChange={(e) => update(fi, { options: e.target.value.split(",").map((o) => o.trim()).filter(Boolean) })}
-                placeholder="Options, comma-separated: solid, sub-solid, ground-glass"
-                aria-label="Options"
-              />
-            </div>
-          )}
-          {field.kind === "scale" && (
-            <div className="flex items-center gap-1.5 pl-[3.9rem] pr-5 text-[11px] text-gray-500">
-              from
-              <input type="number" className="input w-16" value={field.min ?? 1} onChange={(e) => update(fi, { min: Number(e.target.value) })} aria-label="Scale minimum" />
-              to
-              <input type="number" className="input w-16" value={field.max ?? 5} onChange={(e) => update(fi, { max: Number(e.target.value) })} aria-label="Scale maximum" />
-            </div>
-          )}
-        </div>
-      ))}
-      <div className="flex flex-wrap gap-1.5">
-        <button onClick={() => add("check")} className="btn-secondary btn-sm" type="button">
-          + Tick
-        </button>
-        <button onClick={() => add("choice")} className="btn-secondary btn-sm" type="button">
-          + Pick one
-        </button>
-        <button onClick={() => add("scale")} className="btn-secondary btn-sm" type="button">
-          + Scale
-        </button>
-      </div>
+      {formEditorIndex !== null && surfaceLabels[formEditorIndex] && (
+        <LabelFormModal
+          labelName={surfaceLabels[formEditorIndex].name}
+          color={surfaceLabels[formEditorIndex].color}
+          fields={surfaceLabels[formEditorIndex].fields ?? []}
+          onSave={(fields) => {
+            setLabelFields(formEditorIndex, fields);
+            setFormEditorIndex(null);
+          }}
+          onClose={() => setFormEditorIndex(null)}
+        />
+      )}
     </div>
   );
 }
