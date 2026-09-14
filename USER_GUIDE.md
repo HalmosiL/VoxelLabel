@@ -90,8 +90,11 @@ Three MPR panes (axial, coronal, sagittal) plus optional 3D, driven by
 the job's *Surface* configuration (which tools/panes are allowed).
 
 Header: **← Back** (returns to the case/job page), the **job status
-badge** (automatic), **Case N of M ← →** (step through the job's
-cases), **Documents** (the case's reports beside the images), **Save**
+badge** (automatic), **Case i of n open ← →** (step through the job's
+*open* cases only: not yet handed in or sent back for an Annotation job,
+awaiting a decision for a Review job -- done cases are skipped, and
+after *Mark as Annotated* / *Submit review* the next open one loads by
+itself), **Documents** (the case's reports beside the images), **Save**
 (draft) and **Mark as Annotated** (hand in for review), **Tutorial**.
 
 **Documents** opens a report in a panel beside the images -- nothing is
