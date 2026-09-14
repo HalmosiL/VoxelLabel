@@ -35,6 +35,26 @@ echo "==> Building images (PUBLIC_KEYCLOAK_URL=${PUBLIC_KEYCLOAK_URL:-http://loc
 echo "==> Starting the stack"
 "${COMPOSE[@]}" up -d
 
+# The object storage bucket every service's OBJECT_STORAGE_BUCKET env
+# var already assumes exists (see e.g. ingestion-service's
+# upload_staged_file) -- nothing else in this repo ever creates it.
+# On this sandbox it's existed since long before this script did, which
+# is exactly why this was never caught here: a genuinely fresh MinIO
+# volume (a first-ever install, or one recreated after wiping it to fix
+# a stale root password -- see the "password authentication failed"
+# class of problem this same script's realm/DB steps below also hit)
+# has no buckets at all, and every upload then 500s with a bare
+# "NoSuchBucket" -- surfacing in the browser as an opaque "network
+# error", nothing about a missing bucket. `mc mb --ignore-existing`
+# (MinIO's own client, bundled in its image -- no extra tool needed) is
+# idempotent, so this is safe on every rerun.
+echo "==> Making sure the object storage bucket exists"
+for _ in $(seq 1 30); do
+  "${COMPOSE[@]}" exec -T minio curl -sf -o /dev/null http://localhost:9000/minio/health/live && break
+  sleep 2
+done
+"${COMPOSE[@]}" exec -T minio sh -c "mc alias set local http://localhost:9000 \$MINIO_ROOT_USER \$MINIO_ROOT_PASSWORD >/dev/null && mc mb --ignore-existing local/${OBJECT_STORAGE_BUCKET:-ct-pixel-data}"
+
 echo "==> Waiting for Keycloak"
 for _ in $(seq 1 90); do
   curl -sf -o /dev/null http://localhost:8080/realms/master && break
