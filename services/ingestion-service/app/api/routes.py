@@ -104,12 +104,24 @@ async def quick_import(
 
     import_id = str(uuid.uuid4())
     staging_keys = []
+    # staging_key -> the name the browser actually sent (the multipart
+    # part's own filename -- FormData preserves File.name for this
+    # automatically, no frontend change needed). Reported back instead
+    # of the staging_key itself wherever a file shows up in progress/
+    # errors (see quick_import.py's run_quick_import) -- the staging key
+    # is a throwaway "_staging/<id>/<uuid>.dcm" object-storage path that
+    # means nothing to whoever picked the files.
+    filenames: dict[str, str] = {}
     for file in files:
         staging_key = f"_staging/{import_id}/{uuid.uuid4()}.dcm"
         upload_staged_file(staging_key, await file.read())
         staging_keys.append(staging_key)
+        if file.filename:
+            filenames[staging_key] = file.filename
 
-    quick_import_batch.apply_async(kwargs={"study_id": study_id, "staging_keys": staging_keys}, task_id=import_id)
+    quick_import_batch.apply_async(
+        kwargs={"study_id": study_id, "staging_keys": staging_keys, "filenames": filenames}, task_id=import_id
+    )
     return {"import_id": import_id, "status": "queued", "file_count": len(staging_keys)}
 
 

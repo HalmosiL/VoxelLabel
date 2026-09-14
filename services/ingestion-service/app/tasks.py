@@ -44,7 +44,7 @@ def export_pytorch_dataset(self, export_id: str, case_ids: list[str]) -> dict:
 
 
 @celery_app.task(name="ingestion.quick_import_batch", bind=True)
-def quick_import_batch(self, study_id: str, staging_keys: list[str]) -> dict:
+def quick_import_batch(self, study_id: str, staging_keys: list[str], filenames: dict[str, str] | None = None) -> dict:
     """Runs one quick-import batch (see app/quick_import.py) -- every
     staged file processed sequentially in this single task, deliberately
     never fanned out across workers (see that module's own docstring for
@@ -53,6 +53,11 @@ def quick_import_batch(self, study_id: str, staging_keys: list[str]) -> dict:
     retry would only be useful for a failure between files (e.g. losing
     the DB connection entirely), which is rare enough not to warrant the
     complexity of resuming a partially-done batch.
+
+    `filenames` (staging_key -> the browser's own filename for it) is
+    just passed straight through to run_quick_import -- see its
+    docstring for why progress/errors are reported by this instead of
+    the staging_key itself.
     """
 
     def on_progress(current: int, total: int, filename: str) -> None:
@@ -62,4 +67,4 @@ def quick_import_batch(self, study_id: str, staging_keys: list[str]) -> dict:
         # spinner for however long it takes.
         self.update_state(state="PROGRESS", meta={"current": current, "total": total, "filename": filename})
 
-    return run_quick_import(study_id=study_id, staging_keys=staging_keys, on_progress=on_progress)
+    return run_quick_import(study_id=study_id, staging_keys=staging_keys, filenames=filenames, on_progress=on_progress)
