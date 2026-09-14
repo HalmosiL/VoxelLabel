@@ -16,7 +16,7 @@ from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap
 
 from app.api import audit
-from app.api.imaging import _delete_instance
+from app.api.imaging import _delete_annotations_targeting, _delete_instance
 from app.api.studies import _require_global_admin
 from app.api.workflow import _cascade_new_case
 from app.storage import delete_object
@@ -183,7 +183,22 @@ def _delete_case_cascade(db: Session, case: Case) -> None:
     output_case_ids is not cleaned up -- board scratch space already
     tolerates staleness the same way elsewhere (see
     delete_workflow_card's own docstring)."""
-    for imaging_study in db.query(ImagingStudy).filter_by(case_id=case.id).all():
+    imaging_studies = db.query(ImagingStudy).filter_by(case_id=case.id).all()
+
+    # See _delete_annotations_targeting's own docstring -- Annotation.
+    # target_id isn't a real FK, so it wouldn't otherwise stop the
+    # imaging rows below from being deleted out from under it; the
+    # dangling reference then surfaces later as an opaque 500 the first
+    # time something tries to delete the Study those annotations still
+    # do have a real FK to.
+    target_ids = [imaging_study.id for imaging_study in imaging_studies]
+    for imaging_study in imaging_studies:
+        target_ids.extend(series.id for series in imaging_study.series)
+        for series in imaging_study.series:
+            target_ids.extend(instance.id for instance in series.instances)
+    _delete_annotations_targeting(db, target_ids)
+
+    for imaging_study in imaging_studies:
         for series in imaging_study.series:
             for instance in series.instances:
                 _delete_instance(db, instance)

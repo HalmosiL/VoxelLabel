@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Case, Study, StudyMembership, StudyRole
+from shared_models.models import Annotation, AnnotationReview, Case, Study, StudyMembership, StudyRole
 
 from app.api import audit
 from app.keycloak_admin import list_realm_users
@@ -180,8 +180,21 @@ def delete_study(
     side effect of deleting the study they're grouped under. With
     `force`, cascades the exact same per-case delete cases.py's own
     delete_case uses (imaging studies/series/instances, clinical data
-    items, all with their object-storage cleanup) across every case in
-    the study, then the study itself, as one transaction.
+    items, all with their object-storage cleanup, and any Annotation
+    that targeted them) across every case in the study, then the study
+    itself, as one transaction.
+
+    Annotation carries a real FK to `study_id`, so even a study with
+    zero cases can still fail to delete here if it has Annotation rows
+    orphaned by an EARLIER bug (delete_imaging_study used to remove an
+    ImagingStudy/Series/Instance without checking whether an Annotation
+    still targeted it -- fixed alongside this, but existing databases
+    can already carry the leftovers). The sweep right before db.delete
+    below is the actual fix for that: it clears every Annotation still
+    tied to this study regardless of whether its target row is even
+    still there, so this can't 500 on data a past version of this
+    function -- or delete_imaging_study -- left behind, and it runs
+    whether or not `force`/cases were involved.
 
     Imported from cases.py inside the function body, not at module
     load time: cases.py already imports _require_global_admin from
@@ -206,6 +219,15 @@ def delete_study(
 
         for case in cases:
             _delete_case_cascade(db, case)
+
+    stale_annotation_ids = [
+        row.id for row in db.query(Annotation.id).filter(Annotation.study_id == study_id).all()
+    ]
+    if stale_annotation_ids:
+        db.query(AnnotationReview).filter(AnnotationReview.annotation_id.in_(stale_annotation_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(Annotation).filter(Annotation.id.in_(stale_annotation_ids)).delete(synchronize_session=False)
 
     db.query(StudyMembership).filter_by(study_id=study_id).delete()
     audit.record(db, user, "study.delete", "study", study.id, {"name": study.name, "cases_deleted": len(cases)})
