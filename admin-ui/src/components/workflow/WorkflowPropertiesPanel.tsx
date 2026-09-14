@@ -1057,15 +1057,17 @@ function ReviewFormFields({ form, onChange }: { form: ReviewFormGroup[]; onChang
                 </button>
               </div>
               {field.kind === "choice" && (
-                <input
-                  className="input ml-[3.9rem]"
-                  value={(field.options ?? []).join(", ")}
-                  onChange={(e) =>
-                    updateField(gi, fi, { options: e.target.value.split(",").map((o) => o.trim()).filter(Boolean) })
-                  }
-                  placeholder="Options, comma-separated: solid, sub-solid, ground-glass"
-                  aria-label="Options"
-                />
+                <div className="pl-[3.9rem] pr-5">
+                  <input
+                    className="input w-full min-w-0"
+                    value={(field.options ?? []).join(", ")}
+                    onChange={(e) =>
+                      updateField(gi, fi, { options: e.target.value.split(",").map((o) => o.trim()).filter(Boolean) })
+                    }
+                    placeholder="Options, comma-separated: solid, sub-solid, ground-glass"
+                    aria-label="Options"
+                  />
+                </div>
               )}
             </div>
           ))}
