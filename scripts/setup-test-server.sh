@@ -86,9 +86,21 @@ if [ -z "${CT_ANNOTATOR_DIR:-}" ]; then
 fi
 if [ -d "$CT_ANNOTATOR_DIR/scripts" ]; then
   echo "==> Registering the viewer's annotation types + its origin on the Keycloak client ($CT_ANNOTATOR_DIR)"
+  # --keycloak-url here must be PUBLIC_KEYCLOAK_URL, not localhost, even
+  # though this all runs server-side: Keycloak has no fixed hostname
+  # config (KC_HOSTNAME is never set), so the `iss` claim it stamps into
+  # a token is whatever host/port the token REQUEST itself came in on --
+  # a token minted via localhost:8080 carries iss=.../localhost:8080,
+  # but admin-service's shared_auth checks it against its own
+  # KEYCLOAK_ISSUER (baked from PUBLIC_KEYCLOAK_URL, since that's what
+  # every *browser* token's issuer actually is) and 401s "Invalid token"
+  # on the mismatch -- confirmed live on a real deployment, not a
+  # theoretical concern. admin-service-url stays on localhost: nothing
+  # there validates what host was used to reach IT, only what's inside
+  # the token this call sends it.
   python3 "$CT_ANNOTATOR_DIR/scripts/register_annotation_type.py" \
     --username "${TEST_USERNAME:-platform-admin}" --password "${TEST_PASSWORD:-platform-admin}" \
-    --keycloak-url http://localhost:8080 --admin-service-url http://localhost:8004 || true
+    --keycloak-url "${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}" --admin-service-url http://localhost:8004 || true
   python3 "$CT_ANNOTATOR_DIR/scripts/patch_keycloak_client.py" \
     --keycloak-url http://localhost:8080 --admin-username "${KEYCLOAK_ADMIN:-admin}" --admin-password "${KEYCLOAK_ADMIN_PASSWORD:-admin}" \
     --frontend-origin "${PUBLIC_ANNOTATOR_UI_URL:-http://localhost:5174}" || true
