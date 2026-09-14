@@ -28,10 +28,19 @@ NGROK_BIN="$HOME/.local/bin/ngrok"
 [ -x "$NGROK_BIN" ] || NGROK_BIN="$(command -v ngrok || true)"
 
 if [ -z "$NGROK_BIN" ]; then
+  # `tar -C` needs its target directory to already exist (it won't
+  # create it), and a fresh box -- especially logged in as root, whose
+  # shell profile never adds ~/.local/bin to PATH the way a normal
+  # user's does -- often doesn't have ~/.local/bin yet. `mkdir -p` first
+  # and the config step's full path (matching $NGROK_BIN above, which
+  # this script checks before ever falling back to PATH) keep every
+  # line here copy-pasteable as-is, with no separate "now put it on
+  # PATH" step required.
   echo "ngrok isn't installed. Install it first:" >&2
+  echo "  mkdir -p ~/.local/bin" >&2
   echo "  curl -sSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -o /tmp/ngrok.tgz" >&2
   echo "  tar -xzf /tmp/ngrok.tgz -C ~/.local/bin/" >&2
-  echo "  ngrok config add-authtoken <your token from dashboard.ngrok.com>" >&2
+  echo "  ~/.local/bin/ngrok config add-authtoken <your token from dashboard.ngrok.com>" >&2
   exit 1
 fi
 if [ ! -f "$HOME/.config/ngrok/ngrok.yml" ]; then
