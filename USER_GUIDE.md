@@ -137,7 +137,13 @@ and the connected Review job's reviewer gets the case.
 
 Same surface, review chrome: the annotator's objects are listed with
 **Accept / Reject** per object and a comment box; *Submit review* is
-enabled once every object is decided. Reject → the case goes back to
+enabled once every object is decided. If the job's *Review surface*
+card defines a **review checklist** (per label, e.g. Nodule: Type =
+solid / sub-solid / ground-glass, Calcified), it appears above the
+comment box -- tick or pick instead of typing. The answers are stored
+on the object, shown to the annotator as chips next to the object's
+comment, and folded into the review's comment on the Study page
+(`Nodule 1 [Type: solid · Calcified]: ...`). Reject → the case goes back to
 the annotator as *Rejected* with your comments attached to the
 objects; Accept all → *Approved*. Objects can be toggled visible to
 inspect; nothing can be drawn in review mode.
@@ -229,7 +235,10 @@ Top to bottom, each a panel:
     submitted cases.
   - **Annotation surface / Review surface**: connected to a job via the
     *surface config* handle; restricts the viewer's tools, panes and
-    3D for that job.
+    3D for that job. The Review surface also holds the **review
+    checklist**: groups per label ("Nodule", or empty for every
+    label) of *tick* fields (yes/no flags) and *pick one* fields with
+    comma-separated options, which the reviewer fills per object.
   - **Note**, **Milestone**: documentation on the canvas.
   - **Criterion**: an eligibility rule written in plain language,
     evaluated by the local LLM over each case's documents -- yes/no per

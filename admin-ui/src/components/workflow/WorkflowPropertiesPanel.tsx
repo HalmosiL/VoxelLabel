@@ -928,9 +928,25 @@ function AnnotationSurfaceFields({
   );
 }
 
+// The review checklist a Review Surface defines: per label (e.g. Nodule)
+// a few fields a reviewer ticks or picks instead of typing -- shown in
+// ct-annotator's review card next to the comment box, stored on the
+// object, folded into the review's comment. Same shape as ct-annotator's
+// components/ReviewForm.tsx.
+interface ReviewFormField {
+  name: string;
+  kind: "check" | "choice";
+  options?: string[];
+}
+interface ReviewFormGroup {
+  label: string;
+  fields: ReviewFormField[];
+}
+
 // The review surface never has tools or 3D at all, unconditionally (see
 // ct-annotator's ViewerPage reviewMode) -- no checkboxes for either
-// here, since they'd be dead UI; only which MPR panes are visible.
+// here, since they'd be dead UI; only which MPR panes are visible, plus
+// the review checklist.
 function ReviewSurfaceFields({
   card,
   onPatch,
@@ -939,6 +955,7 @@ function ReviewSurfaceFields({
   onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
 }) {
   const panes = new Set((card.config.panes as string[] | undefined) ?? []);
+  const form = (card.config.review_form as ReviewFormGroup[] | undefined) ?? [];
 
   function togglePane(value: string) {
     const next = new Set(panes);
@@ -946,12 +963,15 @@ function ReviewSurfaceFields({
     else next.add(value);
     onPatch(card.id, { config: { ...card.config, panes: Array.from(next) } });
   }
+  function setForm(next: ReviewFormGroup[]) {
+    onPatch(card.id, { config: { ...card.config, review_form: next } });
+  }
 
   return (
     <div className="flex flex-col gap-3">
       <p className="hint">
         Connect this to a Review card's top handle to mandatorily restrict which MPR panes are available while
-        reviewing that job -- the review surface has no tools or 3D at all, so there's nothing else to configure.
+        reviewing that job -- the review surface has no tools or 3D at all.
       </p>
       <div className="flex flex-col gap-1.5">
         <span className="label">MPR panes</span>
@@ -962,6 +982,115 @@ function ReviewSurfaceFields({
           </label>
         ))}
       </div>
+      <ReviewFormFields form={form} onChange={setForm} />
+    </div>
+  );
+}
+
+function ReviewFormFields({ form, onChange }: { form: ReviewFormGroup[]; onChange: (next: ReviewFormGroup[]) => void }) {
+  const [newGroupLabel, setNewGroupLabel] = useState("");
+
+  function updateGroup(index: number, patch: Partial<ReviewFormGroup>) {
+    onChange(form.map((g, i) => (i === index ? { ...g, ...patch } : g)));
+  }
+  function addGroup(event: FormEvent) {
+    event.preventDefault();
+    onChange([...form, { label: newGroupLabel.trim(), fields: [] }]);
+    setNewGroupLabel("");
+  }
+  function addField(groupIndex: number, kind: ReviewFormField["kind"]) {
+    const group = form[groupIndex];
+    const field: ReviewFormField = kind === "check" ? { name: "", kind } : { name: "", kind, options: [] };
+    updateGroup(groupIndex, { fields: [...group.fields, field] });
+  }
+  function updateField(groupIndex: number, fieldIndex: number, patch: Partial<ReviewFormField>) {
+    const group = form[groupIndex];
+    updateGroup(groupIndex, { fields: group.fields.map((f, i) => (i === fieldIndex ? { ...f, ...patch } : f)) });
+  }
+  function removeField(groupIndex: number, fieldIndex: number) {
+    const group = form[groupIndex];
+    updateGroup(groupIndex, { fields: group.fields.filter((_, i) => i !== fieldIndex) });
+  }
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-gray-100 pt-3" data-testid="review-form-editor">
+      <span className="label">Review checklist</span>
+      <p className="hint">
+        Per label (e.g. "Nodule"), what the reviewer can tick or pick for each object instead of typing it --
+        a <b>tick</b> is a yes/no flag, a <b>pick one</b> offers options (e.g. Type: solid, sub-solid,
+        ground-glass). Leave the label empty for fields that apply to every label. The answers show next to the
+        object for the annotator and go into the review's comment.
+      </p>
+      {form.map((group, gi) => (
+        <div key={gi} className="flex flex-col gap-1.5 rounded border border-gray-200 p-2" data-testid="review-form-group">
+          <div className="flex items-center gap-1.5">
+            <input
+              className="input flex-1"
+              value={group.label}
+              onChange={(e) => updateGroup(gi, { label: e.target.value })}
+              placeholder="Label (empty = every label)"
+              aria-label="Label"
+            />
+            <button
+              onClick={() => onChange(form.filter((_, i) => i !== gi))}
+              className="text-gray-400 hover:text-red-600"
+              title="Remove this group"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {group.fields.map((field, fi) => (
+            <div key={fi} className="flex flex-col gap-1 pl-2">
+              <div className="flex items-center gap-1.5">
+                <span className="w-14 flex-shrink-0 text-[10px] uppercase tracking-wide text-gray-400">
+                  {field.kind === "check" ? "tick" : "pick one"}
+                </span>
+                <input
+                  className="input flex-1"
+                  value={field.name}
+                  onChange={(e) => updateField(gi, fi, { name: e.target.value })}
+                  placeholder={field.kind === "check" ? "e.g. Calcified" : "e.g. Type"}
+                  aria-label="Field name"
+                />
+                <button onClick={() => removeField(gi, fi)} className="text-gray-400 hover:text-red-600" title="Remove this field">
+                  <TrashIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {field.kind === "choice" && (
+                <input
+                  className="input ml-[3.9rem]"
+                  value={(field.options ?? []).join(", ")}
+                  onChange={(e) =>
+                    updateField(gi, fi, { options: e.target.value.split(",").map((o) => o.trim()).filter(Boolean) })
+                  }
+                  placeholder="Options, comma-separated: solid, sub-solid, ground-glass"
+                  aria-label="Options"
+                />
+              )}
+            </div>
+          ))}
+          <div className="flex gap-1.5 pl-2">
+            <button onClick={() => addField(gi, "check")} className="btn-secondary btn-sm">
+              + Tick
+            </button>
+            <button onClick={() => addField(gi, "choice")} className="btn-secondary btn-sm">
+              + Pick one
+            </button>
+          </div>
+        </div>
+      ))}
+      <form onSubmit={addGroup} className="flex gap-1.5">
+        <input
+          className="input flex-1"
+          value={newGroupLabel}
+          onChange={(e) => setNewGroupLabel(e.target.value)}
+          placeholder='Label, e.g. "Nodule" (or empty for all)'
+          aria-label="New group label"
+        />
+        <button type="submit" className="btn-secondary btn-sm">
+          Add group
+        </button>
+      </form>
     </div>
   );
 }

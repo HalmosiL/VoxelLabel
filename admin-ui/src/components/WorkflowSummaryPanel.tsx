@@ -70,7 +70,11 @@ function describeCard(card: WorkflowCard): string {
     }
     case "review_surface": {
       const panes = (card.config.panes as string[] | undefined)?.length ?? 0;
-      return `${panes} panes · no tools · no 3D`;
+      const fields = ((card.config.review_form as { fields?: unknown[] }[] | undefined) ?? []).reduce(
+        (n, g) => n + (g.fields?.length ?? 0),
+        0
+      );
+      return `${panes} panes · no tools · no 3D${fields ? ` · ${fields}-field checklist` : ""}`;
     }
     default:
       return "";

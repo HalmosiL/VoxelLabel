@@ -136,3 +136,25 @@ def test_card_changes_are_audited_but_drags_are_not(client, db):
     assert actions.count("card.update") == 1 and "card.run" in actions and "card.create" in actions
     client.delete(f"/admin/workflow-cards/{ann['id']}")
     assert client.get("/admin/audit-log", params={"entity_id": ann["id"]}).json()["entries"][0]["action"] == "card.delete"
+
+
+def test_surface_config_carries_the_review_surfaces_checklist(client, db):
+    """A Review Surface's per-label checklist (what ct-annotator's review
+    card shows next to the comment box) rides along in surface-config;
+    a job without one gets an empty list, never a missing key."""
+    sid, _, _, ann, rev = _pipeline(client, db)
+    client.as_user(REVIEWER_SUBJECT)
+    assert client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()["review_form"] == []
+
+    client.as_admin()
+    form = [{"label": "Nodule", "fields": [{"name": "Type", "kind": "choice", "options": ["solid", "sub-solid"]}, {"name": "Calcified", "kind": "check"}]}]
+    surface = _card(client, sid, "review_surface", "Review surface", {"panes": ["axial"], "review_form": form}, x=600)
+    _edge(client, sid, surface["id"], rev["id"], source_handle="surface_config", target_handle="surface_config")
+
+    client.as_user(REVIEWER_SUBJECT)
+    config = client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()
+    assert config["review_form"] == form
+    assert config["panes"] == ["axial"] and config["tools"] == [] and config["show_3d"] is False
+    # An Annotation job's surface-config never carries a checklist it wasn't given.
+    client.as_user(ANNOTATOR_SUBJECT)
+    assert client.get(f"/admin/workflow-cards/{ann['id']}/surface-config").json()["review_form"] == []

@@ -88,4 +88,9 @@ _UNRESTRICTED_SURFACE_CONFIG = {
     # their own. Review jobs never see labels (nothing to paint), so
     # this is never forced/overridden the way tools/show_3d are below.
     "labels": [],
+    # The review checklist (see ct-annotator's components/ReviewForm.tsx):
+    # [{label, fields: [{name, kind: check|choice, options}]}] -- what a
+    # reviewer can tick per object instead of typing it. Configured on a
+    # REVIEW_SURFACE card; none by default.
+    "review_form": [],
 }

@@ -284,6 +284,11 @@ def get_surface_config(
     when a series has no saved labels yet, never overwriting an
     annotator's own already-in-progress work.
 
+    `review_form` is the Review Surface's per-label checklist (groups of
+    check/choice fields, e.g. Nodule -> Type: solid/sub-solid) that
+    ct-annotator's review card shows next to the comment box; the
+    reviewer's answers are stored on the objects themselves.
+
     `card_type` (the underlying job's own type, "annotation" or
     "review") rides along in every response so ct-annotator can tell a
     Review job apart from an Annotation one and switch to its
@@ -306,6 +311,7 @@ def get_surface_config(
             "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
             "show_3d": surface.config.get("show_3d", True),
             "labels": surface.config.get("labels", []),
+            "review_form": surface.config.get("review_form", []),
         }
 
     if is_review:
