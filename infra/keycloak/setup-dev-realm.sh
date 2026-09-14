@@ -10,7 +10,11 @@
 # global "admin" role is a Keycloak realm role; see ARCHITECTURE.md
 # ("Access control: study-scoped RBAC").
 #
-# Safe to re-run: exits early if the realm already exists.
+# Safe to re-run: if the realm already exists, only its mutable settings
+# (sslRequired, the client's redirectUris/webOrigins) are reconciled
+# against the current ADMIN_UI_ORIGIN/EXTRA_ORIGINS -- the realm, roles,
+# test user and service account are created once and never touched
+# again (re-creating them would just 409).
 #
 # Usage: KEYCLOAK_URL=http://localhost:8080 ./setup-dev-realm.sh
 set -euo pipefail
@@ -44,17 +48,55 @@ admin_token() {
 
 TOKEN=$(admin_token)
 
+# Every realm (master included) defaults to sslRequired "external" --
+# plain HTTP is accepted from what Keycloak considers a local address
+# (localhost, RFC1918 private ranges) but refused with a bare "HTTPS
+# required" page from anywhere else, including a real public IP with no
+# TLS in front of it -- exactly the shape of INSTALL.md's own "plain
+# ports, no reverse proxy" fast path. A minimal PUT (Keycloak's realm/
+# client update endpoints only touch the fields actually present in the
+# body, so this can't clobber anything else already configured) turns
+# it off; run every time, including against an already-existing realm,
+# since that's precisely the realm a public-IP deployment hits this on.
+echo "Turning off Keycloak's HTTPS requirement (master + $REALM; this platform terminates TLS at a reverse proxy if it wants HTTPS, not here) ..."
+curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/master" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"sslRequired": "none"}' >/dev/null
+
 realm_status=$(curl -s -o /dev/null -w "%{http_code}" "$KEYCLOAK_URL/admin/realms/$REALM" \
   -H "Authorization: Bearer $TOKEN")
+realm_existed="false"
 if [ "$realm_status" = "200" ]; then
-  echo "Realm '$REALM' already exists -- nothing to do."
-  exit 0
+  realm_existed="true"
+  echo "Realm '$REALM' already exists -- reconciling its mutable settings, skipping the rest."
+  curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/$REALM" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"sslRequired": "none"}' >/dev/null
+else
+  echo "Creating realm '$REALM' ..."
+  curl -sf -X POST "$KEYCLOAK_URL/admin/realms" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "{\"realm\": \"$REALM\", \"enabled\": true, \"displayName\": \"CT Annotation Platform\", \"sslRequired\": \"none\"}" >/dev/null
 fi
 
-echo "Creating realm '$REALM' ..."
-curl -sf -X POST "$KEYCLOAK_URL/admin/realms" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "{\"realm\": \"$REALM\", \"enabled\": true, \"displayName\": \"CT Annotation Platform\"}" >/dev/null
+# The client's redirectUris/webOrigins are reconciled against the
+# CURRENT $ADMIN_UI_ORIGIN/$EXTRA_ORIGINS whether the realm (and this
+# client with it) is brand new or already existed -- otherwise a
+# deployment that changes its PUBLIC_* hostname/IP after the first
+# provisioning run stays stuck on the old ones forever (this script
+# would previously exit at the realm-exists check above and never
+# touch the client again).
+if [ "$realm_existed" = "true" ]; then
+  echo "Updating client '$CLIENT_ID' origins (now: $ADMIN_UI_ORIGIN, $EXTRA_ORIGINS) ..."
+  CLIENT_UUID=$(curl -s "$KEYCLOAK_URL/admin/realms/$REALM/clients?clientId=$CLIENT_ID" \
+    -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+  curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/$REALM/clients/$CLIENT_UUID" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$(jq -n --arg origins "$ADMIN_UI_ORIGIN,$EXTRA_ORIGINS" '
+          ($origins | split(",") | map(select(length > 0))) as $o |
+          {redirectUris: ($o | map(. + "/*")), webOrigins: $o}')" >/dev/null
+  exit 0
+fi
 
 echo "Creating client '$CLIENT_ID' (origins: $ADMIN_UI_ORIGIN, $EXTRA_ORIGINS) ..."
 # redirectUris/webOrigins allow the admin-ui (a browser app, standard
