@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import {
   createStudy,
   deleteStudy,
+  duplicateStudy,
   listStudies,
   Study,
   updateStudy,
@@ -71,6 +72,23 @@ export default function StudiesPage() {
     }
   }
 
+  const [duplicating, setDuplicating] = useState<string | null>(null);
+
+  async function handleDuplicate(study: Study) {
+    if (!window.confirm(`Duplicate "${study.name}"? This creates a fully independent copy -- every case, image and document is really re-uploaded under its own new identity, not shared with the original.`)) {
+      return;
+    }
+    setDuplicating(study.id);
+    try {
+      await duplicateStudy(study.id);
+      refresh();
+    } catch (err) {
+      setError(describeApiError(err));
+    } finally {
+      setDuplicating(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -93,10 +111,13 @@ export default function StudiesPage() {
             // holding the study-scoped admin role (mirrors the backend).
             canAdminister={isAdmin || s.my_role === "admin"}
             canDelete={isAdmin}
+            canDuplicate={isAdmin}
+            duplicating={duplicating === s.id}
             showRole={!isAdmin}
             onImageUploaded={refresh}
             onEdit={() => setModal({ mode: "edit", study: s })}
             onDelete={() => handleDelete(s)}
+            onDuplicate={() => handleDuplicate(s)}
           />
         ))}
         {isAdmin && <NewStudyTile onClick={() => setModal({ mode: "create" })} />}
@@ -187,10 +208,13 @@ function StudyCard({
   study,
   canAdminister,
   canDelete,
+  canDuplicate,
+  duplicating,
   showRole,
   onImageUploaded,
   onEdit,
   onDelete,
+  onDuplicate,
   guide,
 }: {
   study: Study;
@@ -198,10 +222,13 @@ function StudyCard({
   guide?: string;
   canAdminister: boolean;
   canDelete: boolean;
+  canDuplicate: boolean;
+  duplicating: boolean;
   showRole: boolean;
   onImageUploaded: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
 }) {
   const [uploading, setUploading] = useState(false);
 
@@ -253,6 +280,16 @@ function StudyCard({
         >
           <PencilIcon className="h-4 w-4" />
         </button>
+        {canDuplicate && (
+          <button
+            onClick={onDuplicate}
+            disabled={duplicating}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white disabled:opacity-50"
+            title="Duplicate study (a fully independent copy)"
+          >
+            {duplicating ? <Spinner className="h-4 w-4" /> : <DuplicateIcon className="h-4 w-4" />}
+          </button>
+        )}
         {canDelete && (
           <button
             onClick={onDelete}
@@ -289,6 +326,15 @@ function PencilIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">
       <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+    </svg>
+  );
+}
+
+function DuplicateIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M7 3a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V8.414a2 2 0 00-.586-1.414l-3.414-3.414A2 2 0 009.586 3H7z" />
+      <path d="M4 7a1 1 0 00-1 1v8a2 2 0 002 2h6a1 1 0 100-2H5V8a1 1 0 00-1-1z" />
     </svg>
   );
 }

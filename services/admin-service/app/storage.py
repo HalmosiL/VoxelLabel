@@ -52,6 +52,23 @@ def upload_clinical_data_file(storage_key: str, data: bytes) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data, **extra_args)
 
 
+def download_object(storage_key: str) -> bytes:
+    return _client.get_object(Bucket=settings.object_storage_bucket, Key=storage_key)["Body"].read()
+
+
+def copy_object_bytes(src_key: str, dst_key: str) -> None:
+    """Duplicates one object under a new key with a real download+
+    reupload -- not S3's own server-side copy_object, deliberately: the
+    caller (see app/duplication.py) needs the result to behave exactly
+    as if the bytes had been freshly uploaded, and a get+put roundtrip is
+    the one approach that's unambiguously that regardless of how any
+    given S3-compatible backend implements CopySource under the hood."""
+    data = download_object(src_key)
+    content_type, _ = mimetypes.guess_type(dst_key)
+    extra_args = {"ContentType": content_type} if content_type else {}
+    _client.put_object(Bucket=settings.object_storage_bucket, Key=dst_key, Body=data, **extra_args)
+
+
 def delete_object(storage_key: str) -> None:
     """Delete one object from the shared bucket -- used when deleting an
     ImagingStudy/Series/Instance (pixel data + thumbnail) or a

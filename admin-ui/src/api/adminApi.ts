@@ -107,6 +107,19 @@ export function deleteStudy(studyId: string, force = false): Promise<void> {
   return apiFetch(base, `/admin/studies/${studyId}${force ? "?force=true" : ""}`, { method: "DELETE" });
 }
 
+/** Creates a fully independent copy of a study: new case/imaging/document
+ * rows with fresh DICOM UIDs, and a real byte-for-byte copy of every file
+ * under new storage keys -- behaves exactly as if it had all been freshly
+ * re-uploaded, not a reference to the source's data. Does not copy the
+ * source's workflow board, annotations, or version history -- the copy
+ * starts as plain, unprocessed source data. */
+export function duplicateStudy(studyId: string, name?: string): Promise<Study> {
+  return apiFetch(base, `/admin/studies/${studyId}/duplicate`, {
+    method: "POST",
+    body: JSON.stringify({ name: name || null }),
+  });
+}
+
 export function uploadStudyCoverImage(studyId: string, file: File): Promise<{ id: string; cover_image_url: string }> {
   const formData = new FormData();
   formData.append("file", file);

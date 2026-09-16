@@ -9,6 +9,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from shared_auth import CurrentUser, get_current_user, require_study_role
@@ -16,6 +17,7 @@ from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, Case, Study, StudyMembership, StudyRole
 
 from app.api import audit
+from app.duplication import duplicate_study
 from app.keycloak_admin import list_realm_users
 from app.storage import presigned_study_cover_image_url, upload_study_cover_image
 from app.versioning import autosave
@@ -233,6 +235,33 @@ def delete_study(
     audit.record(db, user, "study.delete", "study", study.id, {"name": study.name, "cases_deleted": len(cases)})
     db.delete(study)
     db.commit()
+
+
+class StudyDuplicateIn(BaseModel):
+    name: str | None = None
+
+
+@router.post("/{study_id}/duplicate")
+def duplicate_study_route(
+    study_id: str,
+    body: StudyDuplicateIn = StudyDuplicateIn(),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Creates a fully independent copy of a study: new Case/ImagingStudy/
+    Series/Instance/ClinicalDataItem rows with fresh DICOM UIDs, and a
+    real byte-for-byte copy of every object-storage payload (pixel data,
+    thumbnails, clinical data files, the cover image) under new keys --
+    see app/duplication.py for exactly what that does and doesn't carry
+    over. Global admin only, like create_study: this mints a brand-new,
+    platform-wide Study, not a scoped change to an existing one."""
+    _require_global_admin(user)
+    source = db.get(Study, study_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+
+    new_study = duplicate_study(db, source, user, new_name=body.name)
+    return _serialize_study(new_study, "admin")
 
 
 @router.post("/{study_id}/cover-image")
