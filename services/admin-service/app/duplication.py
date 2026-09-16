@@ -8,12 +8,23 @@ under a new one -- the result behaves exactly as if it had all been
 freshly re-uploaded, not a reference to the original's rows or bytes.
 Deleting the source afterwards (or the copy) never touches the other.
 
-Deliberately NOT copied: WorkflowCard/WorkflowEdge (the pipeline is
-work-in-progress state, not source data), Annotation/AnnotationReview
-(that's the work product of the pipeline), and StudyVersion/AuditLog
-history. A duplicated study starts as plain, unprocessed source data --
-exactly like a brand-new upload -- with an empty workflow board, ready
-for its own pipeline to be built from scratch.
+The workflow board (WorkflowCard/WorkflowEdge) is copied too: same
+cards, same layout, same edges, same per-card config -- with every case
+id embedded in a card's config (a manual-mode Dataset's case_ids list)
+remapped to the matching new Case. Each card's *cached* Run result
+(output_case_ids/last_run_at) is reset to "never run" rather than
+copied, since that cache is scoped to the source's case ids and would
+be silently wrong here -- a materialized Dataset's actual case set
+comes from its own (now-remapped) config, not that cache, so nothing
+downstream is broken by the reset; anything that isn't a plain Dataset
+just needs its own Run once, against the copy's own cases, the same as
+any card would after its input changes upstream.
+
+Deliberately NOT copied: Annotation/AnnotationReview (that's the work
+product of the pipeline, not its structure) and StudyVersion/AuditLog
+history. A duplicated study's board describes the same intended
+process, but starts with none of that process's output yet -- exactly
+like a brand-new upload run through an already-built pipeline.
 
 Cases keep pointing at the *same* Patient row rather than cloning it: a
 duplicate is still real imaging/documents for the same real person, and
@@ -22,6 +33,7 @@ DB-unique, so a cloned Patient would need a fabricated external identity
 with no real re-identification link -- out of scope for what "duplicate
 this study's data" means.
 """
+import copy
 import uuid
 
 from botocore.exceptions import ClientError
@@ -36,6 +48,8 @@ from shared_models.models import (
     Study,
     StudyMembership,
     Tag,
+    WorkflowCard,
+    WorkflowEdge,
 )
 from sqlalchemy.orm import Session
 
@@ -91,6 +105,68 @@ def _unique_study_name(db: Session, base_name: str) -> str:
     return name
 
 
+def _remap_config_case_ids(config: dict, case_id_map: dict[str, str]) -> dict:
+    """The only place a card's config holds case ids directly, as of the
+    current card-type set, is a manual-mode Dataset's "case_ids" list
+    (config.get("mode") == "manual") -- see engine.py's
+    _upsert_materialized_dataset and _dataset_output_ids, which read
+    that list live rather than through output_case_ids. Anything not
+    found in the map is dropped rather than left dangling: it would
+    point at a case that only exists in the *source* study."""
+    new_config = copy.deepcopy(config)
+    case_ids = new_config.get("case_ids")
+    if isinstance(case_ids, list):
+        new_config["case_ids"] = [case_id_map[cid] for cid in case_ids if cid in case_id_map]
+    return new_config
+
+
+def _duplicate_workflow_board(db: Session, source_study_id, new_study_id, case_id_map: dict[str, str]) -> None:
+    """Copies every WorkflowCard/WorkflowEdge from source_study_id onto
+    new_study_id: same layout, same per-card config (with case ids
+    remapped), same edges -- but every card's cached Run result reset,
+    since that cache is scoped to the source's case ids. See this
+    module's own docstring for the full reasoning."""
+    card_id_map: dict[str, uuid.UUID] = {}
+    source_cards = db.query(WorkflowCard).filter_by(study_id=source_study_id).all()
+
+    for card in source_cards:
+        new_card = WorkflowCard(
+            study_id=new_study_id,
+            type=card.type,
+            title=card.title,
+            position_x=card.position_x,
+            position_y=card.position_y,
+            width=card.width,
+            height=card.height,
+            config=_remap_config_case_ids(card.config, case_id_map),
+            output_case_ids=None,
+            last_run_at=None,
+        )
+        db.add(new_card)
+        db.flush()
+        card_id_map[str(card.id)] = new_card.id
+
+    # Second pass: materialized_source_card_id can point at a card added
+    # either before or after it in the loop above (a Split's parts are
+    # ordinary rows with no fixed ordering relative to their parent), so
+    # it's only resolvable once every card in this study has a new id.
+    for card in source_cards:
+        if card.materialized_source_card_id is None:
+            continue
+        new_card = db.get(WorkflowCard, card_id_map[str(card.id)])
+        new_card.materialized_source_card_id = card_id_map.get(str(card.materialized_source_card_id))
+        new_card.materialized_source_handle = card.materialized_source_handle
+
+    for edge in db.query(WorkflowEdge).filter_by(study_id=source_study_id).all():
+        db.add(WorkflowEdge(
+            study_id=new_study_id,
+            source_card_id=card_id_map[str(edge.source_card_id)],
+            source_handle=edge.source_handle,
+            target_card_id=card_id_map[str(edge.target_card_id)],
+            target_handle=edge.target_handle,
+        ))
+
+
 def duplicate_study(db: Session, source: Study, user: CurrentUser, new_name: str | None = None) -> Study:
     """Builds, commits and returns the new Study. Not wrapped in a savepoint
     beyond the normal request transaction -- like delete_study's cascade,
@@ -114,6 +190,8 @@ def duplicate_study(db: Session, source: Study, user: CurrentUser, new_name: str
     for membership in db.query(StudyMembership).filter_by(study_id=source.id).all():
         db.add(StudyMembership(study_id=new_study.id, user_id=membership.user_id, role=membership.role))
 
+    case_id_map: dict[str, str] = {}
+
     for case in db.query(Case).filter_by(study_id=source.id).all():
         new_case = Case(
             study_id=new_study.id,
@@ -126,6 +204,7 @@ def duplicate_study(db: Session, source: Study, user: CurrentUser, new_name: str
         )
         db.add(new_case)
         db.flush()
+        case_id_map[str(case.id)] = str(new_case.id)
 
         for imaging_study in db.query(ImagingStudy).filter_by(case_id=case.id).all():
             new_imaging_study = ImagingStudy(
@@ -195,6 +274,8 @@ def duplicate_study(db: Session, source: Study, user: CurrentUser, new_name: str
                 db.add(Tag(clinical_data_item_id=new_item.id, label=tag.label))
             for consent in item.consents:
                 db.add(Consent(clinical_data_item_id=new_item.id, consent_type=consent.consent_type, status=consent.status))
+
+    _duplicate_workflow_board(db, source.id, new_study.id, case_id_map)
 
     db.flush()
     audit.record(db, user, "study.duplicate", "study", new_study.id, {"source_study_id": str(source.id), "name": name})

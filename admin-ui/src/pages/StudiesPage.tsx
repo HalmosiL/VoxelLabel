@@ -75,7 +75,7 @@ export default function StudiesPage() {
   const [duplicating, setDuplicating] = useState<string | null>(null);
 
   async function handleDuplicate(study: Study) {
-    if (!window.confirm(`Duplicate "${study.name}"? This creates a fully independent copy -- every case, image and document is really re-uploaded under its own new identity, not shared with the original.`)) {
+    if (!window.confirm(`Duplicate "${study.name}"? This creates a fully independent copy -- every case, image and document is really re-uploaded under its own new identity, and the workflow board comes along too (reset to "not yet run" on the copy's own cases).`)) {
       return;
     }
     setDuplicating(study.id);

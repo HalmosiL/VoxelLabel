@@ -108,11 +108,13 @@ export function deleteStudy(studyId: string, force = false): Promise<void> {
 }
 
 /** Creates a fully independent copy of a study: new case/imaging/document
- * rows with fresh DICOM UIDs, and a real byte-for-byte copy of every file
- * under new storage keys -- behaves exactly as if it had all been freshly
- * re-uploaded, not a reference to the source's data. Does not copy the
- * source's workflow board, annotations, or version history -- the copy
- * starts as plain, unprocessed source data. */
+ * rows with fresh DICOM UIDs, a real byte-for-byte copy of every file
+ * under new storage keys, and the same workflow board (cards/edges/
+ * config, with case ids remapped and Run results reset) -- behaves
+ * exactly as if it had all been freshly re-uploaded and rebuilt, not a
+ * reference to the source's data. Does not copy annotations or version
+ * history -- the copy's board describes the same process, but starts
+ * with none of that process's output yet. */
 export function duplicateStudy(studyId: string, name?: string): Promise<Study> {
   return apiFetch(base, `/admin/studies/${studyId}/duplicate`, {
     method: "POST",

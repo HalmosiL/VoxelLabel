@@ -249,12 +249,14 @@ def duplicate_study_route(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Creates a fully independent copy of a study: new Case/ImagingStudy/
-    Series/Instance/ClinicalDataItem rows with fresh DICOM UIDs, and a
-    real byte-for-byte copy of every object-storage payload (pixel data,
-    thumbnails, clinical data files, the cover image) under new keys --
-    see app/duplication.py for exactly what that does and doesn't carry
-    over. Global admin only, like create_study: this mints a brand-new,
-    platform-wide Study, not a scoped change to an existing one."""
+    Series/Instance/ClinicalDataItem rows with fresh DICOM UIDs, a real
+    byte-for-byte copy of every object-storage payload (pixel data,
+    thumbnails, clinical data files, the cover image) under new keys,
+    and the same workflow board (cards/edges/config, case ids remapped,
+    Run caches reset) -- see app/duplication.py for exactly what that
+    does and doesn't carry over. Global admin only, like create_study:
+    this mints a brand-new, platform-wide Study, not a scoped change to
+    an existing one."""
     _require_global_admin(user)
     source = db.get(Study, study_id)
     if source is None:
