@@ -50,8 +50,17 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
       .catch((err) => setError(describeApiError(err)));
   }, [canAdminister]);
 
-  const memberIds = new Set(members.map((m) => m.user_id));
-  const availableUsers = users.filter((u) => !memberIds.has(u.id));
+  // A person can hold several roles in this study at once -- each is its
+  // own row from listStudyMembers, so grouping by user_id is only for the
+  // "add" form's role choices (no point offering a role they already have).
+  const rolesByUser = new Map<string, Set<string>>();
+  for (const m of members) {
+    if (!rolesByUser.has(m.user_id)) rolesByUser.set(m.user_id, new Set());
+    rolesByUser.get(m.user_id)!.add(m.role);
+  }
+  const availableRolesForSelected = selectedUserId
+    ? ROLES.filter((r) => !rolesByUser.get(selectedUserId)?.has(r))
+    : ROLES;
 
   async function handleAdd(event: FormEvent) {
     event.preventDefault();
@@ -64,19 +73,16 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
     }
   }
 
-  async function handleRoleChange(member: StudyMember, nextRole: string) {
-    try {
-      await addStudyMember(studyId, member.user_id, nextRole);
-      refresh();
-    } catch (err) {
-      setError(describeApiError(err));
-    }
-  }
-
   async function handleRemove(member: StudyMember) {
-    if (!window.confirm(`Remove ${memberLabel(member)} from this study? Their assigned jobs stay on the board until reassigned.`)) return;
+    if (
+      !window.confirm(
+        `Remove the ${roleLabel(member.role)} role from ${memberLabel(member)}? Their assigned jobs stay on the board until reassigned. ` +
+          `Any other roles they hold in this study are unaffected.`
+      )
+    )
+      return;
     try {
-      await removeStudyMember(studyId, member.user_id);
+      await removeStudyMember(studyId, member.user_id, member.role);
       refresh();
     } catch (err) {
       setError(describeApiError(err));
@@ -106,7 +112,7 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
               </tr>
             )}
             {members.map((m) => (
-              <tr key={m.user_id}>
+              <tr key={`${m.user_id}:${m.role}`}>
                 <td>
                   <div className="flex items-center gap-2.5">
                     <Avatar id={m.user_id} />
@@ -117,26 +123,13 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
                   </div>
                 </td>
                 <td>
-                  {canAdminister ? (
-                    <select
-                      className="input !w-auto !py-1 text-xs"
-                      value={m.role}
-                      onChange={(e) => handleRoleChange(m, e.target.value)}
-                      title={ROLE_HINT[m.role as (typeof ROLES)[number]] ?? ""}
-                    >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {roleLabel(r)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="badge-blue">{roleLabel(m.role)}</span>
-                  )}
+                  <span className="badge-blue" title={ROLE_HINT[m.role as (typeof ROLES)[number]] ?? ""}>
+                    {roleLabel(m.role)}
+                  </span>
                 </td>
                 {canAdminister && (
                   <td className="text-right">
-                    <button onClick={() => handleRemove(m)} className="text-gray-400 hover:text-red-600" title="Remove from study">
+                    <button onClick={() => handleRemove(m)} className="text-gray-400 hover:text-red-600" title={`Remove the ${roleLabel(m.role)} role`}>
                       <TrashIcon className="h-4 w-4" />
                     </button>
                   </td>
@@ -152,36 +145,51 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
           <form onSubmit={handleAdd} className="mt-4 flex flex-wrap items-end gap-4">
             <label className="field flex-1">
               <span className="label">User</span>
-              <select className="input" value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} required>
+              <select
+                className="input"
+                value={selectedUserId}
+                onChange={(e) => {
+                  const nextUserId = e.target.value;
+                  setSelectedUserId(nextUserId);
+                  const taken = rolesByUser.get(nextUserId);
+                  if (taken?.has(role)) {
+                    const firstFree = ROLES.find((r) => !taken.has(r));
+                    if (firstFree) setRole(firstFree);
+                  }
+                }}
+                required
+              >
                 <option value="" disabled>
                   Select a user…
                 </option>
-                {availableUsers.map((u) => (
+                {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.username ?? u.id}
                     {u.email ? ` (${u.email})` : ""}
+                    {rolesByUser.has(u.id) ? ` -- already: ${[...(rolesByUser.get(u.id) ?? [])].map(roleLabel).join(", ")}` : ""}
                   </option>
                 ))}
               </select>
             </label>
             <label className="field w-48">
-              <span className="label">Role</span>
+              <span className="label">Role to grant</span>
               <select className="input" value={role} onChange={(e) => setRole(e.target.value as (typeof ROLES)[number])}>
                 {ROLES.map((r) => (
-                  <option key={r} value={r}>
+                  <option key={r} value={r} disabled={!availableRolesForSelected.includes(r)}>
                     {roleLabel(r)}
+                    {rolesByUser.get(selectedUserId)?.has(r) ? " (already granted)" : ""}
                   </option>
                 ))}
               </select>
             </label>
-            <button type="submit" className="btn-primary" disabled={availableUsers.length === 0}>
-              Add
+            <button type="submit" className="btn-primary" disabled={!selectedUserId || availableRolesForSelected.length === 0}>
+              Grant role
             </button>
           </form>
-          <p className="hint mt-2">{ROLE_HINT[role]}</p>
-          {availableUsers.length === 0 && users.length > 0 && (
-            <p className="hint mt-1">Every user in the directory is already a member of this study.</p>
-          )}
+          <p className="hint mt-2">
+            A person can hold more than one role in the same study (e.g. both annotator and reviewer) -- granting a role
+            never takes away one they already have. {ROLE_HINT[role]}
+          </p>
         </>
       )}
     </div>

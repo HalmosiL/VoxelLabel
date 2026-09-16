@@ -12,7 +12,20 @@ import { TASK_STATUS_STYLE } from "./statusStyle";
 export interface Assignee {
   id: string;
   label: string;
+  // The study role this membership row grants -- a person holding more
+  // than one role appears once per role (see StudyMembership's own
+  // docstring), so TaskFields can offer only the members who actually
+  // hold the role a given card type requires.
+  role: string;
 }
+
+// Which study role a card type's assignee must actually hold -- mirrors
+// admin-service's _ASSIGNABLE_ROLE (app/api/workflow/routes.py), which
+// enforces this same mapping server-side.
+const ASSIGNABLE_ROLE: Partial<Record<WorkflowCard["type"], string>> = {
+  annotation: "annotator",
+  review: "reviewer",
+};
 
 interface PanelProps {
   card: WorkflowCard | null;
@@ -693,6 +706,13 @@ function TaskFields({
   const ids = (card.output_case_ids as string[] | null) ?? [];
   const progress = card.annotation_progress;
 
+  // Only members who actually hold the role this card type requires can
+  // be assigned -- the backend rejects any other assignment (see
+  // admin-service's _validate_assignee), so offering everyone here would
+  // just let someone pick a choice that 422s on save.
+  const requiredRole = ASSIGNABLE_ROLE[card.type];
+  const eligibleAssignees = requiredRole ? assignees.filter((a) => a.role === requiredRole) : assignees;
+
   return (
     <div className="flex flex-col gap-3">
       <label className="field">
@@ -703,16 +723,20 @@ function TaskFields({
           onChange={(e) => onPatch(card.id, { config: { ...card.config, assigned_user_id: e.target.value || null } })}
         >
           <option value="">Unassigned</option>
-          {assignees.map((u) => (
+          {eligibleAssignees.map((u) => (
             <option key={u.id} value={u.id}>
               {u.label}
             </option>
           ))}
-          {assignedUserId && !assignees.some((u) => u.id === assignedUserId) && (
-            <option value={assignedUserId}>{assignedUserId.slice(0, 8)}… (no longer a member)</option>
+          {assignedUserId && !eligibleAssignees.some((u) => u.id === assignedUserId) && (
+            <option value={assignedUserId}>{assignedUserId.slice(0, 8)}… (no longer eligible)</option>
           )}
         </select>
-        {assignees.length === 0 && <span className="hint">Add members to the study to assign this job.</span>}
+        {eligibleAssignees.length === 0 && (
+          <span className="hint">
+            {requiredRole ? `Grant a member the '${requiredRole}' role to assign this job.` : "Add members to the study to assign this job."}
+          </span>
+        )}
       </label>
       <div className="field">
         <span className="label">Status</span>

@@ -26,6 +26,19 @@ router = APIRouter(prefix="/admin/studies", tags=["admin:studies"])
 
 _READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 
+# A user can hold more than one role in the same study now (see
+# StudyMembership's own docstring) -- admin-ui still only has room to
+# show/gate on a single "my_role" badge, so this picks the most
+# privileged one someone actually holds, highest first.
+_ROLE_PRIORITY = ["admin", "data_manager", "reviewer", "annotator", "viewer"]
+
+
+def _highest_role(roles: list[str]) -> str | None:
+    for candidate in _ROLE_PRIORITY:
+        if candidate in roles:
+            return candidate
+    return roles[0] if roles else None
+
 
 def _require_global_admin(user: CurrentUser) -> None:
     if "admin" not in user.realm_roles:
@@ -48,11 +61,12 @@ def _my_role(db: Session, study_id: str, user: CurrentUser) -> str | None:
     """The caller's own study-scoped role, or "admin" for a global admin
     (who can do everything regardless of membership) -- rides along in
     study responses so admin-ui can show/hide actions per role without
-    a second request."""
+    a second request. A caller holding several roles in this study gets
+    the most privileged one -- see _highest_role."""
     if _is_global_admin(user):
         return "admin"
-    membership = db.query(StudyMembership).filter_by(study_id=study_id, user_id=user.subject).first()
-    return membership.role.value if membership else None
+    memberships = db.query(StudyMembership).filter_by(study_id=study_id, user_id=user.subject).all()
+    return _highest_role([m.role.value for m in memberships])
 
 
 def _serialize_study(study: Study, my_role: str | None) -> dict:
@@ -107,9 +121,11 @@ def list_studies(
     if _is_global_admin(user):
         return [_serialize_study(s, "admin") for s in db.query(Study).order_by(Study.name).all()]
     memberships = db.query(StudyMembership).filter_by(user_id=user.subject).all()
-    role_by_study = {str(m.study_id): m.role.value for m in memberships}
-    studies = db.query(Study).filter(Study.id.in_(list(role_by_study))).order_by(Study.name).all() if role_by_study else []
-    return [_serialize_study(s, role_by_study[str(s.id)]) for s in studies]
+    roles_by_study: dict[str, list[str]] = {}
+    for m in memberships:
+        roles_by_study.setdefault(str(m.study_id), []).append(m.role.value)
+    studies = db.query(Study).filter(Study.id.in_(list(roles_by_study))).order_by(Study.name).all() if roles_by_study else []
+    return [_serialize_study(s, _highest_role(roles_by_study[str(s.id)])) for s in studies]
 
 
 @router.get("/{study_id}")
@@ -315,23 +331,24 @@ def add_study_member(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Grant `user_id` (a Keycloak subject) a role scoped to this study.
-    An upsert: re-adding an existing member changes their role (200)
-    instead of tripping the primary key (which used to surface as a
-    500). Open to a global admin or a study-scoped admin."""
+    """Grants `user_id` (a Keycloak subject) a role scoped to this study.
+    Additive, not a replace: a member can hold several roles in the same
+    study at once (e.g. both annotator and reviewer) -- call this again
+    with a different `role` to grant another one, it doesn't take away
+    any role they already have. Idempotent: granting a role they already
+    hold is a no-op (200), not an error. Open to a global admin or a
+    study-scoped admin."""
     if db.get(Study, study_id) is None:
         raise HTTPException(status_code=404, detail="Study not found")
     _require_study_admin(db, study_id, user)
-    membership = db.query(StudyMembership).filter_by(study_id=study_id, user_id=user_id).first()
+    membership = db.query(StudyMembership).filter_by(study_id=study_id, user_id=user_id, role=role).first()
     created = membership is None
     if created:
         membership = StudyMembership(study_id=study_id, user_id=user_id, role=role)
         db.add(membership)
-    else:
-        membership.role = role
-    audit.record(db, user, "member.add" if created else "member.change_role", "study", study_id, {"user_id": user_id, "role": role.value})
-    db.commit()
-    autosave(db, study_id, user.subject)
+        audit.record(db, user, "member.add", "study", study_id, {"user_id": user_id, "role": role.value})
+        db.commit()
+        autosave(db, study_id, user.subject)
     return {**_serialize_member(membership, _user_directory()), "study_id": study_id, "created": created}
 
 
@@ -339,17 +356,21 @@ def add_study_member(
 def remove_study_member(
     study_id: str,
     user_id: str,
+    role: StudyRole,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> None:
-    """Revoke a member's study role. A study-scoped admin may not remove
-    themselves (that would orphan the study's management to global
-    admins only, silently) -- a global admin can remove anyone."""
+    """Revokes one specific role from a member -- their other roles in
+    this study, if any, are untouched. A study-scoped admin may not
+    remove their own `admin` role (that would orphan the study's
+    management to global admins only, silently); a global admin can
+    remove anyone's, and removing a non-admin role of your own is
+    always fine."""
     _require_study_admin(db, study_id, user)
-    membership = db.query(StudyMembership).filter_by(study_id=study_id, user_id=user_id).first()
+    membership = db.query(StudyMembership).filter_by(study_id=study_id, user_id=user_id, role=role).first()
     if membership is None:
         raise HTTPException(status_code=404, detail="Membership not found")
-    if user_id == user.subject and not _is_global_admin(user):
+    if user_id == user.subject and role == StudyRole.ADMIN and not _is_global_admin(user):
         raise HTTPException(status_code=409, detail="You cannot remove your own admin membership")
     audit.record(db, user, "member.remove", "study", study_id, {"user_id": user_id, "role": membership.role.value})
     db.delete(membership)

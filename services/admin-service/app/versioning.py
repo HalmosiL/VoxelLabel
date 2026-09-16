@@ -223,13 +223,19 @@ def restore_version(db: Session, study: Study, version: StudyVersion, user_subje
     study.cover_image_key = fields.get("cover_image_key")
 
     # --- members ---
-    wanted = {m["user_id"]: m["role"] for m in snapshot.get("members", [])}
+    # A (user_id, role) *pair* now identifies a membership row, not
+    # user_id alone -- someone can hold several roles in this study at
+    # once (see StudyMembership's own docstring), so the diff has to key
+    # on the pair or restoring a snapshot would silently drop every role
+    # but one for a multi-role member.
+    wanted = {(m["user_id"], m["role"]) for m in snapshot.get("members", [])}
     for membership in db.query(StudyMembership).filter_by(study_id=study.id).all():
-        if membership.user_id not in wanted:
-            db.delete(membership)
+        key = (membership.user_id, membership.role.value)
+        if key in wanted:
+            wanted.discard(key)
         else:
-            membership.role = StudyRole(wanted.pop(membership.user_id))
-    for user_id, role in wanted.items():
+            db.delete(membership)
+    for user_id, role in wanted:
         db.add(StudyMembership(study_id=study.id, user_id=user_id, role=StudyRole(role)))
     db.flush()
 

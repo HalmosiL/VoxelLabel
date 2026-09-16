@@ -133,7 +133,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const [cases, setCases] = useState<CaseSummary[]>([]);
   // Assignable people = this study's members (a non-member could never
   // open the study's data anyway), with names resolved server-side.
-  const [assignees, setAssignees] = useState<{ id: string; label: string }[]>([]);
+  const [assignees, setAssignees] = useState<{ id: string; label: string; role: string }[]>([]);
   const { canManage, roleFor } = useMe();
   // Editing the board (cards, edges, Run, config) needs data_manager or
   // admin; everyone else gets a read-only board -- same rule the backend
@@ -214,7 +214,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     getStudy(studyId).then(setStudy).catch((err) => setError(describeApiError(err)));
     listCases(studyId).then(setCases).catch((err) => setError(describeApiError(err)));
     listStudyMembers(studyId)
-      .then((members) => setAssignees(members.map((m) => ({ id: m.user_id, label: memberLabel(m) }))))
+      .then((members) => setAssignees(members.map((m) => ({ id: m.user_id, label: memberLabel(m), role: m.role }))))
       .catch(() => setAssignees([]));
     refreshBoard();
     // eslint-disable-next-line react-hooks/exhaustive-deps

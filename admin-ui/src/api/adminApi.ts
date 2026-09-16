@@ -154,14 +154,22 @@ export function memberLabel(member: { username?: string | null; email?: string |
   return member.username ?? member.email ?? `${member.user_id.slice(0, 8)}…`;
 }
 
-export function removeStudyMember(studyId: string, userId: string): Promise<void> {
-  return apiFetch(base, `/admin/studies/${studyId}/members/${userId}`, { method: "DELETE" });
+/** Revokes one specific role from a member -- their other roles in this
+ * study, if any, are untouched (a member can hold several at once, e.g.
+ * both annotator and reviewer). */
+export function removeStudyMember(studyId: string, userId: string, role: string): Promise<void> {
+  const qs = new URLSearchParams({ role });
+  return apiFetch(base, `/admin/studies/${studyId}/members/${userId}?${qs}`, { method: "DELETE" });
 }
 
 export function listStudyMembers(studyId: string): Promise<StudyMember[]> {
   return apiFetch(base, `/admin/studies/${studyId}/members`);
 }
 
+/** Grants `role` to `userId` in this study -- additive, not a replace:
+ * call again with a different role to grant another one without taking
+ * away any role they already hold. Idempotent (granting a role they
+ * already have is a no-op). */
 export function addStudyMember(studyId: string, userId: string, role: string): Promise<StudyMember> {
   const qs = new URLSearchParams({ user_id: userId, role });
   return apiFetch(base, `/admin/studies/${studyId}/members?${qs}`, { method: "POST" });

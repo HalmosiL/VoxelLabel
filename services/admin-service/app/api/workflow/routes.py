@@ -25,7 +25,7 @@ from app.api.studies import _require_global_admin
 from app.llm_client import run_llm_turn
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Study, StudyMembership, WorkflowCard, WorkflowCardType, WorkflowEdge
+from shared_models.models import Study, StudyMembership, StudyRole, WorkflowCard, WorkflowCardType, WorkflowEdge
 
 from .constants import _NO_INPUT_TYPES, _NO_OUTPUT_TYPES, _READ_ROLES, _UNRESTRICTED_SURFACE_CONFIG, _WRITE_ROLES
 from .engine import run_card_with_ripple
@@ -176,16 +176,34 @@ def create_workflow_card(
     return _serialize_card(db, card, {card.id: card}, {})
 
 
+_ASSIGNABLE_ROLE = {
+    WorkflowCardType.ANNOTATION: "annotator",
+    WorkflowCardType.REVIEW: "reviewer",
+}
+
+
 def _validate_assignee(db: Session, card: WorkflowCard, config: dict) -> None:
-    """An Annotation/Review job can only be assigned to a member of the
-    card's study: a non-member would see the job in My Jobs but get 403
-    on every case behind it. Rejected here rather than silently allowed
-    (admin-ui's picker only offers members, but the API is open)."""
+    """An Annotation job can only be assigned to a study member who
+    actually holds the `annotator` role there, and a Review job only to
+    one holding `reviewer` -- not just any member. A member can hold
+    several roles at once (see StudyMembership's own docstring), so
+    someone who is both is assignable to either. Rejected here rather
+    than silently allowed (admin-ui's picker only offers role-matching
+    members, but the API is open): without this, a wrongly-assigned
+    member would see the job in My Jobs and be able to open it, but get
+    a confusing 403 the moment they tried to actually submit their
+    annotation/review -- see annotation-service's create/review routes,
+    which check the same study-scoped role, not this card's assignment."""
     assignee = config.get("assigned_user_id")
-    if not assignee or card.type not in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+    required_role = _ASSIGNABLE_ROLE.get(card.type)
+    if not assignee or required_role is None:
         return
-    if db.query(StudyMembership).filter_by(study_id=card.study_id, user_id=assignee).first() is None:
-        raise HTTPException(status_code=422, detail="The assignee must be a member of this study")
+    membership = db.query(StudyMembership).filter_by(study_id=card.study_id, user_id=assignee, role=StudyRole(required_role)).first()
+    if membership is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The assignee must hold the '{required_role}' role in this study",
+        )
 
 
 @router.patch("/workflow-cards/{card_id}")

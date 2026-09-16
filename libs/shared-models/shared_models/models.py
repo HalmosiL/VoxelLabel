@@ -150,6 +150,13 @@ class Study(Base):
 class StudyMembership(Base):
     """Grants a Keycloak user a role scoped to one study.
 
+    `role` is part of the primary key, not a single mutable column, so
+    one user can hold *more than one* role in the same study at once
+    (e.g. both annotator and reviewer) -- one row per (study, user,
+    role). "Change this member's role" is therefore add one row + remove
+    another, not an update; see admin-service's add_study_member /
+    remove_study_member.
+
     A global Keycloak realm role of "admin" bypasses this table entirely
     (see shared_auth.require_study_role) -- this table is only consulted
     for non-global-admin, study-scoped access decisions.
@@ -159,7 +166,7 @@ class StudyMembership(Base):
 
     study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("studies.id"), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(255), primary_key=True)  # Keycloak "sub" claim
-    role: Mapped[StudyRole] = mapped_column(nullable=False)
+    role: Mapped[StudyRole] = mapped_column(primary_key=True)
 
     study: Mapped["Study"] = relationship(back_populates="memberships")
 

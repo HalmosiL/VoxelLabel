@@ -89,15 +89,19 @@ def require_study_role(db: Session, study_id: str, user: CurrentUser, allowed_ro
     if "admin" in user.realm_roles:
         return
 
-    row = db.execute(
+    # A user can hold more than one role in the same study (role is part
+    # of study_memberships' primary key -- see StudyMembership's own
+    # docstring), so this checks whether *any* of their rows for this
+    # study matches, not a single row's one role.
+    rows = db.execute(
         text("SELECT role FROM study_memberships WHERE study_id = :sid AND user_id = :uid"),
         {"sid": study_id, "uid": user.subject},
-    ).first()
+    ).fetchall()
 
     # The Postgres enum backing this column stores StudyRole's member
     # NAMES ("ADMIN", "DATA_MANAGER", ...), not its lowercase .value
     # ("admin", "data_manager", ...) that `allowed_roles` lists always use
     # -- a plain raw-SQL string read gets the former, so it's compared
     # case-insensitively here rather than assuming either casing.
-    if row is None or row[0].lower() not in allowed_roles:
+    if not any(row[0].lower() in allowed_roles for row in rows):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient study role")
