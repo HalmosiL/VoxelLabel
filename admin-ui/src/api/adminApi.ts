@@ -108,17 +108,17 @@ export function deleteStudy(studyId: string, force = false): Promise<void> {
 }
 
 /** Creates a fully independent copy of a study: new case/imaging/document
- * rows with fresh DICOM UIDs, a real byte-for-byte copy of every file
- * under new storage keys, and the same workflow board (cards/edges/
- * config, with case ids remapped and Run results reset) -- behaves
- * exactly as if it had all been freshly re-uploaded and rebuilt, not a
- * reference to the source's data. Does not copy annotations or version
- * history -- the copy's board describes the same process, but starts
- * with none of that process's output yet. */
-export function duplicateStudy(studyId: string, name?: string): Promise<Study> {
+ * rows with fresh DICOM UIDs, and a real byte-for-byte copy of every file
+ * under new storage keys -- behaves exactly as if it had all been freshly
+ * re-uploaded, not a reference to the source's data. With `includeWorkflow`
+ * (default true), the workflow board comes along too (cards/edges/config,
+ * case ids remapped, Run results reset); with it false, only the raw
+ * case/imaging/document data is duplicated and the copy starts with a
+ * blank board. Never copies annotations or version history. */
+export function duplicateStudy(studyId: string, name?: string, includeWorkflow = true): Promise<Study> {
   return apiFetch(base, `/admin/studies/${studyId}/duplicate`, {
     method: "POST",
-    body: JSON.stringify({ name: name || null }),
+    body: JSON.stringify({ name: name || null, include_workflow: includeWorkflow }),
   });
 }
 

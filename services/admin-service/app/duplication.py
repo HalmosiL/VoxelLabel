@@ -167,7 +167,13 @@ def _duplicate_workflow_board(db: Session, source_study_id, new_study_id, case_i
         ))
 
 
-def duplicate_study(db: Session, source: Study, user: CurrentUser, new_name: str | None = None) -> Study:
+def duplicate_study(
+    db: Session,
+    source: Study,
+    user: CurrentUser,
+    new_name: str | None = None,
+    include_workflow: bool = True,
+) -> Study:
     """Builds, commits and returns the new Study. Not wrapped in a savepoint
     beyond the normal request transaction -- like delete_study's cascade,
     a failure partway through rolls back the whole thing when the route's
@@ -275,7 +281,8 @@ def duplicate_study(db: Session, source: Study, user: CurrentUser, new_name: str
             for consent in item.consents:
                 db.add(Consent(clinical_data_item_id=new_item.id, consent_type=consent.consent_type, status=consent.status))
 
-    _duplicate_workflow_board(db, source.id, new_study.id, case_id_map)
+    if include_workflow:
+        _duplicate_workflow_board(db, source.id, new_study.id, case_id_map)
 
     db.flush()
     audit.record(db, user, "study.duplicate", "study", new_study.id, {"source_study_id": str(source.id), "name": name})

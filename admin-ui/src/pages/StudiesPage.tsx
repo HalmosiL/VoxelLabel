@@ -17,7 +17,7 @@ import Modal from "../components/Modal";
 import { STUDIES_STEPS } from "../guide/adminSteps";
 import { useRegisterGuide } from "../guide/GuideContext";
 
-type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | null;
+type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | { mode: "duplicate"; study: Study } | null;
 
 export default function StudiesPage() {
   const { isAdmin } = useMe();
@@ -74,13 +74,11 @@ export default function StudiesPage() {
 
   const [duplicating, setDuplicating] = useState<string | null>(null);
 
-  async function handleDuplicate(study: Study) {
-    if (!window.confirm(`Duplicate "${study.name}"? This creates a fully independent copy -- every case, image and document is really re-uploaded under its own new identity, and the workflow board comes along too (reset to "not yet run" on the copy's own cases).`)) {
-      return;
-    }
+  async function handleDuplicate(study: Study, includeWorkflow: boolean) {
     setDuplicating(study.id);
     try {
-      await duplicateStudy(study.id);
+      await duplicateStudy(study.id, undefined, includeWorkflow);
+      setModal(null);
       refresh();
     } catch (err) {
       setError(describeApiError(err));
@@ -117,13 +115,13 @@ export default function StudiesPage() {
             onImageUploaded={refresh}
             onEdit={() => setModal({ mode: "edit", study: s })}
             onDelete={() => handleDelete(s)}
-            onDuplicate={() => handleDuplicate(s)}
+            onDuplicate={() => setModal({ mode: "duplicate", study: s })}
           />
         ))}
         {isAdmin && <NewStudyTile onClick={() => setModal({ mode: "create" })} />}
       </div>
 
-      {modal && (
+      {modal && modal.mode !== "duplicate" && (
         <StudyFormModal
           state={modal}
           onClose={() => setModal(null)}
@@ -132,6 +130,15 @@ export default function StudiesPage() {
             refresh();
           }}
           onError={setError}
+        />
+      )}
+
+      {modal && modal.mode === "duplicate" && (
+        <DuplicateStudyModal
+          study={modal.study}
+          duplicating={duplicating === modal.study.id}
+          onClose={() => setModal(null)}
+          onConfirm={(includeWorkflow) => handleDuplicate(modal.study, includeWorkflow)}
         />
       )}
     </div>
@@ -200,6 +207,52 @@ function StudyFormModal({
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function DuplicateStudyModal({
+  study,
+  duplicating,
+  onClose,
+  onConfirm,
+}: {
+  study: Study;
+  duplicating: boolean;
+  onClose: () => void;
+  onConfirm: (includeWorkflow: boolean) => void;
+}) {
+  const [includeWorkflow, setIncludeWorkflow] = useState(true);
+
+  return (
+    <Modal title={`Duplicate "${study.name}"`} onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-gray-600">
+          Creates a fully independent copy: every case, image and document is really re-uploaded under its own new
+          identity, not shared with the original.
+        </p>
+        <label className="flex items-start gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={includeWorkflow}
+            onChange={(e) => setIncludeWorkflow(e.target.checked)}
+          />
+          <span>
+            Also copy the workflow board (cards, connections and configuration -- reset to &quot;not yet run&quot; on
+            the copy&apos;s own cases). Turn this off to copy only the raw case/imaging/document data, with a blank
+            board.
+          </span>
+        </label>
+        <div className="mt-2 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-secondary" disabled={duplicating}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => onConfirm(includeWorkflow)} className="btn-primary" disabled={duplicating}>
+            {duplicating ? "Duplicating..." : "Duplicate"}
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }

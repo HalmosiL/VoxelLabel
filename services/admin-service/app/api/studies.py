@@ -239,6 +239,7 @@ def delete_study(
 
 class StudyDuplicateIn(BaseModel):
     name: str | None = None
+    include_workflow: bool = True
 
 
 @router.post("/{study_id}/duplicate")
@@ -251,18 +252,20 @@ def duplicate_study_route(
     """Creates a fully independent copy of a study: new Case/ImagingStudy/
     Series/Instance/ClinicalDataItem rows with fresh DICOM UIDs, a real
     byte-for-byte copy of every object-storage payload (pixel data,
-    thumbnails, clinical data files, the cover image) under new keys,
-    and the same workflow board (cards/edges/config, case ids remapped,
-    Run caches reset) -- see app/duplication.py for exactly what that
-    does and doesn't carry over. Global admin only, like create_study:
-    this mints a brand-new, platform-wide Study, not a scoped change to
-    an existing one."""
+    thumbnails, clinical data files, the cover image) under new keys.
+    With `include_workflow` (default true), the same workflow board also
+    comes along (cards/edges/config, case ids remapped, Run caches
+    reset); with it false, only the raw case/imaging/document data is
+    duplicated and the copy starts with a blank board. See
+    app/duplication.py for exactly what does and doesn't carry over.
+    Global admin only, like create_study: this mints a brand-new,
+    platform-wide Study, not a scoped change to an existing one."""
     _require_global_admin(user)
     source = db.get(Study, study_id)
     if source is None:
         raise HTTPException(status_code=404, detail="Study not found")
 
-    new_study = duplicate_study(db, source, user, new_name=body.name)
+    new_study = duplicate_study(db, source, user, new_name=body.name, include_workflow=body.include_workflow)
     return _serialize_study(new_study, "admin")
 
 
