@@ -21,8 +21,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy.orm import Session
-
 from shared_models.models import (
     JobNotificationState,
     NotificationLog,
@@ -32,6 +30,7 @@ from shared_models.models import (
     WorkflowCard,
     WorkflowCardType,
 )
+from sqlalchemy.orm import Session
 
 from app.api.workflow.status import _annotation_progress, compute_job_status, job_case_states
 from app.keycloak_admin import get_user

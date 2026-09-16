@@ -5,10 +5,9 @@ are small synthetic ones built directly in-memory (uncompressed,
 ExplicitVRLittleEndian), not read from a file."""
 import numpy as np
 import pydicom
+from app.dicom_render import _first, extract_metadata, render_plane, render_png, rescaled_pixels
 from pydicom.dataset import FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian
-
-from app.dicom_render import _first, extract_metadata, render_plane, render_png, rescaled_pixels
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 

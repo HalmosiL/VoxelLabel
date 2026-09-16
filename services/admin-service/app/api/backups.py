@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-
 from shared_auth import CurrentUser, get_current_user
 
 from app.core.config import settings

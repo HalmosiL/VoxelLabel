@@ -10,7 +10,6 @@ import hashlib
 
 from pydicom.datadict import keyword_for_tag
 from pydicom.tag import Tag
-
 from shared_models.database import SessionLocal
 from shared_models.models import DeidentificationAction, DeidentificationProfile, Study
 

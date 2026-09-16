@@ -7,11 +7,10 @@ service only edits the configuration, it does not process DICOM files.
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import DeidentificationAction, DeidentificationProfile, DeidentificationRule
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/admin/deidentification-profiles", tags=["admin:deidentification"])
 

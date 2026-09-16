@@ -6,11 +6,10 @@ it here with a JSON Schema, not by changing annotation-service code. See
 ARCHITECTURE.md, "Annotation schema: polymorphic by design".
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import AnnotationType
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/admin/annotation-types", tags=["admin:annotation-types"])
 

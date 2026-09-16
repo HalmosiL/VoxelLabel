@@ -7,11 +7,10 @@ import io
 import uuid
 
 import pydicom
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 from shared_models.database import SessionLocal
 from shared_models.models import Case, ImagingStudy, Instance, Series
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.deidentify import apply_deidentification_profile
 from app.storage import delete_staged_file, download_staged_file, upload_pixel_data, upload_thumbnail

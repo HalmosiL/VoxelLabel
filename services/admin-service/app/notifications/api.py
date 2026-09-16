@@ -4,11 +4,10 @@ preferences. Settings/log/all-users' preferences are global admin only;
 a person can always read and change their own preferences."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import NotificationLog, NotificationPreference
+from sqlalchemy.orm import Session
 
 from app.keycloak_admin import list_realm_users
 

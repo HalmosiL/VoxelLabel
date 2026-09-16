@@ -1,6 +1,6 @@
 // The seeded dev data every spec assumes exists. Change here, not in the
 // specs. See README.md for how to (re)create it.
-module.exports = {
+const fixtures = {
   UI: "http://localhost:5173",
   VIEWER: "http://localhost:5174",
   KC: "http://localhost:8080",
@@ -19,3 +19,25 @@ module.exports = {
   ANNOTATOR: { username: "dr-test", password: "Test1234!", subject: "2d103fc8-09ea-48f6-ad0a-a753d847790b" },
   REVIEWER: { username: "dr-review", password: "Test1234!", subject: "e62a5f35-15ec-464b-a955-76a286e49ac0" },
 };
+
+// In CI, `e2e/seed.py` provisions a fresh stack from scratch and writes the
+// real ids it created here -- overlaid over the hardcoded local-dev
+// defaults above (only the fields a generated run actually produces:
+// STUDY/ANNOT_CARD/REVIEW_CARD/CASE/SERIES as plain strings, and each
+// account's `subject`, since seed.py reuses the same usernames/passwords
+// above rather than generating new ones). Local devs running against their
+// own long-lived sandbox never have this file, so nothing changes for them.
+try {
+  const generated = require("./fixtures.generated.json");
+  for (const [key, value] of Object.entries(generated)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      Object.assign(fixtures[key], value);
+    } else {
+      fixtures[key] = value;
+    }
+  }
+} catch (err) {
+  if (err.code !== "MODULE_NOT_FOUND") throw err;
+}
+
+module.exports = fixtures;

@@ -6,12 +6,10 @@ page in admin-ui. Global admin only.
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import Study, StudyMembership, StudyRole
+from sqlalchemy.orm import Session
 
 from app.api import audit
 from app.keycloak_admin import create_user, delete_user, get_user, list_realm_users, reset_password, set_admin_role, update_user

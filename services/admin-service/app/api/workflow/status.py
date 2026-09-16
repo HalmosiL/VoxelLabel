@@ -2,8 +2,6 @@
 a card's cases count as annotated / reviewed / rejected, and per-case
 status rows for the Study page and My Jobs. Read-only over the
 `annotations` table (annotation-service owns writing it)."""
-from sqlalchemy.orm import Session
-
 from shared_models.models import (
     Annotation,
     AnnotationReview,
@@ -15,7 +13,7 @@ from shared_models.models import (
     WorkflowCard,
     WorkflowCardType,
 )
-
+from sqlalchemy.orm import Session
 
 _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 

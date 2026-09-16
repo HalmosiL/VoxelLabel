@@ -5,10 +5,9 @@ mutates a card."""
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, require_study_role
 from shared_models.models import Case, WorkflowCard, WorkflowCardType, WorkflowEdge
+from sqlalchemy.orm import Session
 
 
 def _card_or_404(db: Session, card_id: uuid.UUID) -> WorkflowCard:

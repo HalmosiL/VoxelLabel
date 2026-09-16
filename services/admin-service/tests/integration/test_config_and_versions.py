@@ -43,7 +43,7 @@ def test_versions_capture_changes_and_restore_them(client):
     assert client.get(f"/admin/studies/{sid}").json()["name"] == "Original"
     # a safety version of the pre-restore state exists, and the restore is audited
     labels = [v.get("label") for v in client.get(f"/admin/studies/{sid}/versions").json()]
-    assert any(l and "before restore" in l.lower() for l in labels) or len(labels) >= 3
+    assert any(label and "before restore" in label.lower() for label in labels) or len(labels) >= 3
     actions = [e["action"] for e in client.get("/admin/audit-log", params={"entity_id": sid}).json()["entries"]]
     assert "study.restore_version" in actions
 

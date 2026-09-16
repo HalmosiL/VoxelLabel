@@ -1,12 +1,11 @@
 """HTTP API for browsing cases, imaging studies/series/instances, and
 clinical data items."""
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance, Patient, Series, case_tags
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
 from app.storage import presigned_clinical_data_url, presigned_pixel_data_url, presigned_thumbnail_url
 

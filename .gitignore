@@ -19,5 +19,6 @@ admin-ui/.env
 # *, since some land in e2e/guide/ -- a bare e2e/*.png misses those)
 e2e/**/*.png
 e2e/*-results.json
+e2e/fixtures.generated.json
 e2e/node_modules/
 e2e/package-lock.json

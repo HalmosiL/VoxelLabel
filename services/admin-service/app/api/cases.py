@@ -9,11 +9,10 @@ import uuid
 from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap
+from sqlalchemy.orm import Session
 
 from app.api import audit
 from app.api.imaging import _delete_annotations_targeting, _delete_instance

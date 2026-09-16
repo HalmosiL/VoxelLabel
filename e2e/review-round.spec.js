@@ -111,7 +111,7 @@ const transforms = (page) => page.evaluate(() => Array.from(document.querySelect
   check("review phase: drag pans (tool was reset to Cursor on entering review)", r0[2] !== r1[2], { r0: r0[2], r1: r1[2] });
 
   // ── Part A: real viewer header (dr-test's real job) ──
-  await page.goto(`${VIEWER}/viewer/series/765d3d34-67c4-4d99-9796-950208a54228?jobId=${F.ANNOT_CARD}&caseId=e037c979-17bb-4092-a11d-bcf84e970e8b`);
+  await page.goto(`${VIEWER}/viewer/series/${F.SERIES}?jobId=${F.ANNOT_CARD}&caseId=${F.CASE}`);
   await page.waitForSelector('[data-guide="job-status"]', { timeout: 30000 }).catch(() => null);
   const badge = page.locator('[data-guide="job-status"]');
   check("viewer: job status is a read-only badge, not a <select>", (await badge.count()) === 1 && (await badge.evaluate((el) => el.tagName)) === "SPAN");
@@ -132,8 +132,8 @@ const transforms = (page) => page.evaluate(() => Array.from(document.querySelect
   await closeTour(p2);
   check("My Jobs tutorial card has the prominent 'Start the tutorial' button", (await p2.locator("text=Start the tutorial").count()) === 1);
   await p2.goto(`${UI}/studies/${F.STUDY}`); await p2.waitForTimeout(2000);
-  const row = p2.locator("tr", { hasText: "Nodule annotation" }).first();
-  check("study page job row: status is a badge (only the assignee <select> remains)", (await row.locator("select").count()) === 1 && /In progress/.test(await row.innerText()), await row.innerText().catch(() => null));
+  const row = p2.locator("tr", { hasText: "Annotation" }).first();
+  check("study page job row: status is a badge (only the assignee <select> remains)", (await row.locator("select").count()) === 1 && /In progress|Done|To do/.test(await row.innerText()), await row.innerText().catch(() => null));
 
   check("no page errors (viewer/tutorial)", errors.length === 0, errors);
   check("no page errors (admin-ui)", errors2.length === 0, errors2);

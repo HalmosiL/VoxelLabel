@@ -12,19 +12,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.annotation_types import router as annotation_types_router
 from app.api.audit import router as audit_router
+from app.api.backups import router as backups_router
 from app.api.cases import router as cases_router
 from app.api.clinical_data import router as clinical_data_router
 from app.api.deidentification import router as deidentification_router
 from app.api.imaging import router as imaging_router
 from app.api.pipeline_templates import router as pipeline_templates_router
-from app.api.registration import public_router as registration_public_router, router as registration_router
+from app.api.registration import public_router as registration_public_router
+from app.api.registration import router as registration_router
 from app.api.studies import router as studies_router
 from app.api.users import router as users_router
 from app.api.versions import router as versions_router
-from app.api.backups import router as backups_router
 from app.api.workflow import router as workflow_router
 from app.core.config import settings
-from app.notifications import router as notifications_router, start_poller
+from app.notifications import router as notifications_router
+from app.notifications import start_poller
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):

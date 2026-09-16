@@ -2,11 +2,10 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, AnnotationStatus, AnnotationType
+from sqlalchemy.orm import Session
 
 from app.validation import PayloadValidationError, validate_payload
 

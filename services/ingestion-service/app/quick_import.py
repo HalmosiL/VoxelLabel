@@ -22,10 +22,9 @@ import uuid
 from datetime import date as date_type
 
 import pydicom
-from sqlalchemy.orm import Session
-
 from shared_models.database import SessionLocal
 from shared_models.models import Case, ImagingStudy, Instance, Patient, PatientIdentityMap
+from sqlalchemy.orm import Session
 
 from app.deidentify import apply_deidentification_profile
 from app.pipeline import REQUIRED_TAGS, DicomValidationError, _ingest_one_instance

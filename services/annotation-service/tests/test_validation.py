@@ -1,6 +1,5 @@
 """Unit tests for annotation payload validation against a JSON Schema."""
 import pytest
-
 from app.validation import PayloadValidationError, validate_payload
 
 BBOX_SCHEMA = {

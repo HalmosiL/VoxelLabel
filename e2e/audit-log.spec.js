@@ -21,7 +21,7 @@ async function token(u, p) {
   const study = await (await fetch(`${ADMIN}/admin/studies?name=audit-e2e-${stamp}`, { method: "POST", headers: H })).json();
   await fetch(`${ADMIN}/admin/studies/${study.id}?name=audit-e2e-${stamp}-renamed`, { method: "PATCH", headers: H });
   await fetch(`${ADMIN}/admin/studies/${study.id}/members?user_id=${F.ANNOTATOR.subject}&role=annotator`, { method: "POST", headers: H });
-  await fetch(`${ADMIN}/admin/studies/${study.id}/members/${F.ANNOTATOR.subject}`, { method: "DELETE", headers: H });
+  await fetch(`${ADMIN}/admin/studies/${study.id}/members/${F.ANNOTATOR.subject}?role=annotator`, { method: "DELETE", headers: H });
   const del = await fetch(`${ADMIN}/admin/studies/${study.id}`, { method: "DELETE", headers: H });
   check("study create/rename/member add+remove/delete all succeeded", del.status === 204, del.status);
 

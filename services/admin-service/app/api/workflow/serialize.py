@@ -1,7 +1,6 @@
 """Card/edge -> API response shape."""
-from sqlalchemy.orm import Session
-
 from shared_models.models import WorkflowCard, WorkflowCardType, WorkflowEdge
+from sqlalchemy.orm import Session
 
 from .graph import _dataset_output_ids, _is_stale, _llm_connected_case_ids, _materialized_children, _output_count
 from .status import _annotation_progress, compute_job_status

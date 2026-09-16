@@ -27,8 +27,6 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pydicom
-from sqlalchemy.orm import Session
-
 from shared_models.database import SessionLocal
 from shared_models.models import (
     Annotation,
@@ -40,6 +38,7 @@ from shared_models.models import (
     Series,
     case_tags,
 )
+from sqlalchemy.orm import Session
 
 from app.storage import download_object, upload_export_object
 

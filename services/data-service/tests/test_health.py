@@ -1,7 +1,6 @@
 """Smoke test for the data service, runnable in isolation (no DB/Keycloak needed)."""
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 

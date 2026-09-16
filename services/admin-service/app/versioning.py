@@ -18,9 +18,8 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy.orm import Session
-
 from shared_models.models import Case, Study, StudyMembership, StudyRole, StudyVersion, WorkflowCard, WorkflowCardType, WorkflowEdge
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,19 @@
+# Shared lint config for every Python package in this repo (each backend
+# service, ct-annotator/backend, libs/shared-*) -- CI runs `ruff check .`
+# from inside each package directory, and ruff walks up to find this file
+# regardless of where it's invoked from.
+target-version = "py311"
+line-length = 150
+
+[lint]
+# E/F: pyflakes + pycodestyle's real-bug rules (undefined names, unused
+# imports, syntax issues) -- the errors worth blocking a PR over. I:
+# import sorting/formatting, cheap to keep clean and cheap to auto-fix.
+# Deliberately not enabling the stricter style families (D, ANN, ...):
+# this repo's existing code wasn't written against them, and turning
+# those on now would flag the entire codebase at once instead of new
+# code going forward.
+select = ["E", "F", "I"]
+ignore = [
+  "E501", # line-length is a soft guideline here, not enforced as an error
+]

@@ -88,7 +88,10 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     const labelCount = await page.locator('[data-testid^="label-"]').count();
     if (labelCount === 0) {
       await page.fill('input[placeholder="New label…"]', "Nodule");
-      await page.locator('button[title="Add label"]').click();
+      // The "Add label" button's title lives in a Tip hover tooltip, not
+      // a native `title` attribute (Tip.tsx replaces those app-wide) --
+      // target the label form's submit button directly instead.
+      await page.locator('form:has(input[placeholder="New label…"]) button[type="submit"]').click();
     }
     const firstLabel = page.locator('[data-testid^="label-"]').first();
     const labelId = (await firstLabel.getAttribute("data-testid")).replace("label-", "");

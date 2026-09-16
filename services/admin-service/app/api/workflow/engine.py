@@ -13,10 +13,10 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
+from shared_models.models import AnnotationStatus, Case, WorkflowCard, WorkflowCardType, WorkflowEdge, case_tags
 from sqlalchemy.orm import Session
 
 from app.llm_client import run_llm_turn
-from shared_models.models import AnnotationStatus, Case, WorkflowCard, WorkflowCardType, WorkflowEdge, case_tags
 
 from .constants import _MATERIALIZED_DEFAULT_HEIGHT, _MATERIALIZED_DEFAULT_WIDTH, _NO_RUN_TYPES
 from .graph import (

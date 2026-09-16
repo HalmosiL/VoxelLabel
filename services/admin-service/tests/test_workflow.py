@@ -9,8 +9,6 @@ test_deidentify.py).
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
-
 from app.api.workflow import (
     _case_status,
     _cumulative_ratios,
@@ -22,6 +20,7 @@ from app.api.workflow import (
     _split_case_ids,
     _split_parts,
 )
+from fastapi import HTTPException
 from shared_models.models import AnnotationStatus, WorkflowCardType
 
 

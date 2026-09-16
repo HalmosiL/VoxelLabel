@@ -4,9 +4,8 @@ import io
 
 import numpy as np
 import pytest
-from PIL import Image
-
 from app.thumbnail import ThumbnailGenerationError, generate_thumbnail
+from PIL import Image
 
 
 class _FakeDataset:

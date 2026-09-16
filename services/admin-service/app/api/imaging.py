@@ -10,11 +10,10 @@ dangling, silently, by a normal delete.
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, ImagingStudy, Instance, Series
+from sqlalchemy.orm import Session
 
 from app.storage import delete_object
 

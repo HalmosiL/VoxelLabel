@@ -2,7 +2,6 @@
 import uuid
 
 from pydantic import BaseModel, Field
-
 from shared_models.models import WorkflowCardType
 
 

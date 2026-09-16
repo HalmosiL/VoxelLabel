@@ -22,11 +22,10 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import NotificationLog, NotificationSettings, RegistrationRequest
+from sqlalchemy.orm import Session
 
 from app.api import audit
 from app.keycloak_admin import create_user, list_realm_users

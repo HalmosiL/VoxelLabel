@@ -1,7 +1,6 @@
 """Card-type sets and defaults shared by every workflow module."""
 from shared_models.models import WorkflowCardType
 
-
 _READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 
 _WRITE_ROLES = ["data_manager", "admin"]

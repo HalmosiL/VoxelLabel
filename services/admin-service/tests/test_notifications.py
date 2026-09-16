@@ -4,7 +4,6 @@ test_workflow.py."""
 import uuid
 
 import pytest
-
 from app.notifications.events import CardContext, Event, Snapshot, _guidance, compose, diff_snapshots
 from shared_models.models import WorkflowCardType
 

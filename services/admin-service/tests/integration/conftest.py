@@ -15,11 +15,10 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
-
 from shared_auth import CurrentUser, get_current_user
 from shared_models import database
 from shared_models.models import Base
+from sqlalchemy import text
 
 if not database.DATABASE_URL.rstrip("/").split("/")[-1].endswith("_test"):
     # A plain `assert` here would abort the whole pytest session with a
@@ -126,7 +125,12 @@ def db():
 @pytest.fixture
 def keycloak(monkeypatch):
     fake = FakeKeycloak()
-    import app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events  # noqa: E401
+    import app.api.audit  # noqa: E401
+    import app.api.registration
+    import app.api.studies
+    import app.api.users
+    import app.notifications.api
+    import app.notifications.events
     for mod in (app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events):
         for name in ("list_realm_users", "get_user", "create_user", "update_user", "set_admin_role", "reset_password", "delete_user"):
             if hasattr(mod, name):
@@ -142,7 +146,9 @@ def outbox(monkeypatch):
     def fake_send(settings, to_email, subject, body, html=None):
         sent.append({"to": to_email, "subject": subject, "text": body, "html": html})
 
-    import app.api.registration, app.notifications.api, app.notifications.events  # noqa: E401
+    import app.api.registration  # noqa: E401
+    import app.notifications.api
+    import app.notifications.events
     for mod in (app.api.registration, app.notifications.api, app.notifications.events):
         if hasattr(mod, "send_email"):
             monkeypatch.setattr(mod, "send_email", fake_send)
