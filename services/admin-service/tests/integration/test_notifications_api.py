@@ -31,13 +31,18 @@ def test_first_cycle_is_silent_then_assignment_and_status_changes_email(client, 
     sid = make_study(client)
     add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
     add_member(client, sid, REVIEWER_SUBJECT, "reviewer")
+    # Reassigned to below -- an Annotation card's assignee must actually
+    # hold the 'annotator' role there (see _validate_assignee), so the
+    # reassignment target needs it too, alongside their 'reviewer' role.
+    add_member(client, sid, REVIEWER_SUBJECT, "annotator")
     make_case(client, sid)
     card = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "annotation", "title": "Job", "position_x": 0, "position_y": 0, "config": {"assigned_user_id": ANNOTATOR_SUBJECT}}).json()
 
     first = client.post("/admin/notifications/run-now").json()
     assert first["bootstrap"] is True and first["sent"] == 0 and outbox == []
 
-    client.patch(f"/admin/workflow-cards/{card['id']}", json={"config": {"assigned_user_id": REVIEWER_SUBJECT}})
+    r = client.patch(f"/admin/workflow-cards/{card['id']}", json={"config": {"assigned_user_id": REVIEWER_SUBJECT}})
+    assert r.status_code == 200, r.text
     second = client.post("/admin/notifications/run-now").json()
     assert second["events"] == 1 and second["sent"] == 1
     assert outbox[-1]["to"] == "dr-review@example.test" and outbox[-1]["subject"].startswith("New annotation job")

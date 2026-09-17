@@ -37,14 +37,20 @@ def test_update_is_audited_with_from_to(client):
     assert update["actor"] == "platform-admin"
 
 
-def test_add_member_is_an_upsert_and_role_changes_are_audited(client):
+def test_add_member_is_additive_and_idempotent(client):
+    """A member can hold several roles in the same study at once (e.g.
+    both annotator and reviewer) -- granting a second role is a new
+    membership row, not a replace, and granting one they already hold
+    is a no-op. See add_study_member's own docstring."""
     sid = make_study(client)
     first = add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
     assert first["created"] is True and first["role"] == "annotator" and first["username"] == "dr-test"
-    second = add_member(client, sid, ANNOTATOR_SUBJECT, "reviewer")
-    assert second["created"] is False and second["role"] == "reviewer"
+    again = add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    assert again["created"] is False and again["role"] == "annotator"
+    second_role = add_member(client, sid, ANNOTATOR_SUBJECT, "reviewer")
+    assert second_role["created"] is True and second_role["role"] == "reviewer"
     actions = [e["action"] for e in client.get("/admin/audit-log", params={"entity_id": sid}).json()["entries"]]
-    assert "member.add" in actions and "member.change_role" in actions
+    assert actions.count("member.add") == 2
 
 
 def test_study_admin_manages_members_but_cannot_remove_themselves(client):
@@ -52,8 +58,8 @@ def test_study_admin_manages_members_but_cannot_remove_themselves(client):
     add_member(client, sid, DM_SUBJECT, "admin")
     client.as_user(DM_SUBJECT)
     assert client.post(f"/admin/studies/{sid}/members", params={"user_id": ANNOTATOR_SUBJECT, "role": "annotator"}).status_code == 200
-    assert client.delete(f"/admin/studies/{sid}/members/{DM_SUBJECT}").status_code == 409
-    assert client.delete(f"/admin/studies/{sid}/members/{ANNOTATOR_SUBJECT}").status_code == 204
+    assert client.delete(f"/admin/studies/{sid}/members/{DM_SUBJECT}", params={"role": "admin"}).status_code == 409
+    assert client.delete(f"/admin/studies/{sid}/members/{ANNOTATOR_SUBJECT}", params={"role": "annotator"}).status_code == 204
     # a plain annotator can read members (needs names for the board) but not edit
     add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
     client.as_user(ANNOTATOR_SUBJECT)
