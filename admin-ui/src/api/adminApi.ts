@@ -486,6 +486,25 @@ export interface UsageUser {
  * platform's own deployment). `to` omitted means "until now". */
 export type UsageRange = { days: number } | { from: string; to?: string };
 
+/** The immediately preceding period of the same length -- what a
+ * "vs. last period" comparison on the Usage page diffs against. A
+ * 30-day range compares against the 30 days before that; a custom
+ * from/to compares against the same-length window right before `from`
+ * ("to" missing means "until now", so the duration is measured to now). */
+export function previousRange(range: UsageRange): UsageRange {
+  if ("days" in range) {
+    const to = new Date(Date.now() - range.days * 86_400_000);
+    const from = new Date(to.getTime() - range.days * 86_400_000);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }
+  const from = new Date(range.from);
+  const to = range.to ? new Date(range.to) : new Date();
+  const durationMs = Math.max(to.getTime() - from.getTime(), 0);
+  const prevTo = from;
+  const prevFrom = new Date(from.getTime() - durationMs);
+  return { from: prevFrom.toISOString(), to: prevTo.toISOString() };
+}
+
 function rangeParams(range: UsageRange): URLSearchParams {
   const params = new URLSearchParams();
   if ("days" in range) params.set("days", String(range.days));

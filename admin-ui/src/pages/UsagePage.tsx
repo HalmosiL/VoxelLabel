@@ -6,6 +6,7 @@ import {
   getUsageSettings,
   getUsageSummary,
   listUsageSessions,
+  previousRange,
   setUsageUserSwitch,
   updateUsageSettings,
   UsageEventRow,
@@ -124,6 +125,10 @@ export default function UsagePage() {
   // header without fighting over which one "wins".
   const [userFilter, setUserFilter] = useState<string>("");
   const [summary, setSummary] = useState<UsageSummary | null>(null);
+  // The immediately preceding period of the same length -- what the
+  // stat tiles' "vs. last period" deltas compare against. Best-effort:
+  // if it fails to load the tiles still render, just without deltas.
+  const [previous, setPrevious] = useState<UsageSummary | null>(null);
   const [settings, setSettings] = useState<UsageSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [heatRoute, setHeatRoute] = useState<string>("");
@@ -138,6 +143,10 @@ export default function UsagePage() {
     getUsageSummary(range, userFilter || null)
       .then(setSummary)
       .catch((err) => setError(describeApiError(err)));
+    setPrevious(null);
+    getUsageSummary(previousRange(range), userFilter || null)
+      .then(setPrevious)
+      .catch(() => undefined);
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
@@ -236,7 +245,7 @@ export default function UsagePage() {
 
       {summary && (
         <>
-          <StatTiles summary={summary} />
+          <StatTiles summary={summary} previous={previous} />
           <div className="grid gap-6 lg:grid-cols-2">
             <RoutesCard summary={summary} />
             <PathsCard summary={summary} />
@@ -383,15 +392,51 @@ function RecordingCard({ settings, onSaved, onError }: { settings: UsageSettings
 
 // ---------------------------------------------------------------- tiles
 
-function StatTiles({ summary }: { summary: UsageSummary }) {
+/** Which direction is an improvement, for coloring a tile's delta chip
+ * -- "up" and "down" get green/red, "neutral" tiles (sessions, avg
+ * session length: neither direction is obviously good or bad on its
+ * own) just show the number with no judgement. */
+type Better = "up" | "down" | "neutral";
+
+function DeltaChip({ current, previous, better }: { current: number | null; previous: number | null; better: Better }) {
+  if (current === null || previous === null || previous === 0) return null;
+  const change = (current - previous) / previous;
+  if (Math.abs(change) < 0.01) return <span className="text-xs text-gray-400">≈ same as last period</span>;
+  const rising = change > 0;
+  const good = better === "neutral" ? null : (better === "up") === rising;
+  const color = good === null ? "text-gray-500" : good ? "text-green-700" : "text-red-700";
+  return (
+    <span className={`text-xs tabular-nums ${color}`}>
+      {rising ? "▲" : "▼"} {Math.round(Math.abs(change) * 100)}% vs last period
+    </span>
+  );
+}
+
+function StatTiles({ summary, previous }: { summary: UsageSummary; previous: UsageSummary | null }) {
   const t = summary.totals;
-  const tiles = [
-    { label: "Active people", value: String(t.active_users) },
-    { label: "Sessions", value: String(t.sessions) },
-    { label: "Avg session", value: formatDuration(t.avg_session_ms) },
-    { label: "Median time to annotate", value: formatDuration(summary.tasks.annotate.median_ms), sub: `${summary.tasks.annotate.count} cases` },
-    { label: "Median time to review", value: formatDuration(summary.tasks.review.median_ms), sub: `${summary.tasks.review.count} cases` },
-    { label: "Errors", value: String(t.errors) },
+  const p = previous?.totals;
+  const pt = previous?.tasks;
+  const tiles: { label: string; value: string; sub?: string; current: number | null; previous: number | null; better: Better }[] = [
+    { label: "Active people", value: String(t.active_users), current: t.active_users, previous: p?.active_users ?? null, better: "up" },
+    { label: "Sessions", value: String(t.sessions), current: t.sessions, previous: p?.sessions ?? null, better: "neutral" },
+    { label: "Avg session", value: formatDuration(t.avg_session_ms), current: t.avg_session_ms, previous: p?.avg_session_ms ?? null, better: "neutral" },
+    {
+      label: "Median time to annotate",
+      value: formatDuration(summary.tasks.annotate.median_ms),
+      sub: `${summary.tasks.annotate.count} cases`,
+      current: summary.tasks.annotate.median_ms,
+      previous: pt?.annotate.median_ms ?? null,
+      better: "down",
+    },
+    {
+      label: "Median time to review",
+      value: formatDuration(summary.tasks.review.median_ms),
+      sub: `${summary.tasks.review.count} cases`,
+      current: summary.tasks.review.median_ms,
+      previous: pt?.review.median_ms ?? null,
+      better: "down",
+    },
+    { label: "Errors", value: String(t.errors), current: t.errors, previous: p?.errors ?? null, better: "down" },
   ];
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6" data-testid="usage-tiles">
@@ -400,6 +445,9 @@ function StatTiles({ summary }: { summary: UsageSummary }) {
           <div className="stat-value tabular-nums">{tile.value}</div>
           <div className="stat-label">{tile.label}</div>
           {tile.sub && <div className="text-xs text-gray-400">{tile.sub}</div>}
+          <div className="mt-1" data-testid={`usage-tile-delta-${tile.label.toLowerCase().replace(/\s+/g, "-")}`}>
+            <DeltaChip current={tile.current} previous={tile.previous} better={tile.better} />
+          </div>
         </div>
       ))}
     </div>
