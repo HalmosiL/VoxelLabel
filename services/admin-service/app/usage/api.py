@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, Literal
 
@@ -479,4 +480,12 @@ def read_heatmap(
     if user_id:
         query = query.filter(UsageEvent.user_id == user_id)
     rows = query.order_by(UsageEvent.occurred_at).all()
-    return {"route": route, "days": days, "points": stats.click_points(_rows_as_dicts(rows), route)}
+    points = stats.click_points(_rows_as_dicts(rows), route)
+    # Who clicked, most clicks first -- the heatmap's legend and colour key.
+    clicks_by_user = Counter(p["user_id"] for p in points)
+    names = _usernames()
+    users = [
+        {"user_id": user_id, "username": names.get(user_id, {}).get("username", user_id), "clicks": n}
+        for user_id, n in sorted(clicks_by_user.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return {"route": route, "days": days, "points": points, "users": users}

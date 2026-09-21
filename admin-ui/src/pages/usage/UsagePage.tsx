@@ -206,13 +206,18 @@ export default function UsagePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
   }, [heatRoute, rangeKey, userFilter]);
 
-  function openUserSessions(user_id: string, username: string) {
+  function openUserSessions(user_id: string, username: string, replayLatest = false) {
     setTab("people");
     setSessionsFor({ user_id, username });
     setSession(null);
     setSessions(null);
     listUsageSessions(range, user_id)
-      .then(setSessions)
+      .then((list) => {
+        setSessions(list);
+        // "Replay": straight into their newest sitting that has pages to show.
+        const latest = replayLatest ? list.find((s) => s.page_views > 0) : undefined;
+        if (latest) openSession(latest.session_id);
+      })
       .catch((err) => setError(describeApiError(err)));
   }
 

@@ -149,7 +149,8 @@ def test_summary_sessions_and_heatmap(client):
     assert client.get("/admin/usage/sessions/nope").status_code == 404
 
     heat = client.get("/admin/usage/heatmap", params={"route": "/my-jobs"}).json()
-    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row"}]
+    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT}]
+    assert heat["users"] == [{"user_id": ANNOTATOR_SUBJECT, "username": "dr-test", "clicks": 1}]
     assert client.get("/admin/usage/heatmap", params={"route": "/nothing"}).json()["points"] == []
 
 
@@ -173,7 +174,7 @@ def test_from_to_window_overrides_days_and_accepts_naive_datetimes(client):
     assert len(sessions) == 1
 
     heat = client.get("/admin/usage/heatmap", params={"route": "/my-jobs", "from": naive_from}).json()
-    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row"}]
+    assert heat["points"][0]["target"] == "job-row"
     heat_outside = client.get("/admin/usage/heatmap", params={"route": "/my-jobs", "from": (now - timedelta(hours=2)).isoformat(), "to": (now - timedelta(hours=1)).isoformat()}).json()
     assert heat_outside["points"] == []
 

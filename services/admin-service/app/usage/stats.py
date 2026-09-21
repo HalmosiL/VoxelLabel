@@ -348,7 +348,8 @@ def per_user(events: list[dict]) -> list[dict]:
 
 def click_points(events: list[dict], route: str) -> list[dict]:
     """Every click on `route`, normalised to 0..1 by the viewport it was
-    recorded in, so clicks from differently sized windows overlay."""
+    recorded in, so clicks from differently sized windows overlay. Each
+    carries who clicked, so the heatmap can colour people apart."""
     points = []
     for e in events:
         if e["event_type"] != "click" or e["route"] != route:
@@ -357,7 +358,7 @@ def click_points(events: list[dict], route: str) -> list[dict]:
         viewport = d.get("viewport") or []
         if len(viewport) != 2 or not viewport[0] or not viewport[1] or "x" not in d or "y" not in d:
             continue
-        points.append({"x": round(d["x"] / viewport[0], 4), "y": round(d["y"] / viewport[1], 4), "target": d.get("target")})
+        points.append({"x": round(d["x"] / viewport[0], 4), "y": round(d["y"] / viewport[1], 4), "target": d.get("target"), "user_id": e["user_id"]})
     return points
 
 

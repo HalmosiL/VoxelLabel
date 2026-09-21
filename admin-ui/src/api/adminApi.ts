@@ -616,7 +616,9 @@ export interface UsageSessionDetail {
 export interface UsageHeatmap {
   route: string;
   days: number;
-  points: { x: number; y: number; target: string | null }[];
+  points: { x: number; y: number; target: string | null; user_id: string }[];
+  /** Who clicked, most clicks first -- the legend's order and colour key. */
+  users: { user_id: string; username: string; clicks: number }[];
 }
 
 export function getUsageSettings(): Promise<UsageSettings> {

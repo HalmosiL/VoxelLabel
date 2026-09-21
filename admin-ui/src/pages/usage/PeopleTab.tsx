@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSettings, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
+import { advance, buildTimeline, GAP_MS, markIndexAt, pageAt } from "./replay";
 import { ACCENT, CardHeader, DownloadCsvButton, formatDuration, formatWhen } from "./shared";
 
 export default function PeopleTab({
@@ -23,7 +24,7 @@ export default function PeopleTab({
   sessionsFor: { user_id: string; username: string } | null;
   sessions: UsageSession[] | null;
   session: UsageSessionDetail | null;
-  onOpenUser: (user_id: string, username: string) => void;
+  onOpenUser: (user_id: string, username: string, replayLatest?: boolean) => void;
   onOpenSession: (id: string) => void;
   onCloseSessions: () => void;
   onToggle: (user_id: string, enabled: boolean) => void;
@@ -48,7 +49,7 @@ function PeopleCard({
 }: {
   summary: UsageSummary;
   settings: UsageSettings | null;
-  onOpen: (user_id: string, username: string) => void;
+  onOpen: (user_id: string, username: string, replayLatest?: boolean) => void;
   onToggle: (user_id: string, enabled: boolean) => void;
 }) {
   const disabled = new Set(settings?.disabled_user_ids ?? summary.recording.disabled_user_ids);
@@ -56,7 +57,7 @@ function PeopleCard({
     <div className="card" data-guide="usage-people" data-testid="usage-people">
       <CardHeader
         title="People"
-        hint="One row per person. Open a row for their sessions and a replay of each. The recording switch here turns one person off without touching anyone else."
+        hint="One row per person. Open a name for their sessions, or Replay to watch their newest sitting as it happened. The recording switch here turns one person off without touching anyone else."
         actions={
           <DownloadCsvButton
             filename={exportFilename("people", summary.since, summary.until, "csv")}
@@ -113,9 +114,14 @@ function PeopleCard({
               {summary.users.map((u) => (
                 <tr key={u.user_id} data-testid={`usage-user-${u.username}`}>
                   <td>
-                    <button type="button" className="font-medium text-blue-700 hover:underline" onClick={() => onOpen(u.user_id, u.username)} data-testid={`usage-open-${u.username}`}>
-                      {u.username}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button type="button" className="font-medium text-blue-700 hover:underline" onClick={() => onOpen(u.user_id, u.username)} data-testid={`usage-open-${u.username}`}>
+                        {u.username}
+                      </button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => onOpen(u.user_id, u.username, true)} title="Replay their newest session" data-testid={`usage-replay-${u.username}`}>
+                        ▶ Replay
+                      </button>
+                    </div>
                     {u.email && <div className="text-xs text-gray-400">{u.email}</div>}
                   </td>
                   <td>
@@ -223,43 +229,6 @@ function SessionsCard({
 
 // ---------------------------------------------------------------- replay
 
-interface PageSlice {
-  index: number;
-  route: string;
-  startedAt: number;
-  viewport: [number, number] | null;
-  points: number[][];
-  clicks: { x: number; y: number; target: string | null }[];
-}
-
-/** Splits a session's events into one slice per page view: the mouse
- * trace points (re-based to the page's own start) and clicks recorded
- * while it was open, for the replay panel. */
-export function slicePages(events: UsageEventRow[]): PageSlice[] {
-  const slices: PageSlice[] = [];
-  let current: PageSlice | null = null;
-  for (const e of events) {
-    const at = Date.parse(e.occurred_at);
-    const detail = e.detail ?? {};
-    if (e.event_type === "page_view") {
-      const vp = Array.isArray(detail.viewport) && detail.viewport.length === 2 ? ([Number(detail.viewport[0]), Number(detail.viewport[1])] as [number, number]) : null;
-      current = { index: slices.length, route: e.route, startedAt: at, viewport: vp, points: [], clicks: [] };
-      slices.push(current);
-    } else if (current && e.event_type === "mouse_trace" && Array.isArray(detail.points)) {
-      const vp = Array.isArray(detail.viewport) && detail.viewport.length === 2 ? ([Number(detail.viewport[0]), Number(detail.viewport[1])] as [number, number]) : null;
-      if (!current.viewport && vp) current.viewport = vp;
-      const base = at - current.startedAt;
-      for (const p of detail.points as number[][]) current.points.push([base + p[0], p[1], p[2]]);
-    } else if (current && e.event_type === "click" && typeof detail.x === "number" && typeof detail.y === "number") {
-      const vp = Array.isArray(detail.viewport) && detail.viewport.length === 2 ? ([Number(detail.viewport[0]), Number(detail.viewport[1])] as [number, number]) : null;
-      if (!current.viewport && vp) current.viewport = vp;
-      current.clicks.push({ x: detail.x, y: detail.y, target: typeof detail.target === "string" ? detail.target : null });
-    }
-  }
-  for (const s of slices) s.points.sort((a, b) => a[0] - b[0]);
-  return slices;
-}
-
 function describeEvent(e: UsageEventRow): string {
   const d = e.detail ?? {};
   switch (e.event_type) {
@@ -288,44 +257,86 @@ function describeEvent(e: UsageEventRow): string {
   }
 }
 
+const SPEEDS = [1, 2, 4, 8, 16, 32] as const;
+/** A click stays highlighted this long after it happened. */
+const CLICK_FLASH_MS = 700;
+/** A key press / action is shown on the stage this long. */
+const TOAST_MS = 1500;
+const STAGE_W = 160;
+const STAGE_H = 90;
+
+function clock(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Plays one session back on a clock: the page the person was on, the
+ * pointer moving as it did, clicks flashing where they landed, keys and
+ * actions popping up, and the event log following along. Long pauses
+ * are skipped by default so a two-hour sitting plays in minutes. */
 function ReplayCard({ session }: { session: UsageSessionDetail }) {
-  const slices = useMemo(() => slicePages(session.events), [session]);
-  // Open on the first page with something to replay -- a session often
-  // starts on a redirect page (the viewer's /viewer/series/:id lasts
-  // under 100 ms) that has no pointer samples at all.
-  const firstWithTrace = useMemo(() => Math.max(0, slices.findIndex((s) => s.points.length > 1)), [slices]);
-  const [pageIndex, setPageIndex] = useState(firstWithTrace);
-  const [progress, setProgress] = useState(1);
+  const timeline = useMemo(() => buildTimeline(session.events), [session]);
+  const [head, setHead] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<number>(4);
+  const [skipGaps, setSkipGaps] = useState(true);
+  const logRef = useRef<HTMLUListElement>(null);
+
   useEffect(() => {
-    setPageIndex(firstWithTrace);
-    setProgress(1);
+    setHead(0);
     setPlaying(false);
-  }, [session.session_id, firstWithTrace]);
+  }, [session.session_id]);
+
+  // The playback clock: real time × speed, with pauses skipped.
   useEffect(() => {
     if (!playing) return;
-    const handle = window.setInterval(() => {
-      setProgress((p) => {
-        if (p >= 1) {
-          setPlaying(false);
-          return 1;
-        }
-        return Math.min(p + 0.02, 1);
+    let last = performance.now();
+    let frame = 0;
+    const step = (now: number) => {
+      const dt = now - last;
+      last = now;
+      setHead((h) => {
+        const next = advance(timeline, h, dt, speed, skipGaps);
+        if (next >= timeline.duration) setPlaying(false);
+        return next;
       });
-    }, 100);
-    return () => window.clearInterval(handle);
-  }, [playing]);
+      frame = window.requestAnimationFrame(step);
+    };
+    frame = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frame);
+  }, [playing, speed, skipGaps, timeline]);
 
-  const slice = slices[pageIndex] ?? null;
-  const start = Date.parse(session.events[0].occurred_at);
-  const shown = slice ? slice.points.slice(0, Math.max(1, Math.round(slice.points.length * progress))) : [];
-  const vp = slice?.viewport ?? [1600, 900];
-  const path = shown.map((p) => `${((p[1] / vp[0]) * 160).toFixed(1)},${((p[2] / vp[1]) * 90).toFixed(1)}`).join(" ");
+  const page = pageAt(timeline.pages, head);
+  const markIndex = markIndexAt(timeline.marks, head);
+  const currentMark = timeline.marks[markIndex] ?? null;
+
+  // Keep the log's current row in view while playing.
+  useEffect(() => {
+    if (!playing || !logRef.current) return;
+    const row = logRef.current.querySelector<HTMLElement>(`[data-mark="${markIndex}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [markIndex, playing]);
+
+  const vp = page?.viewport ?? [1600, 900];
+  const sx = (x: number) => (x / vp[0]) * STAGE_W;
+  const sy = (y: number) => (y / vp[1]) * STAGE_H;
+  const shownPoints = page ? timeline.points.filter((p) => p.page === page.index && p.t <= head) : [];
+  const shownClicks = page ? timeline.clicks.filter((c) => c.page === page.index && c.t <= head) : [];
+  const cursor = shownPoints[shownPoints.length - 1] ?? null;
+  const path = shownPoints.map((p) => `${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(" ");
+  const toast = currentMark && head - currentMark.t <= TOAST_MS && (currentMark.event.event_type === "key" || currentMark.event.event_type === "action" || currentMark.event.event_type === "error") ? currentMark.event : null;
+
+  function seek(t: number) {
+    setPlaying(false);
+    setHead(Math.max(0, Math.min(t, timeline.duration)));
+  }
 
   return (
     <div className="card" data-testid="usage-timeline">
       <CardHeader
         title={`Replay · ${session.username} · ${session.app}`}
+        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. The window is scaled to 16:9.`}
         actions={
           <DownloadCsvButton
             filename={`usage-session-${session.session_id.slice(0, 8)}.csv`}
@@ -345,73 +356,103 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <select
-              className="input"
-              value={pageIndex}
-              onChange={(e) => {
-                setPageIndex(Number(e.target.value));
-                setProgress(1);
-                setPlaying(false);
-              }}
-              aria-label="Page"
-              data-testid="usage-replay-page"
-            >
-              {slices.map((s) => (
-                <option key={s.index} value={s.index}>
-                  {s.route} · {s.points.length} samples · {s.clicks.length} clicks
-                </option>
-              ))}
-            </select>
             <button
               type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={!slice || slice.points.length < 2}
+              className="btn btn-primary btn-sm"
+              disabled={timeline.duration === 0}
               onClick={() => {
-                if (progress >= 1) setProgress(0);
+                if (head >= timeline.duration) setHead(0);
                 setPlaying((p) => !p);
               }}
               data-testid="usage-replay-play"
             >
-              {playing ? "Pause" : "Play"}
+              {playing ? "❚❚ Pause" : "▶ Play"}
             </button>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={progress}
-              onChange={(e) => {
-                setPlaying(false);
-                setProgress(Number(e.target.value));
-              }}
-              className="flex-1 accent-blue-600"
-              aria-label="Scrub"
-            />
-          </div>
-          {slice ? (
-            <svg viewBox="0 0 160 90" className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`Mouse trace on ${slice.route}`} data-testid="usage-replay-svg">
-              {shown.length > 1 && <polyline points={path} fill="none" stroke={ACCENT} strokeWidth={0.5} strokeOpacity={0.8} strokeLinejoin="round" />}
-              {shown.length > 0 && <circle cx={(shown[shown.length - 1][1] / vp[0]) * 160} cy={(shown[shown.length - 1][2] / vp[1]) * 90} r={1.6} fill={ACCENT} />}
-              {slice.clicks.map((c, i) => (
-                <circle key={i} cx={(c.x / vp[0]) * 160} cy={(c.y / vp[1]) * 90} r={2.2} fill="none" stroke="#dc2626" strokeWidth={0.6}>
-                  <title>{c.target ?? "click"}</title>
-                </circle>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => seek(0)} title="Back to the start" aria-label="Back to the start">
+              ⏮
+            </button>
+            <select className="input h-8 py-0 text-sm" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed" data-testid="usage-replay-speed">
+              {SPEEDS.map((s) => (
+                <option key={s} value={s}>
+                  {s}×
+                </option>
               ))}
-            </svg>
-          ) : (
+            </select>
+            <label className="flex items-center gap-1 text-xs text-gray-600" title={`Jump over pauses longer than ${GAP_MS / 1000} s`}>
+              <input type="checkbox" checked={skipGaps} onChange={(e) => setSkipGaps(e.target.checked)} data-testid="usage-replay-skip-gaps" />
+              skip pauses
+            </label>
+            <span className="ml-auto tabular-nums text-sm text-gray-700" data-testid="usage-replay-clock">
+              {clock(head)} / {clock(timeline.duration)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(timeline.duration, 1)}
+            step={50}
+            value={head}
+            onChange={(e) => seek(Number(e.target.value))}
+            className="mb-2 w-full accent-blue-600"
+            aria-label="Scrub"
+            data-testid="usage-replay-scrub"
+          />
+          <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
+            <span className="font-mono" data-testid="usage-replay-page">
+              {page ? page.route : "–"}
+            </span>
+            {page && (
+              <span>
+                page {page.index + 1} of {timeline.pages.length}
+              </span>
+            )}
+          </div>
+          {timeline.pages.length === 0 ? (
             <EmptyState message="No page views in this session." />
+          ) : (
+            <svg viewBox={`0 0 ${STAGE_W} ${STAGE_H}`} className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`Replay of ${page?.route ?? "the session"}`} data-testid="usage-replay-svg">
+              {shownPoints.length > 1 && <polyline points={path} fill="none" stroke={ACCENT} strokeWidth={0.5} strokeOpacity={0.7} strokeLinejoin="round" />}
+              {shownClicks.map((c, i) => {
+                const fresh = head - c.t <= CLICK_FLASH_MS;
+                return (
+                  <circle key={i} cx={sx(c.x)} cy={sy(c.y)} r={fresh ? 3.5 : 2} fill={fresh ? "#dc2626" : "none"} fillOpacity={fresh ? 0.35 : 0} stroke="#dc2626" strokeWidth={fresh ? 0.8 : 0.5}>
+                    <title>{c.target ?? "click"}</title>
+                  </circle>
+                );
+              })}
+              {cursor && (
+                <g transform={`translate(${sx(cursor.x).toFixed(1)} ${sy(cursor.y).toFixed(1)})`}>
+                  <circle r={2.4} fill="#ffffff" stroke={ACCENT} strokeWidth={0.6} />
+                  <circle r={1.1} fill={ACCENT} />
+                </g>
+              )}
+              {toast && (
+                <g transform={`translate(${STAGE_W / 2} ${STAGE_H - 6})`}>
+                  <rect x={-40} y={-4} width={80} height={7} rx={1.5} fill="#111827" fillOpacity={0.85} />
+                  <text textAnchor="middle" y={1} fontSize={3.6} fill="#ffffff">
+                    {describeEvent(toast)}
+                  </text>
+                </g>
+              )}
+            </svg>
           )}
-          <p className="hint mt-2">Blue: pointer path (sampled). Red rings: clicks. The window is scaled to 16:9.</p>
         </div>
         <div className="max-h-[28rem] overflow-y-auto">
-          <ul className="divide-y divide-gray-100 text-sm">
-            {session.events.map((e) => (
-              <li key={e.id} className="flex gap-3 py-1">
-                <span className="w-16 shrink-0 tabular-nums text-xs text-gray-400">+{formatDuration(Date.parse(e.occurred_at) - start)}</span>
-                <span className={`badge ${e.event_type === "error" ? "badge-red" : e.event_type === "action" ? "badge-blue" : "badge-gray"} shrink-0`}>{e.event_type}</span>
-                <span className="min-w-0 truncate" title={describeEvent(e)}>
-                  {describeEvent(e)}
-                </span>
+          <ul className="divide-y divide-gray-100 text-sm" ref={logRef}>
+            {timeline.marks.map((m, i) => (
+              <li key={m.event.id} data-mark={i}>
+                <button
+                  type="button"
+                  onClick={() => seek(m.t)}
+                  className={`flex w-full gap-3 px-1 py-1 text-left ${i === markIndex ? "bg-blue-50" : m.t > head ? "opacity-50" : ""}`}
+                  title="Jump here"
+                >
+                  <span className="w-14 shrink-0 tabular-nums text-xs text-gray-400">{clock(m.t)}</span>
+                  <span className={`badge ${m.event.event_type === "error" ? "badge-red" : m.event.event_type === "action" ? "badge-blue" : "badge-gray"} shrink-0`}>{m.event.event_type}</span>
+                  <span className="min-w-0 truncate" title={describeEvent(m.event)}>
+                    {describeEvent(m.event)}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>

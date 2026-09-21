@@ -137,9 +137,24 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     // The bar list is the top 12 screens by time; which ones make it
     // depends on what else ran on this stack, so only check it draws.
     check("routes list renders rows", (await page.locator('[data-testid="usage-routes-list"] li').count()) >= 1);
+    check("navigation map draws screens and the moves between them", (await page.locator('[data-testid="usage-navmap-node"]').count()) >= 2 && (await page.locator('[data-testid="usage-navmap-edge"]').count()) >= 1);
     await page.locator('[data-testid="usage-heatmap-route"]').selectOption("/viewer/:id");
     await page.waitForTimeout(800);
     check("heatmap shows click dots", (await page.locator('[data-testid="usage-heatmap-svg"] circle').count()) >= 1);
+    // One colour per person: the legend appears once two people have
+    // clicked on the screen, and hiding a person hides their dots.
+    const heat = (await api(admin, `${ADMIN}/admin/usage/heatmap?route=${encodeURIComponent("/viewer/:id")}&days=7`)).body;
+    const legendItems = await page.locator('[data-testid="usage-heatmap-legend-item"]').count();
+    check("heatmap legend lists each person who clicked (none for a single person)", heat.users.length >= 2 ? legendItems === Math.min(heat.users.length, 5) + (heat.users.length > 5 ? 1 : 0) : legendItems === 0, { users: heat.users.length, legendItems });
+    check("heatmap points carry who clicked", heat.points.every((p) => typeof p.user_id === "string"));
+    if (heat.users.length >= 2) {
+      const before = await page.locator('[data-testid="usage-heatmap-svg"] circle').count();
+      await page.locator('[data-testid="usage-heatmap-legend-item"]').first().click();
+      await page.waitForTimeout(200);
+      const after = await page.locator('[data-testid="usage-heatmap-svg"] circle').count();
+      check("hiding a person in the legend removes their dots", after === before - heat.users[0].clicks, { before, after, clicks: heat.users[0].clicks });
+      await page.locator('[data-testid="usage-heatmap-legend-item"]').first().click();
+    }
     const screens = await downloaded("usage-export-screens");
     check("screens CSV matches the list", /^﻿Screen,Views,Total \(ms\),Average stay \(ms\)/.test(screens.text) && screens.text.includes("/viewer/:id"));
 
@@ -183,16 +198,30 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("people table lists dr-test", (await page.locator('[data-testid="usage-user-dr-test"]').count()) === 1);
     const people = await downloaded("usage-export-people");
     check("people CSV lists dr-test", /^﻿Person,Email,User id,Sessions/.test(people.text) && people.text.includes("dr-test"));
-    await page.locator('[data-testid="usage-open-dr-test"]').click();
-    await page.waitForSelector('[data-testid="usage-session-row"]', { timeout: 15000 });
+    // "Replay" goes straight to the person's newest sitting.
+    await page.locator('[data-testid="usage-replay-dr-test"]').click();
+    await page.waitForSelector('[data-testid="usage-timeline"]', { timeout: 15000 });
+    check("Replay opens the newest session without picking one", (await page.locator('[data-testid="usage-session-row"]').count()) >= 1 && (await page.locator('[data-testid="usage-replay-clock"]').innerText()).startsWith("0:00 /"));
     // The newest session may be an admin-ui one with no mouse data (or a
     // curl check) -- open a viewer session, that's where the trace is.
     await page.locator('[data-testid="usage-session-row"]', { hasText: "viewer" }).first().click();
     await page.waitForSelector('[data-testid="usage-timeline"]', { timeout: 15000 });
-    check("session replay draws the mouse trace", (await page.locator('[data-testid="usage-replay-svg"] polyline').count()) === 1);
+    check("replay starts at the beginning with nothing drawn yet", (await page.locator('[data-testid="usage-replay-svg"] polyline').count()) === 0);
+    await page.locator('[data-testid="usage-replay-speed"]').selectOption("32");
     await page.locator('[data-testid="usage-replay-play"]').click();
-    await page.waitForTimeout(400);
-    check("timeline lists events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);
+    let traced = false;
+    for (let i = 0; i < 40 && !traced; i++) {
+      traced = (await page.locator('[data-testid="usage-replay-svg"] polyline').count()) === 1;
+      if (!traced) await page.waitForTimeout(250);
+    }
+    check("playing draws the pointer path as it happened", traced);
+    const clockText = await page.locator('[data-testid="usage-replay-clock"]').innerText();
+    check("the replay clock advances", !clockText.startsWith("0:00 /"), clockText);
+    check("the log lists the session's events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);
+    // scrubbing to the end shows every click of the last page
+    await page.locator('[data-testid="usage-replay-scrub"]').evaluate((el) => { el.value = el.max; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); });
+    await page.waitForTimeout(200);
+    check("scrubbing to the end pauses at the full length", (await page.locator('[data-testid="usage-replay-play"]').innerText()).includes("Play") && /^(\d+:\d\d) \/ \1$/.test(await page.locator('[data-testid="usage-replay-clock"]').innerText()), await page.locator('[data-testid="usage-replay-clock"]').innerText());
     const sessionCsv = await downloaded("usage-export-session-events");
     check("a session's events export as CSV with JSON detail", /^﻿Occurred at,Type,Screen,Name,Duration \(ms\),Detail/.test(sessionCsv.text) && sessionCsv.text.includes("page_view"));
     const learningEmpty = (await page.locator('[data-testid="usage-learning-curve"] .empty-state').count()) === 1;

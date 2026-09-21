@@ -453,7 +453,7 @@ export const USAGE_STEPS: GuideStep[] = [
   {
     target: "usage-tab-behaviour",
     title: "Behaviour",
-    body: "How people actually work: where the time goes, the paths they take between screens, which viewer tools they use, and a click heatmap per screen.",
+    body: "How people actually work: a map of how they move between screens (sized by time spent, arrows by how often), where the time goes, which viewer tools they use, and a click heatmap per screen coloured by person.",
     placement: "bottom",
   },
   {
@@ -465,7 +465,7 @@ export const USAGE_STEPS: GuideStep[] = [
   {
     target: "usage-tab-people",
     title: "People",
-    body: "Who, specifically: one row per person, their sessions with a mouse replay, and each person's own learning curve week by week -- never compared to anyone else's pace.",
+    body: "Who, specifically: one row per person, and Replay to watch a sitting play back as it happened -- the pointer, every click, every key -- plus each person's own learning curve week by week, never compared to anyone else's pace.",
     placement: "bottom",
   },
   {

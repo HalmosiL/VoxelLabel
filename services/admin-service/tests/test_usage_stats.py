@@ -180,7 +180,7 @@ def test_per_user_figures():
 
 def test_click_points_normalise_by_viewport_and_skip_incomplete_ones():
     points = stats.click_points(EVENTS, "/studies")
-    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row"}]
+    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE}]
     no_viewport = [ev("s", "click", "/x", detail={"x": 1, "y": 1})]
     assert stats.click_points(no_viewport, "/x") == []
 
