@@ -16,7 +16,7 @@ import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
 import StudyDetailPage from "./pages/StudyDetailPage";
 import SystemPage from "./pages/SystemPage";
-import UsagePage from "./pages/UsagePage";
+import UsagePage from "./pages/usage/UsagePage";
 import UsersPage from "./pages/UsersPage";
 import WorkflowBoardPage from "./pages/WorkflowBoardPage";
 import UsageTracker from "./usage/UsageTracker";

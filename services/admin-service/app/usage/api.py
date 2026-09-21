@@ -3,11 +3,15 @@ person's browser talks to (its effective recording config, and the
 events it ships), and what only a global admin sees (the switches and
 every read the Usage page draws from). `user_id` on a stored event is
 always the caller's token subject -- the body never says who."""
+import csv
+import io
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
@@ -15,8 +19,13 @@ from shared_models.models import UsageEvent
 from sqlalchemy.orm import Session
 
 from app.keycloak_admin import list_realm_users
+from app.pipeline_health.api import build_learning_curve
+from app.pipeline_health.api import build_summary as build_pipeline_summary
 
 from . import stats
+from .findings import findings as compute_findings
+from .findings import friction_score
+from .report import render_markdown
 from .settings import CATEGORY_FLAGS, allows, effective_config, get_settings, purge_expired
 
 router = APIRouter(prefix="/admin/usage", tags=["admin:usage"])
@@ -252,6 +261,51 @@ def set_user_switch(
     return _serialize_settings(row)
 
 
+def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None) -> dict:
+    """The /summary payload for an explicit window (usernames resolved,
+    friction score attached) -- shared by /summary, /findings and
+    /report.md so a finding's number is the number the page shows."""
+    summary = stats.summarize(_load(db, window_since, window_until, user_id))
+    names = _usernames()
+    for row in summary["users"]:
+        row.update(names.get(row["user_id"], {"username": row["user_id"], "email": None}))
+        row["last_seen_at"] = _iso(row["last_seen_at"])
+    settings = get_settings(db)
+    summary["since"] = window_since.isoformat()
+    summary["until"] = window_until.isoformat()
+    summary["friction_score"] = friction_score(summary)
+    summary["recording"] = {
+        "enabled": settings.enabled,
+        "disabled_user_ids": list(settings.disabled_user_ids or []),
+    }
+    return summary
+
+
+def _previous_window(window_since: datetime, window_until: datetime) -> tuple[datetime, datetime]:
+    """The same-length period immediately before -- what "vs last period"
+    compares against (mirrors admin-ui's previousRange)."""
+    return window_since - (window_until - window_since), window_since
+
+
+def _build_findings_bundle(db: Session, window_since: datetime, window_until: datetime, user_id: str | None) -> dict:
+    prev_since, prev_until = _previous_window(window_since, window_until)
+    usage = build_usage_summary(db, window_since, window_until, user_id)
+    usage_previous = build_usage_summary(db, prev_since, prev_until, user_id)
+    pipeline = build_pipeline_summary(db, window_since, window_until)
+    pipeline_previous = build_pipeline_summary(db, prev_since, prev_until)
+    learning = build_learning_curve(db)
+    return {
+        "since": window_since.isoformat(),
+        "until": window_until.isoformat(),
+        "usage": usage,
+        "usage_previous": usage_previous,
+        "pipeline": pipeline,
+        "pipeline_previous": pipeline_previous,
+        "learning_curve": learning,
+        "findings": compute_findings(usage, usage_previous, pipeline, pipeline_previous, learning),
+    }
+
+
 @router.get("/summary")
 def read_summary(
     days: int = Query(30, ge=1, le=365),
@@ -263,20 +317,106 @@ def read_summary(
 ) -> dict:
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
-    summary = stats.summarize(_load(db, window_since, window_until, user_id))
+    return {"days": days, **build_usage_summary(db, window_since, window_until, user_id)}
+
+
+@router.get("/findings")
+def read_findings(
+    days: int = Query(30, ge=1, le=365),
+    since: datetime | None = Query(None, alias="from"),
+    until: datetime | None = Query(None, alias="to"),
+    user_id: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """The page's own first pass at "so what?" -- see findings.py. Returns
+    the findings plus the exact summaries they were derived from, so the
+    Overview can render both from one call."""
+    _require_global_admin(user)
+    window_since, window_until = _window(days, since, until)
+    bundle = _build_findings_bundle(db, window_since, window_until, user_id)
+    return {"since": bundle["since"], "until": bundle["until"], "findings": bundle["findings"], "friction_score": bundle["usage"]["friction_score"]}
+
+
+@router.get("/report.md")
+def read_report(
+    days: int = Query(30, ge=1, le=365),
+    since: datetime | None = Query(None, alias="from"),
+    until: datetime | None = Query(None, alias="to"),
+    user_id: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> PlainTextResponse:
+    """The Overview as Markdown, for pasting into Jira/Slack/e-mail --
+    rendered from the same bundle /findings uses."""
+    _require_global_admin(user)
+    window_since, window_until = _window(days, since, until)
+    bundle = _build_findings_bundle(db, window_since, window_until, user_id)
+    text = render_markdown(window_since, window_until, bundle["usage"], bundle["pipeline"], bundle["findings"], bundle["learning_curve"])
+    return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
+
+
+EXPORT_COLUMNS = ["occurred_at", "user_id", "username", "session_id", "app", "event_type", "route", "name", "duration_ms", "detail"]
+
+
+def _events_csv(db: Session, window_since: datetime, window_until: datetime, user_id: str | None, include_mouse: bool) -> Iterator[str]:
+    """Streams one CSV row per event -- a generator so a 90-day window
+    is never built in memory. Mouse traces (bulky, rarely wanted in a
+    spreadsheet) only with include_mouse. `detail` is JSON text."""
     names = _usernames()
-    for row in summary["users"]:
-        row.update(names.get(row["user_id"], {"username": row["user_id"], "email": None}))
-        row["last_seen_at"] = _iso(row["last_seen_at"])
-    settings = get_settings(db)
-    summary["days"] = days
-    summary["since"] = window_since.isoformat()
-    summary["until"] = window_until.isoformat()
-    summary["recording"] = {
-        "enabled": settings.enabled,
-        "disabled_user_ids": list(settings.disabled_user_ids or []),
-    }
-    return summary
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(EXPORT_COLUMNS)
+    yield "﻿" + buffer.getvalue()  # BOM so Excel reads UTF-8 correctly
+    buffer.seek(0)
+    buffer.truncate(0)
+    query = db.query(UsageEvent).filter(UsageEvent.occurred_at >= window_since, UsageEvent.occurred_at <= window_until)
+    if user_id:
+        query = query.filter(UsageEvent.user_id == user_id)
+    if not include_mouse:
+        query = query.filter(UsageEvent.event_type != "mouse_trace")
+    for e in query.order_by(UsageEvent.occurred_at).yield_per(1000):
+        writer.writerow(
+            [
+                e.occurred_at.isoformat() if e.occurred_at else "",
+                e.user_id,
+                names.get(e.user_id, {}).get("username", e.user_id),
+                e.session_id,
+                e.app,
+                e.event_type,
+                e.route,
+                e.name or "",
+                e.duration_ms if e.duration_ms is not None else "",
+                json.dumps(e.detail, separators=(",", ":")) if e.detail else "",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+@router.get("/export/events.csv")
+def export_events_csv(
+    days: int = Query(30, ge=1, le=365),
+    since: datetime | None = Query(None, alias="from"),
+    until: datetime | None = Query(None, alias="to"),
+    user_id: str | None = None,
+    include_mouse: bool = False,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> StreamingResponse:
+    """Every recorded event in the window as CSV, for analysis outside
+    the platform (Python/R/BI). Internal ids and short control
+    descriptors only -- the same "never patient data, never typed text"
+    rule ingestion enforces."""
+    _require_global_admin(user)
+    window_since, window_until = _window(days, since, until)
+    name = f"usage-events-{window_since.strftime('%Y%m%d')}-{window_until.strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        _events_csv(db, window_since, window_until, user_id, include_mouse),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
 
 
 @router.get("/sessions")

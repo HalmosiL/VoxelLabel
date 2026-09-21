@@ -70,6 +70,50 @@ describe("page views", () => {
   });
 });
 
+describe("before the config arrives", () => {
+  // Lets the fake config GET (a real Response, several microtasks deep) answer.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  function bootWithConfig(answer: UsageConfig | null) {
+    _reset();
+    init({
+      app: "admin-ui",
+      configUrl: "http://api/config",
+      eventsUrl: "http://api/events",
+      getToken: () => "tok",
+      fetchImpl: ((url: string, i?: RequestInit) => {
+        if (i?.method === "POST") posted.push({ url: String(url), init: i });
+        return Promise.resolve(answer ? new Response(JSON.stringify(answer), { status: 200 }) : new Response("", { status: 403 }));
+      }) as typeof fetch,
+      now: () => clock,
+    });
+  }
+
+  it("keeps a fresh load's first page_view until the config says pages are recorded", async () => {
+    bootWithConfig(ON);
+    trackPageView("/usage"); // fires before the config GET has answered
+    expect(pendingEvents().map((e) => e.event_type)).toEqual(["page_view"]);
+    flush();
+    expect(posted).toHaveLength(0); // nothing leaves the browser yet
+    await settle();
+    expect(pendingEvents().map((e) => e.event_type)).toEqual(["page_view"]);
+    flush();
+    expect(posted).toHaveLength(1);
+  });
+
+  it("sifts the held events by the config once it arrives, and drops them all on a refusal", async () => {
+    bootWithConfig({ ...ON, track_pages: false });
+    trackPageView("/usage");
+    trackAction("tool.paint");
+    await settle();
+    expect(pendingEvents().map((e) => e.event_type)).toEqual(["action"]);
+
+    bootWithConfig(null);
+    trackPageView("/usage");
+    await settle();
+    expect(pendingEvents()).toHaveLength(0);
+  });
+});
+
 describe("flushing", () => {
   it("posts the batch once 20 events are queued, and on demand", () => {
     trackPageView("/a");

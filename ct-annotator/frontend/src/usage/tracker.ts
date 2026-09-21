@@ -107,6 +107,10 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 interface State {
   options: TrackerOptions | null;
   config: UsageConfig;
+  /** False until the first config response: until then nothing is
+   * known about what may be recorded, so events queue unfiltered and
+   * are sifted once the answer arrives (see push/setConfig). */
+  configKnown: boolean;
   queue: UsageEvent[];
   sessionId: string;
   route: string | null;
@@ -125,6 +129,7 @@ interface State {
 const state: State = {
   options: null,
   config: OFF,
+  configKnown: false,
   queue: [],
   sessionId: "",
   route: null,
@@ -211,8 +216,14 @@ function viewport(): number[] {
   return [window.innerWidth, window.innerHeight];
 }
 
+/** Queues one event. Before the config has arrived the event is kept
+ * regardless -- a fresh page load fires its first page_view before the
+ * config GET has answered, and dropping it there left every reload's
+ * page_leave without a page_view (bounce rates over 100%, lost task
+ * timings). setConfig sifts the queue once it knows. */
 function push(type: UsageEventType, fields: Partial<UsageEvent> = {}): void {
-  if (!state.options || !allows(type)) return;
+  if (!state.options) return;
+  if (state.configKnown && !allows(type)) return;
   state.queue.push({
     session_id: state.sessionId,
     app: state.options.app,
@@ -236,7 +247,8 @@ const MAX_BODY_BYTES = 50_000;
  * into chunks under the keepalive body limit. */
 export function flush(_keepalive = true): void {
   const options = state.options;
-  if (!options || state.queue.length === 0) return;
+  // Nothing leaves the browser until the config has said what may.
+  if (!options || !state.configKnown || state.queue.length === 0) return;
   const token = options.getToken();
   if (!token) return;
   const events = state.queue.splice(0, state.queue.length);
@@ -276,10 +288,11 @@ function fetchConfig(): void {
   const doFetch = options.fetchImpl ?? fetch;
   try {
     doFetch(options.configUrl, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? (r.json() as Promise<UsageConfig>) : null))
-      .then((config) => {
-        if (config) setConfig(config);
-      })
+      .then((r) => (r.ok ? (r.json() as Promise<UsageConfig>) : OFF))
+      .then((config) => setConfig(config))
+      // A network failure leaves the config unknown: the queue holds
+      // (capped) and the next poll tries again. A definite non-OK
+      // answer is the server saying no, and applies OFF.
       .catch(() => undefined);
   } catch {
     // ignore
@@ -289,6 +302,8 @@ function fetchConfig(): void {
 /** Applies a config -- normally the one fetched, directly in tests. */
 export function setConfig(config: UsageConfig): void {
   state.config = { ...OFF, ...config };
+  state.configKnown = true;
+  state.queue = state.queue.filter((e) => allows(e.event_type));
 }
 
 /** Packs the buffered samples into one mouse_trace event, stamped with
@@ -476,6 +491,7 @@ export function _reset(): void {
   Object.assign(state, {
     options: null,
     config: OFF,
+    configKnown: false,
     queue: [],
     sessionId: "",
     route: null,

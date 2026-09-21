@@ -130,6 +130,22 @@ def test_friction_signals():
     assert f["idle_share"] == round(5000 / 110000, 3)
 
 
+def test_friction_by_screen_scores_and_ranks_every_screen():
+    rows = {r["route"]: r for r in stats.friction(EVENTS)["by_screen"]}
+    studies = rows["/studies"]
+    # 2 views, 1 bounce, 1 return, 1 click (followed by a page_view: not dead), no rage
+    assert studies["views"] == 2 and studies["bounce_rate"] == 0.5 and studies["back_rate"] == 0.5
+    assert studies["clicks"] == 1 and studies["dead_clicks"] == 0 and studies["dead_rate"] == 0.0
+    assert studies["score"] == round(100 * (0.35 * 0.5 + 0.25 * 0.5))
+    viewer = rows["/viewer/:id"]
+    # 2 views, 4 clicks all dead, 1 rage burst, 1 error
+    assert viewer["clicks"] == 4 and viewer["dead_rate"] == 1.0 and viewer["rage_bursts"] == 1 and viewer["errors"] == 1
+    assert viewer["score"] == round(100 * (0.20 * 1.0 + 0.20 * 0.5))
+    ordered = [r["route"] for r in stats.friction(EVENTS)["by_screen"]]
+    assert ordered.index("/viewer/:id") < ordered.index("/my-jobs")  # scored screens before untouched ones
+    assert rows["/my-jobs"]["score"] == 0
+
+
 def test_rage_clicks_need_three_fast_clicks_in_the_same_spot():
     far = [
         ev("s", "click", "/x", at_s=0.0, detail={"x": 0, "y": 0}),
@@ -202,3 +218,22 @@ def test_allows_maps_event_types_to_their_switch():
     assert allows(config, "page_view") and allows(config, "idle") and allows(config, "click")
     assert not allows(config, "mouse_trace") and not allows(config, "key")
     assert not allows(config, "made_up")
+
+
+def test_a_page_leave_without_its_page_view_still_counts_as_one_visit():
+    """A fresh page load used to lose its page_view (the tracker's config
+    hadn't arrived) but not its page_leave; every rate is per visit, so
+    the visit must be counted from either -- never a 200% bounce rate."""
+    s = "s-reload"
+    events = [
+        ev(s, "page_leave", "/usage", at_s=1, duration_ms=1000),  # bounce with no page_view before it
+        ev(s, "page_view", "/my-jobs", at_s=1),
+        ev(s, "page_leave", "/my-jobs", at_s=2, duration_ms=1000),
+        ev(s, "page_view", "/usage", at_s=2),
+        ev(s, "page_leave", "/usage", at_s=30, duration_ms=28000),
+    ]
+    rows = {r["route"]: r for r in stats.friction(events)["by_screen"]}
+    assert rows["/usage"]["views"] == 2 and rows["/usage"]["bounces"] == 1 and rows["/usage"]["bounce_rate"] == 0.5
+    assert all(0 <= r["score"] <= 100 for r in rows.values())
+    per_route = {r["route"]: r for r in stats.time_per_route(events)}
+    assert per_route["/usage"]["views"] == 2 and per_route["/my-jobs"]["views"] == 1

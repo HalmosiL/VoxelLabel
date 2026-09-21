@@ -515,6 +515,23 @@ function rangeParams(range: UsageRange): URLSearchParams {
   return params;
 }
 
+/** One screen's friction, every component as a rate plus a single
+ * 0-100 score -- see usage/stats.py's _by_screen for the formula. */
+export interface UsageScreenFriction {
+  route: string;
+  views: number;
+  clicks: number;
+  bounces: number;
+  bounce_rate: number;
+  returns: number;
+  back_rate: number;
+  dead_clicks: number;
+  dead_rate: number;
+  rage_bursts: number;
+  errors: number;
+  score: number;
+}
+
 export interface UsageSummary {
   days: number;
   since: string;
@@ -531,9 +548,33 @@ export interface UsageSummary {
     dead_clicks: UsageFrictionRow[];
     errors: UsageFrictionRow[];
     idle_share: number;
+    by_screen: UsageScreenFriction[];
   };
+  /** View-weighted mean of by_screen scores; null with no views. */
+  friction_score: number | null;
   users: UsageUser[];
   recording: { enabled: boolean; disabled_user_ids: string[] };
+}
+
+export type UsageTab = "overview" | "behaviour" | "friction" | "people" | "settings";
+export type UsageFindingSeverity = "critical" | "warn" | "info" | "good";
+
+/** A plain-language conclusion the backend drew from the data -- see
+ * usage/findings.py for the rules and thresholds. */
+export interface UsageFinding {
+  id: string;
+  severity: UsageFindingSeverity;
+  title: string;
+  detail: string;
+  tab: UsageTab;
+  evidence: Record<string, unknown>;
+}
+
+export interface UsageFindings {
+  since: string;
+  until: string;
+  findings: UsageFinding[];
+  friction_score: number | null;
 }
 
 export interface UsageSession {
@@ -612,6 +653,46 @@ export function getUsageHeatmap(route: string, range: UsageRange, userId?: strin
   params.set("route", route);
   if (userId) params.set("user_id", userId);
   return apiFetch(base, `/admin/usage/heatmap?${params}`);
+}
+
+export function getUsageFindings(range: UsageRange, userId?: string | null): Promise<UsageFindings> {
+  const params = rangeParams(range);
+  if (userId) params.set("user_id", userId);
+  return apiFetch(base, `/admin/usage/findings?${params}`);
+}
+
+async function fetchWithToken(path: string): Promise<Response> {
+  const response = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${keycloak.token}` } });
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+  return response;
+}
+
+/** The Overview as Markdown -- text, not JSON, so not apiFetch. */
+export async function getUsageReportMarkdown(range: UsageRange, userId?: string | null): Promise<string> {
+  const params = rangeParams(range);
+  if (userId) params.set("user_id", userId);
+  return (await fetchWithToken(`/admin/usage/report.md?${params}`)).text();
+}
+
+/** Every recorded event in the window as CSV, streamed by the server;
+ * fetched with the bearer token (a plain <a href> couldn't carry it)
+ * and saved through a temporary download link, the same way
+ * downloadBackup does. */
+export async function downloadUsageEventsCsv(range: UsageRange, userId?: string | null, includeMouse = false): Promise<string> {
+  const params = rangeParams(range);
+  if (userId) params.set("user_id", userId);
+  if (includeMouse) params.set("include_mouse", "true");
+  const response = await fetchWithToken(`/admin/usage/export/events.csv?${params}`);
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "usage-events.csv";
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  return filename;
 }
 
 // ---------------------------------------------------------------- pipeline health

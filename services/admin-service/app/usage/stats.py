@@ -45,6 +45,23 @@ def _page_routes(rows: list[dict]) -> list[str]:
     return routes
 
 
+def _visits(rows: list[dict]) -> Counter:
+    """How many times each screen was opened in one session. A page_view
+    is the direct evidence, but a page_leave is proof of a visit too --
+    older trackers dropped the first page_view of a fresh load (the
+    config hadn't arrived yet) while still sending its page_leave -- so
+    a screen counts the larger of the two, never fewer visits than
+    departures. Keeps every per-visit rate at or under 100%."""
+    views: Counter = Counter()
+    leaves: Counter = Counter()
+    for e in rows:
+        if e["event_type"] == "page_view":
+            views[e["route"]] += 1
+        elif e["event_type"] == "page_leave":
+            leaves[e["route"]] += 1
+    return Counter({route: max(views[route], leaves[route]) for route in set(views) | set(leaves)})
+
+
 def back_and_forth(routes: list[str]) -> tuple[int, int]:
     """How many navigations went straight back to the page visited two
     steps earlier (A -> B -> A), out of all navigations after the first.
@@ -97,10 +114,10 @@ def sessions(events: list[dict]) -> list[dict]:
 def time_per_route(events: list[dict]) -> list[dict]:
     views: Counter = Counter()
     dwell: dict[str, list[int]] = defaultdict(list)
+    for rows in _by_session(events).values():
+        views.update(_visits(rows))
     for e in events:
-        if e["event_type"] == "page_view":
-            views[e["route"]] += 1
-        elif e["event_type"] == "page_leave" and e.get("duration_ms") is not None:
+        if e["event_type"] == "page_leave" and e.get("duration_ms") is not None:
             dwell[e["route"]].append(int(e["duration_ms"]))
     routes = set(views) | set(dwell)
     rows = [
@@ -189,6 +206,7 @@ def friction(events: list[dict]) -> dict:
     rage: Counter = Counter()
     dead: Counter = Counter()
     errors: Counter = Counter()
+    clicks_total: Counter = Counter()
     idle_ms = 0
     total_ms = 0
     for rows in _by_session(events).values():
@@ -198,16 +216,16 @@ def friction(events: list[dict]) -> dict:
         for i in range(2, len(routes)):
             if routes[i] == routes[i - 2]:
                 returned_to[routes[i]] += 1
+        views.update(_visits(rows))
         clicks_by_route: dict[str, list[dict]] = defaultdict(list)
         for idx, e in enumerate(rows):
             kind = e["event_type"]
-            if kind == "page_view":
-                views[e["route"]] += 1
-            elif kind == "page_leave" and e.get("duration_ms") is not None and int(e["duration_ms"]) < BOUNCE_MS:
+            if kind == "page_leave" and e.get("duration_ms") is not None and int(e["duration_ms"]) < BOUNCE_MS:
                 if any(later["event_type"] == "page_view" for later in rows[idx + 1 :]):
                     bounces[e["route"]] += 1
             elif kind == "click":
                 clicks_by_route[e["route"]].append(e)
+                clicks_total[e["route"]] += 1
                 t = _ms(e["occurred_at"])
                 followed = any(
                     later["event_type"] in ("action", "page_view") and _ms(later["occurred_at"]) - t <= DEAD_CLICK_MS
@@ -242,7 +260,51 @@ def friction(events: list[dict]) -> dict:
         "dead_clicks": ranked(dead, "clicks"),
         "errors": ranked(errors, "errors"),
         "idle_share": round(idle_ms / total_ms, 3) if total_ms else 0.0,
+        "by_screen": _by_screen(views, bounces, returned_to, rage, dead, clicks_total, errors),
     }
+
+
+# Weights of the per-screen friction score. Bounces weigh most (leaving
+# within seconds is the clearest "this isn't it" signal), then flipping
+# back and forth, then clicks that did nothing, then rage bursts.
+SCORE_WEIGHTS = {"bounce": 0.35, "back": 0.25, "dead": 0.20, "rage": 0.20}
+
+
+def _by_screen(views: Counter, bounces: Counter, returned_to: Counter, rage: Counter, dead: Counter, clicks_total: Counter, errors: Counter) -> list[dict]:
+    """One row per screen with every friction component as a rate and a
+    single 0-100 score -- `100 * (0.35*bounce_rate + 0.25*back_rate +
+    0.20*dead_click_rate + 0.20*min(rage_bursts/views, 1))` -- so
+    screens rank by one number while the components stay visible next
+    to it. Rates are per view (bounces, returns, rage) or per click
+    (dead); a screen with no views scores on its clicks alone. Worst
+    first, then most viewed."""
+    routes = set(views) | set(bounces) | set(returned_to) | set(rage) | set(dead) | set(clicks_total) | set(errors)
+    rows = []
+    for route in routes:
+        v, c = views[route], clicks_total[route]
+        bounce_rate = bounces[route] / v if v else 0.0
+        back_rate = returned_to[route] / v if v else 0.0
+        dead_rate = dead[route] / c if c else 0.0
+        rage_rate = min(rage[route] / v, 1.0) if v else (1.0 if rage[route] else 0.0)
+        score = round(100 * (SCORE_WEIGHTS["bounce"] * bounce_rate + SCORE_WEIGHTS["back"] * back_rate + SCORE_WEIGHTS["dead"] * dead_rate + SCORE_WEIGHTS["rage"] * rage_rate))
+        rows.append(
+            {
+                "route": route,
+                "views": v,
+                "clicks": c,
+                "bounces": bounces[route],
+                "bounce_rate": round(bounce_rate, 3),
+                "returns": returned_to[route],
+                "back_rate": round(back_rate, 3),
+                "dead_clicks": dead[route],
+                "dead_rate": round(dead_rate, 3),
+                "rage_bursts": rage[route],
+                "errors": errors[route],
+                "score": score,
+            }
+        )
+    rows.sort(key=lambda r: (-r["score"], -r["views"], r["route"]))
+    return rows
 
 
 def per_user(events: list[dict]) -> list[dict]:

@@ -2,6 +2,7 @@
 // produces page views, clicks, mouse traces and a shortcut; the admin's
 // Usage page shows them (tiles, heatmap, the person, a session replay);
 // a recording switch flipped there reaches the annotator's own config.
+const fs = require("fs");
 const { chromium } = require("playwright");
 const { F } = require("./helpers");
 const ADMIN = F.ADMIN, KC = F.KC, VIEWER = F.VIEWER, UI = F.UI;
@@ -75,26 +76,86 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
 
   // ---- admin reads the Usage page ----
   {
-    const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
+    const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true });
+    await ctx.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => undefined);
     await ctx.addInitScript(seenGuides);
     const page = await ctx.newPage();
     const errors = []; page.on("pageerror", (e) => errors.push(e.message));
     await login(page, "platform-admin", "platform-admin", `${UI}/usage`);
     await page.waitForSelector('[data-testid="usage-tiles"]', { timeout: 30000 });
     check("nav has Usage", (await page.locator("nav a", { hasText: "Usage" }).count()) === 1);
+    const tab = async (name) => { await page.locator(`[data-testid="usage-tab-${name}"]`).click(); await page.waitForTimeout(300); };
+    const downloaded = async (testId) => {
+      const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 15000 }), page.locator(`[data-testid="${testId}"]`).click()]);
+      return { name: dl.suggestedFilename(), text: fs.readFileSync(await dl.path(), "utf8") };
+    };
     await page.locator('[data-testid="usage-range-7"]').click();
     await page.waitForTimeout(800);
-    check("tiles render", (await page.locator('[data-testid="usage-tiles"] .stat-card').count()) === 6);
-    check("recording card present with the mouse switch on", await page.locator('[data-testid="usage-switch-track_mouse"]').isChecked());
+
+    // ---- Overview: findings, tiles, cycle time, export ----
+    check("five tabs, Overview selected", (await page.locator('[data-testid="usage-tabs"] [role="tab"]').count()) === 5 && (await page.locator('[data-testid="usage-tab-overview"]').getAttribute("aria-selected")) === "true");
+    check("tiles render (incl. friction score)", (await page.locator('[data-testid="usage-tiles"] .stat-card').count()) === 7);
+    await page.waitForSelector('[data-testid="usage-finding"]', { timeout: 15000 });
+    const severities = await page.locator('[data-testid="usage-finding"]').evaluateAll((els) => els.map((el) => el.dataset.severity));
+    // seed.py leaves a rejected case waiting on the Review card with no
+    // history to compare against -> "open, no history" or, if the stack
+    // has been up long enough for the flat 7-day rule, a flagged one.
+    check("findings render with at least one item", severities.length >= 1, severities);
+    check("findings are sorted by severity", severities.join(",") === [...severities].sort((a, b) => ["critical", "warn", "info", "good"].indexOf(a) - ["critical", "warn", "info", "good"].indexOf(b)).join(","), severities);
+    const goto = page.locator('[data-testid="usage-finding-goto"]').first();
+    if (await goto.count()) {
+      const label = (await goto.innerText()).replace(/\s*→\s*$/, "").toLowerCase();
+      await goto.click();
+      await page.waitForTimeout(300);
+      check(`a finding's jump link opens the ${label} tab`, (await page.locator(`[data-testid="usage-tab-${label}"]`).getAttribute("aria-selected")) === "true");
+      await tab("overview");
+    }
+    check("cycle-time tiles render", (await page.locator('[data-testid="usage-cycle-tiles"] .stat-card').count()) === 5);
+    check("cycle-time bar draws at least one segment", (await page.locator('[data-testid="usage-cycle-bar"] > div').count()) >= 1);
+
+    const cycle = await downloaded("usage-export-cycle-time");
+    check("cycle-time CSV has the header and four legs", /^﻿Leg,Median \(ms\)/.test(cycle.text) && cycle.text.trim().split(/\r?\n/).length === 5 && /^usage-cycle-time-\d{8}-\d{8}\.csv$/.test(cycle.name), cycle.name);
+    const events = await downloaded("usage-export-events");
+    // (.trim() would eat the BOM -- it counts as whitespace -- so test it on the raw text.)
+    const eventLines = events.text.trim().split(/\r?\n/);
+    check("raw event CSV streams with the BOM and the documented header", events.text.startsWith("﻿") && eventLines[0] === "occurred_at,user_id,username,session_id,app,event_type,route,name,duration_ms,detail", eventLines[0]);
+    check("raw event CSV has rows and no mouse traces by default", eventLines.length > 10 && !events.text.includes(",mouse_trace,"), eventLines.length);
+    await page.locator('[data-testid="usage-export-include-mouse"]').check();
+    const withMouse = await downloaded("usage-export-events");
+    check("include-mouse adds mouse_trace rows", withMouse.text.includes(",mouse_trace,") && withMouse.text.length > events.text.length);
+    const report = await downloaded("usage-export-report");
+    check("markdown report downloads with title, findings and headline numbers", report.name.endsWith(".md") && /^# Usage report/.test(report.text) && report.text.includes("## Findings") && report.text.includes("## Headline numbers"), report.text.slice(0, 200));
+    const bundle = await downloaded("usage-export-bundle");
+    const parsed = JSON.parse(bundle.text);
+    check("JSON bundle carries every dataset", bundle.name.endsWith(".json") && parsed.summary && parsed.findings && parsed.pipeline_health && Array.isArray(parsed.learning_curve) && parsed.range, Object.keys(parsed));
+    await page.locator('[data-testid="usage-export-copy-report"]').click();
+    await page.waitForTimeout(500);
+    check("copy summary reports success (or a clipboard-denied error, never a crash)", (await page.locator('[data-testid="usage-export-done"]').count()) === 1 || (await page.locator(".alert-error").count()) === 1);
+
+    // ---- Behaviour ----
+    await tab("behaviour");
     // The bar list is the top 12 screens by time; which ones make it
     // depends on what else ran on this stack, so only check it draws.
     check("routes list renders rows", (await page.locator('[data-testid="usage-routes-list"] li').count()) >= 1);
     await page.locator('[data-testid="usage-heatmap-route"]').selectOption("/viewer/:id");
     await page.waitForTimeout(800);
     check("heatmap shows click dots", (await page.locator('[data-testid="usage-heatmap-svg"] circle').count()) >= 1);
+    const screens = await downloaded("usage-export-screens");
+    check("screens CSV matches the list", /^﻿Screen,Views,Total \(ms\),Average stay \(ms\)/.test(screens.text) && screens.text.includes("/viewer/:id"));
+
+    // ---- Friction ----
+    await tab("friction");
+    const frictionRows = page.locator('[data-testid="usage-friction-row"]');
+    check("screens-by-friction table lists every screen with a score chip", (await frictionRows.count()) >= 1 && (await frictionRows.first().locator("td").nth(1).locator("span").count()) === 1);
+    const scores = await frictionRows.evaluateAll((rows) => rows.map((r) => Number(r.querySelectorAll("td")[1].innerText)));
+    check("friction table is ranked by score, descending", scores.every((s, i) => i === 0 || scores[i - 1] >= s), scores);
+    check("bottlenecks lists the still-open rejected case", (await page.locator('[data-testid="usage-bottleneck-row"]').count()) >= 1);
+    check("assignee load lists dr-test and/or dr-review", (await page.locator('[data-testid="usage-load-row"]').count()) >= 1);
+    await page.screenshot({ path: "usage-friction.png", fullPage: true });
 
     // Calendar: picking a specific day/hour window narrows the data, and
     // an empty window zeroes the tiles instead of erroring.
+    await tab("overview");
     await page.locator('[data-testid="usage-from-input"]').focus();
     await page.waitForTimeout(300);
     check("focusing From defaults to a real 24h window and clears the day-preset highlight", /Showing/.test(await page.locator('[data-testid="usage-range-label"]').innerText()) && !(await page.locator('[data-testid="usage-range-7"]').evaluate((el) => el.className.includes("bg-blue-600"))));
@@ -115,7 +176,13 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.locator('[data-testid="usage-calendar-clear"]').click();
     await page.waitForTimeout(800);
     check("clearing the calendar restores the 30-day preset", await page.locator('[data-testid="usage-range-30"]').evaluate((el) => el.className.includes("bg-blue-600")));
+    await page.screenshot({ path: "usage-page.png", fullPage: true });
+
+    // ---- People: table, sessions, replay, learning curve ----
+    await tab("people");
     check("people table lists dr-test", (await page.locator('[data-testid="usage-user-dr-test"]').count()) === 1);
+    const people = await downloaded("usage-export-people");
+    check("people CSV lists dr-test", /^﻿Person,Email,User id,Sessions/.test(people.text) && people.text.includes("dr-test"));
     await page.locator('[data-testid="usage-open-dr-test"]').click();
     await page.waitForSelector('[data-testid="usage-session-row"]', { timeout: 15000 });
     // The newest session may be an admin-ui one with no mouse data (or a
@@ -126,20 +193,15 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.locator('[data-testid="usage-replay-play"]').click();
     await page.waitForTimeout(400);
     check("timeline lists events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);
-
-    // Pipeline health: cycle time, bottlenecks, learning curve -- all
-    // real data from e2e/seed.py's rejected + approved cycles.
-    check("cycle-time tiles render", (await page.locator('[data-testid="usage-cycle-tiles"] .stat-card').count()) === 5);
-    check("cycle-time bar draws at least one segment", (await page.locator('[data-testid="usage-cycle-bar"] > div').count()) >= 1);
-    check("bottlenecks lists the still-open rejected case", (await page.locator('[data-testid="usage-bottleneck-row"]').count()) >= 1);
-    check("assignee load lists dr-test and/or dr-review", (await page.locator('[data-testid="usage-load-row"]').count()) >= 1);
+    const sessionCsv = await downloaded("usage-export-session-events");
+    check("a session's events export as CSV with JSON detail", /^﻿Occurred at,Type,Screen,Name,Duration \(ms\),Detail/.test(sessionCsv.text) && sessionCsv.text.includes("page_view"));
     const learningEmpty = (await page.locator('[data-testid="usage-learning-curve"] .empty-state').count()) === 1;
     const learningFigures = await page.locator('[data-testid="usage-learning-curve-figure"]').count();
     check("learning curve either has figures or explains it needs more weeks of history", learningEmpty || learningFigures >= 1, { learningEmpty, learningFigures });
 
-    await page.screenshot({ path: "usage-page.png", fullPage: true });
-
-    // flip the mouse switch off, save, and see it land in the annotator's config
+    // ---- Settings: flip the mouse switch off, save, and see it land in the annotator's config ----
+    await tab("settings");
+    check("recording card present with the mouse switch on", await page.locator('[data-testid="usage-switch-track_mouse"]').isChecked());
     await page.locator('[data-testid="usage-switch-track_mouse"]').uncheck();
     await page.locator('[data-testid="usage-save-settings"]').click();
     await page.waitForTimeout(800);

@@ -200,18 +200,12 @@ def _window(days: int, since: datetime | None, until: datetime | None) -> tuple[
     return since or datetime.now(timezone.utc) - timedelta(days=days), until or datetime.now(timezone.utc)
 
 
-@router.get("/summary")
-def read_summary(
-    days: int = Query(30, ge=1, le=365),
-    since: datetime | None = Query(None, alias="from"),
-    until: datetime | None = Query(None, alias="to"),
-    card_id: str | None = None,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-) -> dict:
-    _require_global_admin(user)
+def build_summary(db: Session, window_since: datetime, window_until: datetime, card_id: str | None = None) -> dict:
+    """The /summary payload for an explicit window -- also what the
+    Usage page's findings/report endpoints (app/usage) call, so the
+    pipeline half of a finding is the same number the Pipeline tab
+    shows."""
     legs = _load_legs(db, card_id)
-    window_since, window_until = _window(days, since, until)
     windowed = [leg for leg in legs if leg["terminal_at"] is not None and window_since <= leg["terminal_at"] <= window_until]
     names = _usernames()
 
@@ -229,7 +223,6 @@ def read_summary(
         row["oldest_since"] = row["oldest_since"].isoformat()
 
     return {
-        "days": days,
         "since": window_since.isoformat(),
         "until": window_until.isoformat(),
         "legs": stats.leg_summary(windowed),
@@ -238,12 +231,32 @@ def read_summary(
     }
 
 
-@router.get("/learning-curve")
-def read_learning_curve(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+@router.get("/summary")
+def read_summary(
+    days: int = Query(30, ge=1, le=365),
+    since: datetime | None = Query(None, alias="from"),
+    until: datetime | None = Query(None, alias="to"),
+    card_id: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
     _require_global_admin(user)
-    legs = _load_legs(db, None)
-    rows = stats.learning_curve(legs, _tenure_start(db))
+    window_since, window_until = _window(days, since, until)
+    return {"days": days, **build_summary(db, window_since, window_until, card_id)}
+
+
+def build_learning_curve(db: Session) -> list[dict]:
+    """Every person's week-of-tenure medians, usernames resolved -- the
+    /learning-curve payload, also consumed by app/usage's findings and
+    report so the two never disagree."""
+    rows = stats.learning_curve(_load_legs(db, None), _tenure_start(db))
     names = _usernames()
     for row in rows:
         row["username"] = names.get(row["actor_id"], {}).get("username", row["actor_id"])
     return rows
+
+
+@router.get("/learning-curve")
+def read_learning_curve(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    _require_global_admin(user)
+    return build_learning_curve(db)

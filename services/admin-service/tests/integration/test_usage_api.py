@@ -178,6 +178,51 @@ def test_from_to_window_overrides_days_and_accepts_naive_datetimes(client):
     assert heat_outside["points"] == []
 
 
+def test_findings_and_report_are_admin_only_and_derive_from_the_same_data(client):
+    _seed_session(client)
+    assert client.get("/admin/usage/findings").status_code == 403
+    assert client.get("/admin/usage/report.md").status_code == 403
+    assert client.get("/admin/usage/export/events.csv").status_code == 403
+
+    client.as_admin()
+    found = client.get("/admin/usage/findings", params={"days": 7}).json()
+    assert {"since", "until", "findings", "friction_score"} <= set(found)
+    ids = [f["id"] for f in found["findings"]]
+    # the seeded viewer tool use (only tool.paint) makes the unused-tools rule fire
+    assert "tools.unused" in ids
+    tools = next(f for f in found["findings"] if f["id"] == "tools.unused")
+    assert tools["severity"] == "info" and tools["tab"] == "behaviour" and "cursor" in tools["evidence"]["unused"]
+
+    report = client.get("/admin/usage/report.md", params={"days": 7})
+    assert report.status_code == 200 and report.headers["content-type"].startswith("text/markdown")
+    md = report.text
+    assert md.startswith("# Usage report") and "## Findings" in md and tools["title"] in md
+    assert "| Active people | 1 |" in md and "| dr-test | 1 |" in md
+
+
+def test_raw_event_export_streams_csv_without_mouse_by_default(client):
+    _seed_session(client)
+    post(client, [ev("mouse_trace", "/viewer/:id", app="viewer", at_s=20, detail={"points": [[0, 1, 1], [100, 2, 2]], "viewport": [1600, 900]})])
+    client.as_admin()
+
+    r = client.get("/admin/usage/export/events.csv", params={"days": 7})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    assert r.headers["content-disposition"].startswith('attachment; filename="usage-events-')
+    body = r.text
+    assert body.startswith("﻿occurred_at,user_id,username,session_id,app,event_type,route,name,duration_ms,detail")
+    lines = [line for line in body.splitlines() if line.strip()]
+    assert len(lines) == 1 + 7  # header + the seeded events, mouse trace excluded
+    assert "mouse_trace" not in body and "dr-test" in body and "mark_annotated" in body
+    # detail is JSON text, quoted for CSV
+    assert '"{""x"":800,""y"":450' in body
+
+    with_mouse = client.get("/admin/usage/export/events.csv", params={"days": 7, "include_mouse": "true"}).text
+    assert with_mouse.count("mouse_trace") == 1
+
+    only_reviewer = client.get("/admin/usage/export/events.csv", params={"days": 7, "user_id": REVIEWER_SUBJECT}).text
+    assert len([line for line in only_reviewer.splitlines() if line.strip()]) == 1  # header only
+
+
 def test_retention_purge_removes_old_rows_only(client, db):
     _seed_session(client)
     db.add(
