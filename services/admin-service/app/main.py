@@ -27,6 +27,7 @@ from app.api.workflow import router as workflow_router
 from app.core.config import settings
 from app.notifications import router as notifications_router
 from app.notifications import start_poller
+from app.usage import router as usage_router
 
 
 @asynccontextmanager
@@ -60,6 +61,7 @@ app.include_router(notifications_router)
 app.include_router(registration_router)
 app.include_router(registration_public_router)
 app.include_router(audit_router)
+app.include_router(usage_router)
 
 
 @app.get("/health")

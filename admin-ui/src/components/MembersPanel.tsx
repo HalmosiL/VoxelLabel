@@ -15,6 +15,7 @@ import Avatar from "./Avatar";
 import EmptyState from "./EmptyState";
 import { TrashIcon } from "./icons";
 import SectionHeader from "./SectionHeader";
+import { trackAction } from "../usage/tracker";
 
 const ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"] as const;
 
@@ -66,6 +67,7 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
     event.preventDefault();
     try {
       await addStudyMember(studyId, selectedUserId, role);
+      trackAction("member.add", { study_id: studyId });
       setSelectedUserId("");
       refresh();
     } catch (err) {

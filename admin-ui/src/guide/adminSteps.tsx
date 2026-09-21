@@ -420,3 +420,34 @@ export const BOARD_STEPS: GuideStep[] = [
     placement: "bottom",
   },
 ];
+
+export const USAGE_STEPS: GuideStep[] = [
+  {
+    title: "Usage",
+    body: "How people actually work in the platform: which screens take their time, what they click, where the mouse goes, where they double back. Use it to decide what to simplify next -- shorter tasks, less to keep in your head.",
+  },
+  {
+    target: "usage-recording",
+    title: "Recording switches",
+    body: "What gets recorded, for everyone. Turn a category off and every open tab stops sending it within a few minutes; turn recording off for one person in the People table. Patient data and typed text are never recorded.",
+    placement: "bottom",
+  },
+  {
+    target: "usage-routes",
+    title: "Where the time goes",
+    body: "Total time spent per screen, with how often it was opened and the average stay. The screens at the top are where an improvement pays off most.",
+    placement: "top",
+  },
+  {
+    target: "usage-friction",
+    title: "Friction signals",
+    body: "Screens people leave within seconds, flip back and forth from, click repeatedly on the same spot, or click without anything happening. Each is a place the interface is making someone think.",
+    placement: "top",
+  },
+  {
+    target: "usage-people",
+    title: "People",
+    body: "One row per person. Open a row for their sessions, and a session for the full timeline with a mouse replay -- watch one afternoon of real work.",
+    placement: "top",
+  },
+];

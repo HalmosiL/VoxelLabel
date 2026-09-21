@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
 
 import keycloak from "../keycloak";
+import { trackAction } from "../usage/tracker";
 
 /** Appends this session's tokens to a ct-annotator URL as a URL
  * *fragment* -- never the query string or anywhere else a server
@@ -42,6 +43,7 @@ export function withViewerHandoff(url: string): string {
  * is about to follow -- closing that staleness window instead of
  * trusting whatever was baked in at render. */
 export function refreshViewerHandoffOnClick(e: MouseEvent<HTMLAnchorElement>): void {
+  trackAction("open_viewer");
   const base = e.currentTarget.href.split("#")[0];
   e.currentTarget.href = withViewerHandoff(base);
 }

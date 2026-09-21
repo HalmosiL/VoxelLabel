@@ -29,6 +29,7 @@ const navGroups = [
       { to: "/jobs", label: "Jobs", icon: ClipboardListIcon },
       { to: "/notifications", label: "Notifications", icon: BellIcon },
       { to: "/system", label: "System", icon: ServerIcon },
+      { to: "/usage", label: "Usage", icon: ChartIcon },
     ],
   },
 ];
@@ -321,6 +322,15 @@ function BellIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">
       <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+    </svg>
+  );
+}
+
+function ChartIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M3 3.5a.75.75 0 011.5 0v11.75h12a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75V3.5z" />
+      <path d="M6.5 12.25a.75.75 0 01-.53-1.28l3-3a.75.75 0 011.06 0l1.72 1.72 3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L9.5 9.56l-2.47 2.47a.75.75 0 01-.53.22z" />
     </svg>
   );
 }

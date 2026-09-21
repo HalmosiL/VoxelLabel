@@ -16,6 +16,7 @@ import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
 import { STUDIES_STEPS } from "../guide/adminSteps";
 import { useRegisterGuide } from "../guide/GuideContext";
+import { trackAction } from "../usage/tracker";
 
 type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | { mode: "duplicate"; study: Study } | null;
 
@@ -180,6 +181,7 @@ function StudyFormModal({
         await updateStudy(editing.id, name, description);
       } else {
         await createStudy(name, description);
+        trackAction("study.create");
       }
       onSaved();
     } catch (err) {

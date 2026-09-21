@@ -25,6 +25,7 @@ import {
   SurfaceConfig,
 } from "../api/annotatorApi";
 import { ApiError } from "../api/client";
+import { trackAction } from "../usage/tracker";
 import DocumentPanel, { DocumentSource } from "../components/DocumentPanel";
 import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnswers } from "../components/ObjectForm";
 import SliceControl from "../components/SliceControl";
@@ -402,6 +403,10 @@ export default function ViewerPage() {
   // repeat request for the same object re-open / re-scroll it.
   const [formRequest, setFormRequest] = useState<{ objectId: number; nonce: number } | null>(null);
   const [tool, setTool] = useState<DrawTool>("cursor");
+  function selectTool(next: DrawTool) {
+    if (next !== tool) trackAction(`tool.${next}`);
+    setTool(next);
+  }
   const tab: "view" | "annotate" = tool === "cursor" ? "view" : "annotate";
   // If a restriction loads in (or changes) after the user already picked
   // a tool it no longer allows, fall back to Cursor rather than leaving
@@ -1069,6 +1074,7 @@ export default function ViewerPage() {
 
   function addLabel(name: string) {
     if (!name.trim()) return;
+    trackAction("label.add");
     const id = nextLabelIdRef.current++;
     const color = LABEL_COLOR_PALETTE[labels.length % LABEL_COLOR_PALETTE.length];
     setLabels((prev) => [...prev, { id, name: name.trim(), color }]);
@@ -1092,6 +1098,7 @@ export default function ViewerPage() {
       setError(`Can't create more than ${MAX_OBJECT_ID} objects in one series.`);
       return;
     }
+    trackAction("object.add");
     const id = nextObjectIdRef.current++;
     const instanceNumber = objects.filter((o) => o.label_id === labelId).length + 1;
     setObjects((prev) => [...prev, { id, label_id: labelId, instance_number: instanceNumber, locked: false, hidden: false }]);
@@ -2058,6 +2065,7 @@ export default function ViewerPage() {
   function undoLastMaskChange() {
     const entry = undoStackRef.current.pop();
     if (!entry || !maskVolumeRef.current) return;
+    trackAction("undo");
     redoStackRef.current.push({ ...entry, slice: captureSlice(entry.pane, entry.index) });
     if (redoStackRef.current.length > HISTORY_LIMIT) redoStackRef.current.shift();
     restoreSlice(entry.pane, entry.index, entry.slice);
@@ -2067,6 +2075,7 @@ export default function ViewerPage() {
   function redoLastMaskChange() {
     const entry = redoStackRef.current.pop();
     if (!entry || !maskVolumeRef.current) return;
+    trackAction("redo");
     undoStackRef.current.push({ ...entry, slice: captureSlice(entry.pane, entry.index) });
     if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift();
     restoreSlice(entry.pane, entry.index, entry.slice);
@@ -2131,6 +2140,7 @@ export default function ViewerPage() {
         status === "submitted" ? objects.map((o) => ({ ...o, review_status: undefined })) : objects;
       if (status === "submitted") setObjects(objectsToSave);
       await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status);
+      trackAction(status === "submitted" ? "mark_annotated" : "save");
       refreshAnnotations();
 
       if (status === "submitted" && jobId) {
@@ -2193,6 +2203,7 @@ export default function ViewerPage() {
         })
         .join("; ");
       await submitAnnotationReview(saved.id, decision, comment || undefined);
+      trackAction("submit_review");
       refreshAnnotations();
       advanceJobStatusAfterRun();
       showSavedMessage(decision === "approve" ? "✓ Review approved" : "✕ Review rejected");
@@ -3292,7 +3303,7 @@ export default function ViewerPage() {
 
       <div className="relative flex min-h-0 flex-1">
         {!reviewMode && (
-          <IconToolbar tool={tool} onSelect={setTool} canDraw={activeObjectId !== null} allowedTools={effectiveSurface?.tools ?? null} />
+          <IconToolbar tool={tool} onSelect={selectTool} canDraw={activeObjectId !== null} allowedTools={effectiveSurface?.tools ?? null} />
         )}
 
         {/* `safe center`: centred when the panes fit, top-aligned (and
@@ -3550,6 +3561,7 @@ export default function ViewerPage() {
                 <Tip key={preset.label} title={`${preset.label} window`} description={`${PRESET_HELP[preset.label] ?? ""} Center ${preset.center}, width ${preset.width}.`} side="left">
                   <button
                     onClick={() => {
+                      trackAction(`window.${preset.label.toLowerCase().replace(/\s+/g, "-")}`);
                       setWindowCenter(preset.center);
                       setWindowWidth(preset.width);
                     }}

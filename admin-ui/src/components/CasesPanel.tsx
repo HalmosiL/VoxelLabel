@@ -10,6 +10,7 @@ import { TrashIcon } from "./icons";
 import Modal from "./Modal";
 import QuickImportModal from "./QuickImportModal";
 import SectionHeader from "./SectionHeader";
+import { trackAction } from "../usage/tracker";
 
 const PAGE_SIZE = 25;
 const IMPORT_POLL_MS = 2500;
@@ -322,6 +323,7 @@ function NewCaseModal({ studyId, onClose, onSaved }: { studyId: string; onClose:
     try {
       const patientRef = mode === "existing" ? { patientId: existingPatientId } : { externalPatientId };
       await createCase(studyId, patientRef, { accessionNumber, title });
+      trackAction("case.create", { study_id: studyId });
       onSaved();
     } catch (err) {
       setError(describeApiError(err));

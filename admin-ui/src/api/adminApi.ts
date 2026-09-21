@@ -409,6 +409,192 @@ export function listAuditLog(limit = 100): Promise<{ entries: AuditEntry[] }> {
   return apiFetch(base, `/admin/audit-log?limit=${limit}`);
 }
 
+// ---------------------------------------------------------------- usage tracking
+// See admin-service's app/usage package. Every read and the switches
+// are global-admin only; the tracker itself (src/usage/tracker.ts)
+// talks to /config and /events directly.
+
+export interface UsageSettings {
+  enabled: boolean;
+  track_pages: boolean;
+  track_actions: boolean;
+  track_clicks: boolean;
+  track_mouse: boolean;
+  track_scroll: boolean;
+  track_keys: boolean;
+  track_errors: boolean;
+  mouse_sample_ms: number;
+  retention_days: number;
+  disabled_user_ids: string[];
+  updated_at: string | null;
+}
+
+export type UsageSettingsPatch = Partial<Omit<UsageSettings, "disabled_user_ids" | "updated_at">>;
+
+export interface UsageRouteStat {
+  route: string;
+  views: number;
+  total_ms: number;
+  avg_ms: number;
+}
+
+export interface UsageTransition {
+  from: string;
+  to: string;
+  count: number;
+  sessions: number;
+}
+
+export interface UsageTask {
+  count: number;
+  median_ms: number | null;
+  mean_ms: number | null;
+}
+
+export interface UsageFrictionRow {
+  route: string;
+  rate?: number | null;
+  bounces?: number;
+  returns?: number;
+  bursts?: number;
+  clicks?: number;
+  errors?: number;
+}
+
+export interface UsageUser {
+  user_id: string;
+  username: string;
+  email: string | null;
+  sessions: number;
+  total_ms: number;
+  page_views: number;
+  pages_per_session: number;
+  avg_dwell_ms: number;
+  back_and_forth: number;
+  clicks: number;
+  clicks_per_min: number;
+  mouse_px_per_page: number;
+  annotated: number;
+  reviewed: number;
+  errors: number;
+  last_seen_at: string | null;
+}
+
+/** Either the quick "last N days" preset, or an explicit calendar
+ * window (datetime-local values, no timezone suffix -- the backend
+ * treats a naive datetime as UTC, same as every browser clock in this
+ * platform's own deployment). `to` omitted means "until now". */
+export type UsageRange = { days: number } | { from: string; to?: string };
+
+function rangeParams(range: UsageRange): URLSearchParams {
+  const params = new URLSearchParams();
+  if ("days" in range) params.set("days", String(range.days));
+  else {
+    params.set("from", range.from);
+    if (range.to) params.set("to", range.to);
+  }
+  return params;
+}
+
+export interface UsageSummary {
+  days: number;
+  since: string;
+  until: string;
+  totals: { events: number; active_users: number; sessions: number; avg_session_ms: number; errors: number };
+  tasks: { annotate: UsageTask; review: UsageTask };
+  routes: UsageRouteStat[];
+  transitions: UsageTransition[];
+  actions: { name: string; count: number }[];
+  friction: {
+    bounces: UsageFrictionRow[];
+    back_and_forth: UsageFrictionRow[];
+    rage_clicks: UsageFrictionRow[];
+    dead_clicks: UsageFrictionRow[];
+    errors: UsageFrictionRow[];
+    idle_share: number;
+  };
+  users: UsageUser[];
+  recording: { enabled: boolean; disabled_user_ids: string[] };
+}
+
+export interface UsageSession {
+  session_id: string;
+  user_id: string;
+  username: string;
+  app: "admin-ui" | "viewer";
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  page_views: number;
+  actions: number;
+  clicks: number;
+  errors: number;
+  routes: string[];
+}
+
+export interface UsageEventRow {
+  id: string;
+  user_id: string;
+  session_id: string;
+  app: "admin-ui" | "viewer";
+  event_type: string;
+  route: string;
+  name: string | null;
+  detail: Record<string, unknown> | null;
+  duration_ms: number | null;
+  occurred_at: string;
+}
+
+export interface UsageSessionDetail {
+  session_id: string;
+  user_id: string;
+  username: string;
+  app: "admin-ui" | "viewer";
+  events: UsageEventRow[];
+}
+
+export interface UsageHeatmap {
+  route: string;
+  days: number;
+  points: { x: number; y: number; target: string | null }[];
+}
+
+export function getUsageSettings(): Promise<UsageSettings> {
+  return apiFetch(base, "/admin/usage/settings");
+}
+
+export function updateUsageSettings(patch: UsageSettingsPatch): Promise<UsageSettings> {
+  return apiFetch(base, "/admin/usage/settings", { method: "PUT", body: JSON.stringify(patch) });
+}
+
+export function setUsageUserSwitch(userId: string, enabled: boolean): Promise<UsageSettings> {
+  return apiFetch(base, `/admin/usage/settings/users/${encodeURIComponent(userId)}`, { method: "PUT", body: JSON.stringify({ enabled }) });
+}
+
+export function getUsageSummary(range: UsageRange, userId?: string | null): Promise<UsageSummary> {
+  const params = rangeParams(range);
+  if (userId) params.set("user_id", userId);
+  return apiFetch(base, `/admin/usage/summary?${params}`);
+}
+
+export function listUsageSessions(range: UsageRange, userId?: string | null, limit = 100): Promise<UsageSession[]> {
+  const params = rangeParams(range);
+  params.set("limit", String(limit));
+  if (userId) params.set("user_id", userId);
+  return apiFetch(base, `/admin/usage/sessions?${params}`);
+}
+
+export function getUsageSession(sessionId: string): Promise<UsageSessionDetail> {
+  return apiFetch(base, `/admin/usage/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export function getUsageHeatmap(route: string, range: UsageRange, userId?: string | null): Promise<UsageHeatmap> {
+  const params = rangeParams(range);
+  params.set("route", route);
+  if (userId) params.set("user_id", userId);
+  return apiFetch(base, `/admin/usage/heatmap?${params}`);
+}
+
 // ---------------------------------------------------------------- registration requests
 
 export interface RegistrationRequest {

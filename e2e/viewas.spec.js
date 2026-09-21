@@ -42,7 +42,7 @@ async function login(page, user, pass, url) {
   check("admin: rail is its own column, not inside header or aside", (await page.locator('header [data-testid="view-as"], aside [data-testid="view-as"]').count()) === 0);
   check("admin: 4 tabs", (await rail.locator('[role="tab"]').count()) === 4, await rail.locator('[role="tab"]').allInnerTexts());
   const navTexts = async () => page.locator("nav a").allInnerTexts();
-  check("admin: full nav", (await navTexts()).length === 9, await navTexts());
+  check("admin: full nav", (await navTexts()).length === 10, await navTexts());
 
   // -> Annotator
   await rail.locator('[role="tab"]', { hasText: "Annotator" }).click();
@@ -79,7 +79,7 @@ async function login(page, user, pass, url) {
   await rail.locator('[role="tab"]', { hasText: "Admin" }).click(); await page.waitForTimeout(800);
   check("admin: stays on board when switching dm->admin", page.url().includes("/workflow"), page.url());
   await page.goto(`${UI}/studies`); await page.waitForTimeout(1000);
-  check("admin: full nav back", (await navTexts()).length === 9);
+  check("admin: full nav back", (await navTexts()).length === 10);
   check("admin: chip Global admin", /Global admin/.test(await page.locator("aside").innerText()));
   check("admin: no page errors", errors.length === 0, errors);
   await ctx.close();

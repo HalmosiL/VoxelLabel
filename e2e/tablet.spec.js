@@ -91,7 +91,7 @@ async function tabletContext(browser, landscape) {
     const patients = await center(page.locator('[data-testid="sidebar"] a[href="/patients"]'));
     await page.touchscreen.tap(patients.x, patients.y); await page.waitForURL(/\/patients/); await page.waitForTimeout(500);
     check("admin-ui portrait: picking a page navigates and closes the drawer", page.url().endsWith("/patients") && (await page.locator('[data-testid="sidebar"]').getAttribute("aria-hidden")) === "true");
-    for (const path of ["/studies", "/my-jobs", "/patients", "/users", "/notifications", "/system", "/annotation-types", "/deidentification-profiles", `/studies/${F.STUDY}`, `/studies/${F.STUDY}/cases/${F.CASE}`]) {
+    for (const path of ["/studies", "/my-jobs", "/patients", "/users", "/notifications", "/system", "/usage", "/annotation-types", "/deidentification-profiles", `/studies/${F.STUDY}`, `/studies/${F.STUDY}/cases/${F.CASE}`]) {
       await page.goto(`${UI}${path}`, { waitUntil: "networkidle" }); await page.waitForTimeout(400);
       check(`admin-ui portrait ${path}: no sideways scrolling`, await noSidewaysScroll(page));
     }
@@ -142,7 +142,7 @@ async function tabletContext(browser, landscape) {
     await login(page, F.ADMIN_USER.username, F.ADMIN_USER.password, `${UI}/studies`);
     await page.waitForSelector("main", { timeout: 15000 }); await page.waitForTimeout(600);
     check("admin-ui landscape: sidebar is a fixed column (no menu button)", (await page.locator('[data-testid="sidebar"]').getAttribute("aria-hidden")) === "false" && (await page.locator('[data-testid="menu-button"]').count()) === 0);
-    for (const path of ["/studies", `/studies/${F.STUDY}`, `/studies/${F.STUDY}/cases/${F.CASE}`, "/users", "/system", `/studies/${F.STUDY}/workflow`]) {
+    for (const path of ["/studies", `/studies/${F.STUDY}`, `/studies/${F.STUDY}/cases/${F.CASE}`, "/users", "/system", "/usage", `/studies/${F.STUDY}/workflow`]) {
       await page.goto(`${UI}${path}`, { waitUntil: "networkidle" }); await page.waitForTimeout(500);
       check(`admin-ui landscape ${path}: no sideways scrolling`, await noSidewaysScroll(page));
     }

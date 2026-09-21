@@ -131,7 +131,8 @@ def keycloak(monkeypatch):
     import app.api.users
     import app.notifications.api
     import app.notifications.events
-    for mod in (app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events):
+    import app.usage.api
+    for mod in (app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events, app.usage.api):
         for name in ("list_realm_users", "get_user", "create_user", "update_user", "set_admin_role", "reset_password", "delete_user"):
             if hasattr(mod, name):
                 monkeypatch.setattr(mod, name, getattr(fake, name))

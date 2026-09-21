@@ -16,8 +16,10 @@ import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
 import StudyDetailPage from "./pages/StudyDetailPage";
 import SystemPage from "./pages/SystemPage";
+import UsagePage from "./pages/UsagePage";
 import UsersPage from "./pages/UsersPage";
 import WorkflowBoardPage from "./pages/WorkflowBoardPage";
+import UsageTracker from "./usage/UsageTracker";
 
 /** Keeps a pure annotator/reviewer (or the clinician app) on their
  * workbench: any admin-side page -- studies, patients, configuration,
@@ -42,6 +44,7 @@ export default function App() {
   // what broke the rail's sticky positioning.
   return (
     <div className="flex h-screen overflow-hidden">
+      <UsageTracker />
       <AdminViewAsRail />
       <div className="min-w-0 flex-1">
         <AppRoutes />
@@ -144,6 +147,14 @@ function AppRoutes() {
           element={
             <FullUiOnly>
               <SystemPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/usage"
+          element={
+            <FullUiOnly>
+              <UsagePage />
             </FullUiOnly>
           }
         />

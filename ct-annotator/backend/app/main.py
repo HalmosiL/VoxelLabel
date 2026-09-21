@@ -690,6 +690,34 @@ async def run_job(job_id: str, user: CurrentUser = Depends(get_current_user)) ->
     return resp.json()
 
 
+class UsageEventsBody(BaseModel):
+    events: list[dict]
+
+
+@app.get("/usage/config")
+async def usage_config(user: CurrentUser = Depends(get_current_user)) -> dict:
+    """The caller's usage-recording switches, proxied from admin-service
+    (whose CORS isn't open to this frontend's origin -- see _proxy_get).
+    The frontend's tracker polls this so an admin flipping a switch on
+    the Usage page reaches an open viewer tab too."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{ADMIN_SERVICE_URL}/admin/usage/config", headers=_auth_headers(user))
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@app.post("/usage/events")
+async def usage_events(body: UsageEventsBody, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Forwards the viewer's batched usage events verbatim; admin-service
+    validates them, stamps the caller's subject and applies the switches."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{ADMIN_SERVICE_URL}/admin/usage/events", json=body.model_dump(), headers=_auth_headers(user))
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
 class SubmitAnnotationReviewBody(BaseModel):
     decision: str
     comment: str | None = None

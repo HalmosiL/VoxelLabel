@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -755,3 +756,79 @@ class RegistrationRequest(Base):
     decided_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
     decided_by: Mapped[str | None] = mapped_column(String(255))  # the admin's Keycloak subject
     rejection_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class UsageEvent(Base):
+    """One thing a signed-in person did in admin-ui or the viewer -- a
+    page opened/left (with how long it stayed open), a curated action
+    (a viewer tool picked, Mark as Annotated, Submit review...), a click,
+    a sampled mouse trace, scroll depth, a keyboard shortcut, focus/idle
+    and JS errors. Recorded for every user so the Usage page can show
+    how the product is really used; `user_id` is always the caller's
+    own token subject, never something the client sent. Carries internal
+    ids only (study/case/series/job) -- never patient data or typed text.
+    Deliberately separate from `AuditLog`, which is the compliance record
+    of admin *state changes*; this is UX research data with a retention
+    limit (see usage_settings.retention_days)."""
+
+    __tablename__ = "usage_events"
+    __table_args__ = (
+        Index("ix_usage_events_user_occurred", "user_id", "occurred_at"),
+        Index("ix_usage_events_occurred", "occurred_at"),
+        Index("ix_usage_events_session", "session_id"),
+        Index("ix_usage_events_type_occurred", "event_type", "occurred_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Per browser tab, generated client-side; groups one sitting.
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # "admin-ui" | "viewer"
+    app: Mapped[str] = mapped_column(String(16), nullable=False)
+    # page_view | page_leave | action | click | mouse_trace | scroll |
+    # key | focus | idle | error
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Normalised path -- UUID segments replaced by ":id", no query string.
+    route: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Action/tool/key name ("tool.paint", "mark_annotated", "Ctrl+z").
+    name: Mapped[str | None] = mapped_column(String(64))
+    # Whitelisted keys only: study_id/case_id/job_id/series_id, x, y,
+    # target, points [[t, x, y], ...], depth, viewport [w, h], message.
+    detail: Mapped[dict | None] = mapped_column(JSONB)
+    # page_leave: how long the page was open; idle: how long nothing
+    # happened.
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    # The client's clock, so ordering within a session is exact even
+    # when a batch is flushed late.
+    occurred_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class UsageSettings(Base):
+    """The recording switches for usage tracking (a single row, id=1):
+    a master switch, one per data category, the mouse sampling rate,
+    how long events are kept, and which users are excluded. In the
+    database rather than env vars so a platform admin flips them from
+    the Usage page and every open tab picks the change up on its next
+    config poll -- no redeploy."""
+
+    __tablename__ = "usage_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_pages: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_actions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_clicks: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_mouse: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_scroll: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_keys: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_errors: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # How often a moving mouse is sampled into a trace, in milliseconds.
+    mouse_sample_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    # Events older than this are purged (mouse traces are bulky).
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
+    # Keycloak subjects excluded from recording; empty = everyone.
+    disabled_user_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

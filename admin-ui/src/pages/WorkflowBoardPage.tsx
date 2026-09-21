@@ -83,6 +83,7 @@ import {
   materializationEdges,
 } from "../components/workflow/boardGraph";
 import LlmChatModal from "../components/workflow/LlmChatModal";
+import { trackAction } from "../usage/tracker";
 
 const NODE_TYPES = {
   dataset: DatasetNode,
@@ -619,6 +620,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   }
 
   function handleRun(cardId: string) {
+    trackAction("run_card");
     setRunningCardId(cardId);
     runWorkflowCard(cardId)
       .then(() => refreshBoard())
