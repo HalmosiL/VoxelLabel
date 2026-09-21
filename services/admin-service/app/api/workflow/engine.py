@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from shared_models.models import AnnotationStatus, Case, WorkflowCard, WorkflowCardType, WorkflowEdge, case_tags
+from shared_models.models import AnnotationStatus, Case, CaseStageEvent, WorkflowCard, WorkflowCardType, WorkflowEdge, case_tags
 from sqlalchemy.orm import Session
 
 from app.llm_client import run_llm_turn
@@ -209,6 +209,23 @@ def _run_union(db: Session, card: WorkflowCard, now: datetime) -> None:
     )
 
 
+def _record_case_stage_entries(db: Session, card: WorkflowCard, case_ids: list[str], now: datetime) -> None:
+    """Stamps this Run's `now` as the queue-start for every case_id in
+    `case_ids` that doesn't already have one on this card -- see
+    CaseStageEvent's own docstring. Only Annotation/Review cards call
+    this (from the end of their own Run handlers, below): the other
+    card types have no assignee, so "queue" has no meaning for them."""
+    if not case_ids:
+        return
+    existing = {
+        str(row[0])
+        for row in db.query(CaseStageEvent.case_id).filter(CaseStageEvent.card_id == card.id, CaseStageEvent.case_id.in_(case_ids)).all()
+    }
+    for case_id in case_ids:
+        if str(case_id) not in existing:
+            db.add(CaseStageEvent(study_id=card.study_id, card_id=card.id, case_id=case_id, occurred_at=now))
+
+
 def _run_annotation(db: Session, card: WorkflowCard, now: datetime) -> None:
     # Union of every incoming source's cases (not "exactly one" like
     # Filter/Dataset/Review) -- this is what lets a Review card's
@@ -221,6 +238,7 @@ def _run_annotation(db: Session, card: WorkflowCard, now: datetime) -> None:
     card.output_case_ids = _union_of_incoming(
         db, card, target_handle="input", error="Annotation requires at least one incoming connection"
     )
+    _record_case_stage_entries(db, card, card.output_case_ids, now)
 
     if card.config.get("materialize_dataset"):
         # Only the subset with a real, submitted-or-approved Annotation
@@ -249,6 +267,7 @@ def _run_review(db: Session, card: WorkflowCard, now: datetime) -> None:
     edge = _single_incoming_edge(db, card)
     source = _card_or_404(db, edge.source_card_id)
     card.output_case_ids = _resolve_output(db, source, set())
+    _record_case_stage_entries(db, card, card.output_case_ids, now)
 
     # Unlike Annotation's "(annotated)" child (opt-in via
     # materialize_dataset), Review always materializes both branches on

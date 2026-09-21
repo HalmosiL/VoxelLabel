@@ -614,6 +614,64 @@ export function getUsageHeatmap(route: string, range: UsageRange, userId?: strin
   return apiFetch(base, `/admin/usage/heatmap?${params}`);
 }
 
+// ---------------------------------------------------------------- pipeline health
+// See admin-service's app/pipeline_health package. Admin only. A "leg"
+// covers one Annotation or Review card's own handling of one case:
+// queue (queued -> first touch) then work (first touch -> the card's
+// terminal action). Distinct from usage tracking -- this is the
+// clinical pipeline's own clock, not how someone used the UI.
+
+export interface PipelineLegStat {
+  count: number;
+  median_ms: number | null;
+  mean_ms: number | null;
+}
+
+export interface PipelineHealthSummary {
+  days: number;
+  since: string;
+  until: string;
+  legs: Record<string, { queue: PipelineLegStat; work: PipelineLegStat }>;
+  bottlenecks: {
+    card_id: string;
+    card_type: "annotation" | "review";
+    case_id: string;
+    case_title: string | null;
+    assignee_id: string | null;
+    assignee: string | null;
+    kind: "queue" | "work";
+    waiting_ms: number;
+    baseline_ms: number | null;
+    flagged: boolean;
+  }[];
+  assignee_load: {
+    assignee_id: string;
+    assignee: string | null;
+    card_type: "annotation" | "review";
+    open_count: number;
+    oldest_since: string;
+  }[];
+}
+
+export interface LearningCurvePoint {
+  actor_id: string;
+  username: string | null;
+  card_type: "annotation" | "review";
+  week: number;
+  median_ms: number;
+  count: number;
+}
+
+export function getPipelineHealthSummary(range: UsageRange, cardId?: string | null): Promise<PipelineHealthSummary> {
+  const params = rangeParams(range);
+  if (cardId) params.set("card_id", cardId);
+  return apiFetch(base, `/admin/pipeline-health/summary?${params}`);
+}
+
+export function getLearningCurve(): Promise<LearningCurvePoint[]> {
+  return apiFetch(base, "/admin/pipeline-health/learning-curve");
+}
+
 // ---------------------------------------------------------------- registration requests
 
 export interface RegistrationRequest {

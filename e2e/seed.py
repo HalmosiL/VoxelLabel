@@ -272,6 +272,21 @@ def reject_annotation(reviewer_token: str, annotation_id: str, comment: str) -> 
     r.raise_for_status()
 
 
+def approve_annotation(reviewer_token: str, annotation_id: str) -> None:
+    """Approves `annotation_id` -- gives pipeline-health one genuinely
+    completed Annotation-then-Review cycle (both legs' terminal action
+    reached) so its cycle-time/bottleneck/learning-curve reads have real
+    data on a fresh seed, not just the one open (rejected, still
+    pending re-annotation) case reject_annotation leaves behind."""
+    r = httpx.post(
+        f"{ANNOTATION}/annotations/{annotation_id}/review",
+        headers=_auth(reviewer_token),
+        params={"decision": "approve"},
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
 def run_card(admin_token: str, card_id: str) -> None:
     """Populates `card`'s output_case_ids (and ripples the same downstream
     -- see run_card_with_ripple) so its cases actually show up via
@@ -341,6 +356,15 @@ def main() -> None:
     primed_series_id = series_for_case(admin_token, case_ids[1])
     primed_annotation_id = submit_annotation(annotator_token, study_id, primed_series_id)
     reject_annotation(reviewer_token, primed_annotation_id, "Boundary too generous on the medial side.")
+
+    # A second, fully completed cycle (submitted then approved, on a
+    # third case) -- pipeline-health's cycle-time/bottleneck/
+    # learning-curve reads need at least one leg pair whose terminal
+    # action was actually reached on both the Annotation and Review
+    # side, not just the one still-open rejection above.
+    approved_series_id = series_for_case(admin_token, case_ids[2])
+    approved_annotation_id = submit_annotation(annotator_token, study_id, approved_series_id)
+    approve_annotation(reviewer_token, approved_annotation_id)
 
     generated = {
         "STUDY": study_id,

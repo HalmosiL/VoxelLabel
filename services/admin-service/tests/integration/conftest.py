@@ -131,8 +131,9 @@ def keycloak(monkeypatch):
     import app.api.users
     import app.notifications.api
     import app.notifications.events
+    import app.pipeline_health.api
     import app.usage.api
-    for mod in (app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events, app.usage.api):
+    for mod in (app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events, app.usage.api, app.pipeline_health.api):
         for name in ("list_realm_users", "get_user", "create_user", "update_user", "set_admin_role", "reset_password", "delete_user"):
             if hasattr(mod, name):
                 monkeypatch.setattr(mod, name, getattr(fake, name))
@@ -228,6 +229,20 @@ def make_annotation(db, study_id, series_id, subject, status):
         target_type="series", target_id=series_id, study_id=uuid.UUID(study_id), annotator_id=subject,
         type_id=atype.id, payload={"mask_volume_key": "k", "labels": [], "objects": []}, status=AnnotationStatus(status),
     )
+    db.add(row)
+    db.commit()
+    return row.id
+
+
+def make_review(db, annotation_id, reviewer, decision, comment=None):
+    """One reviewer decision on an Annotation, as annotation-service's
+    review_annotation would write it: the decision row, and the
+    Annotation's own status flipped to match."""
+    from shared_models.models import Annotation, AnnotationReview, AnnotationStatus
+    db.rollback()  # see make_annotation's own note on why
+    annotation = db.get(Annotation, annotation_id)
+    annotation.status = AnnotationStatus.APPROVED if decision == "approve" else AnnotationStatus.REJECTED
+    row = AnnotationReview(annotation_id=annotation_id, reviewer_id=reviewer, decision=decision, comment=comment)
     db.add(row)
     db.commit()
     return row.id

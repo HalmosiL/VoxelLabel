@@ -450,4 +450,22 @@ export const USAGE_STEPS: GuideStep[] = [
     body: "One row per person. Open a row for their sessions, and a session for the full timeline with a mouse replay -- watch one afternoon of real work.",
     placement: "top",
   },
+  {
+    target: "usage-cycle-time",
+    title: "Cycle time",
+    body: "How long a case really takes, split into waiting for someone to start vs. someone actively working it -- the number that actually drives turnaround.",
+    placement: "top",
+  },
+  {
+    target: "usage-bottlenecks",
+    title: "Bottlenecks",
+    body: "Cases waiting right now, flagged once a wait is unusually long for that job -- and who's carrying the biggest pile of open work.",
+    placement: "top",
+  },
+  {
+    target: "usage-learning-curve",
+    title: "Learning curve",
+    body: "Each person's own pace, week by week since their first case -- never compared to anyone else's. A falling line means the tool is getting easier for them; a flat one from week one means it was never hard to begin with.",
+    placement: "top",
+  },
 ];

@@ -100,8 +100,18 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("focusing From defaults to a real 24h window and clears the day-preset highlight", /Showing/.test(await page.locator('[data-testid="usage-range-label"]').innerText()) && !(await page.locator('[data-testid="usage-range-7"]').evaluate((el) => el.className.includes("bg-blue-600"))));
     await page.locator('[data-testid="usage-from-input"]').fill("2020-01-01T00:00");
     await page.locator('[data-testid="usage-to-input"]').fill("2020-01-02T00:00");
-    await page.waitForTimeout(800);
-    check("an empty calendar window zeroes the tiles", (await page.locator('[data-testid="usage-tiles"] .stat-value').first().innerText()) === "0");
+    // A range change now also refetches pipeline-health + its previous
+    // period alongside the usage summary, so a fixed sleep is a race
+    // under real system load (this ran fine solo, then flaked inside
+    // the full suite) -- poll for the real settled value instead.
+    const firstTile = page.locator('[data-testid="usage-tiles"] .stat-value').first();
+    let settled = null;
+    for (let i = 0; i < 20; i++) {
+      settled = await firstTile.innerText();
+      if (settled === "0") break;
+      await page.waitForTimeout(300);
+    }
+    check("an empty calendar window zeroes the tiles", settled === "0", settled);
     await page.locator('[data-testid="usage-calendar-clear"]').click();
     await page.waitForTimeout(800);
     check("clearing the calendar restores the 30-day preset", await page.locator('[data-testid="usage-range-30"]').evaluate((el) => el.className.includes("bg-blue-600")));
@@ -116,6 +126,17 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.locator('[data-testid="usage-replay-play"]').click();
     await page.waitForTimeout(400);
     check("timeline lists events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);
+
+    // Pipeline health: cycle time, bottlenecks, learning curve -- all
+    // real data from e2e/seed.py's rejected + approved cycles.
+    check("cycle-time tiles render", (await page.locator('[data-testid="usage-cycle-tiles"] .stat-card').count()) === 5);
+    check("cycle-time bar draws at least one segment", (await page.locator('[data-testid="usage-cycle-bar"] > div').count()) >= 1);
+    check("bottlenecks lists the still-open rejected case", (await page.locator('[data-testid="usage-bottleneck-row"]').count()) >= 1);
+    check("assignee load lists dr-test and/or dr-review", (await page.locator('[data-testid="usage-load-row"]').count()) >= 1);
+    const learningEmpty = (await page.locator('[data-testid="usage-learning-curve"] .empty-state').count()) === 1;
+    const learningFigures = await page.locator('[data-testid="usage-learning-curve-figure"]').count();
+    check("learning curve either has figures or explains it needs more weeks of history", learningEmpty || learningFigures >= 1, { learningEmpty, learningFigures });
+
     await page.screenshot({ path: "usage-page.png", fullPage: true });
 
     // flip the mouse switch off, save, and see it land in the annotator's config

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -832,3 +833,35 @@ class UsageSettings(Base):
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class CaseStageEvent(Base):
+    """The one fact `WorkflowCard.output_case_ids` (a plain JSONB list,
+    overwritten on every Run, no history) can't answer on its own: when
+    did a case actually become available in an Annotation/Review card's
+    queue. Recorded once, going forward, at the end of that card's own
+    Run (see engine.py's _run_annotation/_run_review) for every case_id
+    that doesn't already have a row here -- idempotent by construction,
+    so it's correct regardless of ripple/re-Run ordering, and a case
+    removed then re-added keeps its original queue-start rather than
+    looking freshly arrived.
+
+    Neither an audit trail of *who* changed *what* (AuditLog) nor a
+    record of *how* someone used the UI (UsageEvent) -- this is the
+    pipeline's own clock, the basis for cycle-time and bottleneck
+    reporting (see app/pipeline_health). Every other timestamp that
+    reporting needs (Annotation.created_at, AnnotationReview.created_at)
+    already exists and is exact; this table exists only to fill the one
+    genuine gap."""
+
+    __tablename__ = "case_stage_events"
+    __table_args__ = (
+        UniqueConstraint("card_id", "case_id", name="uq_case_stage_events_card_case"),
+        Index("ix_case_stage_events_study_occurred", "study_id", "occurred_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="CASCADE"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
+    occurred_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

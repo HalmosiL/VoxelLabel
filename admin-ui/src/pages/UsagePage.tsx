@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getLearningCurve,
+  getPipelineHealthSummary,
   getUsageHeatmap,
   getUsageSession,
   getUsageSettings,
   getUsageSummary,
+  LearningCurvePoint,
   listUsageSessions,
+  PipelineHealthSummary,
   previousRange,
   setUsageUserSwitch,
   updateUsageSettings,
@@ -136,6 +140,9 @@ export default function UsagePage() {
   const [sessionsFor, setSessionsFor] = useState<{ user_id: string; username: string } | null>(null);
   const [sessions, setSessions] = useState<UsageSession[] | null>(null);
   const [session, setSession] = useState<UsageSessionDetail | null>(null);
+  const [pipelineHealth, setPipelineHealth] = useState<PipelineHealthSummary | null>(null);
+  const [pipelineHealthPrevious, setPipelineHealthPrevious] = useState<PipelineHealthSummary | null>(null);
+  const [learningCurve, setLearningCurve] = useState<LearningCurvePoint[] | null>(null);
   useRegisterGuide("usage", USAGE_STEPS, summary !== null, false);
   const rangeKey = JSON.stringify(range);
 
@@ -163,6 +170,23 @@ export default function UsagePage() {
       setHeatRoute(summary.routes[0]?.route ?? "");
     }
   }, [summary, heatRoute]);
+
+  useEffect(() => {
+    getPipelineHealthSummary(range)
+      .then(setPipelineHealth)
+      .catch((err) => setError(describeApiError(err)));
+    setPipelineHealthPrevious(null);
+    getPipelineHealthSummary(previousRange(range))
+      .then(setPipelineHealthPrevious)
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
+  }, [rangeKey]);
+
+  useEffect(() => {
+    getLearningCurve()
+      .then(setLearningCurve)
+      .catch((err) => setError(describeApiError(err)));
+  }, []);
 
   useEffect(() => {
     if (!heatRoute) {
@@ -246,6 +270,9 @@ export default function UsagePage() {
       {summary && (
         <>
           <StatTiles summary={summary} previous={previous} />
+          {pipelineHealth && <CycleTimeCard summary={pipelineHealth} previous={pipelineHealthPrevious} />}
+          {pipelineHealth && <BottlenecksCard summary={pipelineHealth} />}
+          {learningCurve && <LearningCurveCard rows={learningCurve} />}
           <div className="grid gap-6 lg:grid-cols-2">
             <RoutesCard summary={summary} />
             <PathsCard summary={summary} />
@@ -450,6 +477,217 @@ function StatTiles({ summary, previous }: { summary: UsageSummary; previous: Usa
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- pipeline health
+
+const LEG_LABELS: Record<string, string> = {
+  annotation_queue: "Waiting to be annotated",
+  annotation_work: "Being annotated",
+  review_queue: "Waiting to be reviewed",
+  review_work: "Being reviewed",
+};
+// Same hue family throughout, light -> dark by pipeline order -- these
+// four segments are always the same four, in the same order, so no
+// legend is needed (the direct labels on the bar itself carry it).
+const LEG_COLORS: Record<string, string> = {
+  annotation_queue: "#bfdbfe",
+  annotation_work: "#3b82f6",
+  review_queue: "#fde68a",
+  review_work: "#f59e0b",
+};
+
+function CycleTimeCard({ summary, previous }: { summary: PipelineHealthSummary; previous: PipelineHealthSummary | null }) {
+  const legs = [
+    { key: "annotation_queue", ...summary.legs.annotation?.queue },
+    { key: "annotation_work", ...summary.legs.annotation?.work },
+    { key: "review_queue", ...summary.legs.review?.queue },
+    { key: "review_work", ...summary.legs.review?.work },
+  ];
+  const previousByKey: Record<string, number | null> = {
+    annotation_queue: previous?.legs.annotation?.queue.median_ms ?? null,
+    annotation_work: previous?.legs.annotation?.work.median_ms ?? null,
+    review_queue: previous?.legs.review?.queue.median_ms ?? null,
+    review_work: previous?.legs.review?.work.median_ms ?? null,
+  };
+  const total = legs.reduce((sum, leg) => sum + (leg.median_ms ?? 0), 0);
+  const totalTile = { median_ms: total || null, count: Math.min(...legs.map((l) => l.count ?? 0)) };
+
+  return (
+    <div className="card" data-testid="usage-cycle-time">
+      <h2 className="section-title">Cycle time</h2>
+      <p className="hint mb-3">How long a case actually takes to move through the pipeline, split into waiting for someone vs. someone actively working it.</p>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5" data-testid="usage-cycle-tiles">
+        {legs.map((leg) => (
+          <div key={leg.key} className="stat-card">
+            <div className="stat-value tabular-nums">{formatDuration(leg.median_ms ?? null)}</div>
+            <div className="stat-label">{LEG_LABELS[leg.key]}</div>
+            <div className="text-xs text-gray-400">{leg.count ?? 0} cases</div>
+            <div className="mt-1">
+              <DeltaChip current={leg.median_ms ?? null} previous={previousByKey[leg.key]} better="down" />
+            </div>
+          </div>
+        ))}
+        <div className="stat-card border-l-2 border-gray-200 pl-3">
+          <div className="stat-value tabular-nums">{formatDuration(totalTile.median_ms)}</div>
+          <div className="stat-label">Total (sum of medians)</div>
+        </div>
+      </div>
+      {total > 0 && (
+        <div className="mt-4">
+          <div className="flex h-6 w-full overflow-hidden rounded-sm" data-testid="usage-cycle-bar">
+            {legs
+              .filter((leg) => (leg.median_ms ?? 0) > 0)
+              .map((leg) => (
+                <div
+                  key={leg.key}
+                  style={{ width: `${((leg.median_ms ?? 0) / total) * 100}%`, background: LEG_COLORS[leg.key] }}
+                  title={`${LEG_LABELS[leg.key]}: ${formatDuration(leg.median_ms ?? null)}`}
+                />
+              ))}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+            {legs
+              .filter((leg) => (leg.median_ms ?? 0) > 0)
+              .map((leg) => (
+                <span key={leg.key} className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-sm" style={{ background: LEG_COLORS[leg.key] }} />
+                  {LEG_LABELS[leg.key]}
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BottlenecksCard({ summary }: { summary: PipelineHealthSummary }) {
+  return (
+    <div className="card" data-testid="usage-bottlenecks">
+      <h2 className="section-title">Bottlenecks</h2>
+      <p className="hint mb-3">
+        Cases currently waiting, ranked by how long. Flagged rows are waiting more than twice as long as that card's own usual wait (or, for a card with too little history yet, more than a week).
+      </p>
+      {summary.bottlenecks.length === 0 ? (
+        <EmptyState message="Nothing is currently waiting -- the pipeline is caught up." />
+      ) : (
+        <div className="table-wrap mb-4">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="py-1.5 pr-2">Case</th>
+                <th className="py-1.5 pr-2">Card</th>
+                <th className="py-1.5 pr-2">Assignee</th>
+                <th className="py-1.5 pr-2">Waiting for</th>
+                <th className="py-1.5 text-right">Waiting</th>
+                <th className="py-1.5 text-right">Usually</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.bottlenecks.map((row) => (
+                <tr key={`${row.card_id}-${row.case_id}`} className={`border-t border-gray-100 ${row.flagged ? "bg-red-50" : ""}`} data-testid="usage-bottleneck-row">
+                  <td className="py-1.5 pr-2">{row.case_title ?? row.case_id}</td>
+                  <td className="py-1.5 pr-2 capitalize">{row.card_type}</td>
+                  <td className="py-1.5 pr-2">{row.assignee ?? "Unassigned"}</td>
+                  <td className="py-1.5 pr-2">{row.kind === "queue" ? "someone to start" : "a decision"}</td>
+                  <td className={`py-1.5 text-right tabular-nums ${row.flagged ? "font-semibold text-red-700" : ""}`}>{formatDuration(row.waiting_ms)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-gray-400">{row.baseline_ms ? formatDuration(row.baseline_ms) : "no history yet"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {summary.assignee_load.length > 0 && (
+        <>
+          <h3 className="text-sm font-semibold text-gray-800">Who's carrying the load</h3>
+          <div className="table-wrap mt-1">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-gray-500">
+                  <th className="py-1.5 pr-2">Person</th>
+                  <th className="py-1.5 pr-2">Card</th>
+                  <th className="py-1.5 text-right">Open cases</th>
+                  <th className="py-1.5 pr-2 text-right">Oldest since</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.assignee_load.map((row) => (
+                  <tr key={`${row.assignee_id}-${row.card_type}`} className="border-t border-gray-100" data-testid="usage-load-row">
+                    <td className="py-1.5 pr-2">{row.assignee ?? row.assignee_id}</td>
+                    <td className="py-1.5 pr-2 capitalize">{row.card_type}</td>
+                    <td className="py-1.5 text-right tabular-nums">{row.open_count}</td>
+                    <td className="py-1.5 pr-2 text-right text-xs text-gray-500">{formatWhen(row.oldest_since)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function LearningCurveCard({ rows }: { rows: LearningCurvePoint[] }) {
+  const byPerson = useMemo(() => {
+    const grouped = new Map<string, { username: string; card_type: string; points: LearningCurvePoint[] }>();
+    for (const row of rows) {
+      const key = `${row.actor_id}:${row.card_type}`;
+      const entry = grouped.get(key) ?? { username: row.username ?? row.actor_id, card_type: row.card_type, points: [] };
+      entry.points.push(row);
+      grouped.set(key, entry);
+    }
+    for (const entry of grouped.values()) entry.points.sort((a, b) => a.week - b.week);
+    return [...grouped.values()].filter((entry) => entry.points.length >= 2);
+  }, [rows]);
+
+  return (
+    <div className="card" data-testid="usage-learning-curve">
+      <h2 className="section-title">Learning curve</h2>
+      <p className="hint mb-3">Each person's own median time per case, week by week since their first one -- never compared to anyone else's pace.</p>
+      {byPerson.length === 0 ? (
+        <EmptyState message="Not enough weeks of history yet -- this fills in as people keep working." />
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {byPerson.map((entry) => {
+            const max = Math.max(...entry.points.map((p) => p.median_ms));
+            const w = 220;
+            const h = 56;
+            const path = entry.points
+              .map((p, i) => {
+                const x = entry.points.length > 1 ? (i / (entry.points.length - 1)) * w : 0;
+                const y = h - (max ? (p.median_ms / max) * (h - 8) : 0) - 4;
+                return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+              })
+              .join(" ");
+            const trend = entry.points[entry.points.length - 1].median_ms <= entry.points[0].median_ms;
+            return (
+              <div key={`${entry.username}-${entry.card_type}`} className="rounded border border-gray-200 p-3" data-testid="usage-learning-curve-figure">
+                <div className="mb-1 flex items-center justify-between text-sm">
+                  <span className="font-medium text-gray-800">{entry.username}</span>
+                  <span className="badge badge-gray capitalize">{entry.card_type}</span>
+                </div>
+                <svg viewBox={`0 0 ${w} ${h}`} className="w-full" role="img" aria-label={`${entry.username}'s ${entry.card_type} time per case by week of tenure`}>
+                  <path d={path} fill="none" stroke={trend ? "#15803d" : "#b45309"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  {entry.points.map((p, i) => {
+                    const x = entry.points.length > 1 ? (i / (entry.points.length - 1)) * w : 0;
+                    const y = h - (max ? (p.median_ms / max) * (h - 8) : 0) - 4;
+                    return <circle key={p.week} cx={x} cy={y} r={2.5} fill={trend ? "#15803d" : "#b45309"} />;
+                  })}
+                </svg>
+                <div className="mt-1 flex justify-between text-xs text-gray-400">
+                  <span>Week {entry.points[0].week}: {formatDuration(entry.points[0].median_ms)}</span>
+                  <span>Week {entry.points[entry.points.length - 1].week}: {formatDuration(entry.points[entry.points.length - 1].median_ms)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
