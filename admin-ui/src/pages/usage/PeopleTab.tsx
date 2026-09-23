@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSummary } from "../../api/adminApi";
+import { getUsageSnapshotDocument, LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
 import LayoutBackdrop from "./LayoutBackdrop";
@@ -278,6 +278,12 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
     setHead(0);
     setPlaying(false);
   }, [session.session_id]);
+
+  // Fetch every screen of the sitting up front (they're cached), so the
+  // backdrop swaps at once when the playhead reaches a new structure.
+  useEffect(() => {
+    for (const sn of session.snapshots ?? []) getUsageSnapshotDocument(sn.id).catch(() => undefined);
+  }, [session]);
 
   // The playback clock: real time × speed, with pauses skipped.
   useEffect(() => {

@@ -150,8 +150,9 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const parsed = JSON.parse(bundle.text);
     check("JSON bundle carries every dataset", bundle.name.endsWith(".json") && parsed.summary && parsed.findings && parsed.pipeline_health && Array.isArray(parsed.learning_curve) && parsed.range, Object.keys(parsed));
     await page.locator('[data-testid="usage-export-copy-report"]').click();
-    await page.waitForTimeout(500);
-    check("copy summary reports success (or a clipboard-denied error, never a crash)", (await page.locator('[data-testid="usage-export-done"]').count()) === 1 || (await page.locator(".alert-error").count()) === 1);
+    // The report is built on the server first -- wait for either outcome.
+    const copied = await page.locator('[data-testid="usage-export-done"], .alert-error').first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+    check("copy summary reports success (or a clipboard-denied error, never a crash)", copied);
 
     // ---- Behaviour ----
     await tab("behaviour");
@@ -285,7 +286,11 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
       if (!traced) await page.waitForTimeout(250);
     }
     check("playing draws the pointer path as it happened", traced);
-    check("the replay draws the recorded screen behind the pointer and says it was an annotation job", (await page.locator('[data-testid="usage-timeline"] [data-testid="usage-screen-snapshot-frame"]').count()) === 1 && (await page.locator('[data-testid="usage-replay-job-type"]').innerText()) === "Annotation job");
+    // The screen's document is fetched on its own -- give it a moment.
+    await page.locator('[data-testid="usage-timeline"] [data-testid="usage-screen-snapshot-frame"]').first().waitFor({ timeout: 10000 }).catch(() => undefined);
+    const replayFrames = await page.locator('[data-testid="usage-timeline"] [data-testid="usage-screen-snapshot-frame"]').count();
+    const replayJob = await page.locator('[data-testid="usage-replay-job-type"]').allInnerTexts();
+    check("the replay draws the recorded screen behind the pointer and says it was an annotation job", replayFrames === 1 && replayJob[0] === "Annotation job", { replayFrames, replayJob });
     const clockText = await page.locator('[data-testid="usage-replay-clock"]').innerText();
     check("the replay clock advances", !clockText.startsWith("0:00 /"), clockText);
     check("the log lists the session's events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);

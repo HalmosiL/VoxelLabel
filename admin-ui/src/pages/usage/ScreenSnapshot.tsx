@@ -10,48 +10,52 @@ import { getUsageSnapshotDocument, UsageSnapshotMeta } from "../../api/adminApi"
 export default function ScreenSnapshot({ snapshot, children, dim = 0.15 }: { snapshot: UsageSnapshotMeta; children?: ReactNode; dim?: number }) {
   const [vw, vh] = snapshot.viewport;
   const box = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(0);
-  const [doc, setDoc] = useState<string | null>(null);
+  const [boxW, setBoxW] = useState(0);
+  // The document on show and the viewport it was recorded at. When the
+  // snapshot changes (a replay crossing into a new structure) the old
+  // screen stays up until the new one has loaded -- no flash of
+  // "Loading" mid-replay.
+  const [shown, setShown] = useState<{ doc: string; viewport: [number, number] } | null>(null);
   const [failed, setFailed] = useState(false);
+  const doc = shown?.doc ?? null;
 
   useEffect(() => {
     let live = true;
-    setDoc(null);
     setFailed(false);
     getUsageSnapshotDocument(snapshot.id)
-      .then((d) => live && setDoc(d))
+      .then((d) => live && setShown({ doc: d, viewport: [vw, vh] }))
       .catch(() => live && setFailed(true));
     return () => {
       live = false;
     };
-  }, [snapshot.id]);
+  }, [snapshot.id, vw, vh]);
 
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const measure = () => setScale(el.clientWidth / vw);
+    const measure = () => setBoxW(el.clientWidth);
     measure();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
     ro?.observe(el);
     return () => ro?.disconnect();
-  }, [vw]);
+  }, []);
 
   return (
     <div ref={box} className="relative w-full overflow-hidden rounded border border-gray-200 bg-gray-50" style={{ aspectRatio: `${vw} / ${vh}` }} data-testid="usage-screen-snapshot">
-      {doc && scale > 0 && (
+      {shown && boxW > 0 && (
         <iframe
           title="Recorded screen"
-          srcDoc={doc}
+          srcDoc={shown.doc}
           sandbox=""
           tabIndex={-1}
           aria-hidden="true"
           className="pointer-events-none absolute left-0 top-0 origin-top-left border-0"
-          style={{ width: vw, height: vh, transform: `scale(${scale})` }}
+          style={{ width: shown.viewport[0], height: shown.viewport[1], transform: `scale(${boxW / shown.viewport[0]})` }}
           data-testid="usage-screen-snapshot-frame"
         />
       )}
       {!doc && !failed && <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">Loading the screen…</div>}
-      {failed && <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">The recorded screen could not be loaded.</div>}
+      {failed && !doc && <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">The recorded screen could not be loaded.</div>}
       {dim > 0 && <div className="pointer-events-none absolute inset-0 bg-white" style={{ opacity: dim }} />}
       <div className="absolute inset-0">{children}</div>
     </div>
