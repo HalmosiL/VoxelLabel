@@ -9,13 +9,13 @@ import PageHeader from "../../components/PageHeader";
 import { STUDY_ANALYTICS_STEPS } from "../../guide/adminSteps";
 import { useRegisterGuide } from "../../guide/GuideContext";
 import { formatDuration, formatShortWhen } from "../usage/shared";
-import { CasesSection, LabelsSection, PeopleSection, STATE_CHIP, STATE_LABEL, WeeklyCard } from "./sections";
+import { CasesSection, LabelsSection, PeopleSection, ProblemCasesCard, STATE_CHIP, STATE_HINT, STATE_LABEL, STATE_ORDER, WeeklyCard } from "./sections";
 import WorkflowStatsGraph from "./WorkflowStatsGraph";
 
 type Tab = "workflow" | "cases" | "labels" | "people";
 const TABS: { key: Tab; label: string; question: string }[] = [
   { key: "workflow", label: "Workflow", question: "How did cases move through the board, and where do they wait?" },
-  { key: "cases", label: "Cases", question: "Where does each case stand, and how many rounds did it take?" },
+  { key: "cases", label: "Cases", question: "Where does each case stand, which steps did it go through, and which went back and forth?" },
   { key: "labels", label: "Labels", question: "What was drawn, and what gets rejected?" },
   { key: "people", label: "People", question: "Who did what, and how much time went into it?" },
 ];
@@ -53,7 +53,7 @@ export default function StudyAnalyticsPage() {
 
   const h = data?.headline;
   const name = study?.name ?? "Study";
-  const approvedShare = h && h.cases ? Math.round((h.states.approved / h.cases) * 100) : 0;
+  const doneShare = h && h.cases ? Math.round((h.states.done / h.cases) * 100) : 0;
   return (
     <div className="space-y-5" data-testid="study-analytics-page">
       <PageHeader
@@ -78,24 +78,24 @@ export default function StudyAnalyticsPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-guide="analytics-tiles" data-testid="analytics-tiles">
             <Tile
               testId="analytics-tile-progress"
-              value={`${h.states.approved} / ${h.cases}`}
-              label="Cases approved"
-              sub={`${approvedShare}% done`}
-              title="Cases of this study that entered the workflow (or were annotated), and how many are approved"
+              value={`${h.states.done} / ${h.cases}`}
+              label="Cases finished"
+              sub={`${doneShare}% · ${h.steps} job ${h.steps === 1 ? "step" : "steps"} on the board`}
+              title="Cases of this study that entered the workflow (or were annotated), and how many have nothing left after their last step"
             />
             <Tile
               testId="analytics-tile-lead"
               value={formatDuration(h.lead_time_median_ms)}
               label="Lead time per case"
-              sub="median, entered → approved"
-              title="Calendar time from a case entering the first Annotation card to its approval -- nights, weekends and every round included"
+              sub="median, entered → finished"
+              title="Calendar time from a case entering the first Annotation card to finishing its last step -- nights, weekends, every round and every review step included"
             />
             <Tile
               testId="analytics-tile-first-pass"
               value={h.first_pass_rate === null ? "–" : `${Math.round(h.first_pass_rate * 100)}%`}
-              label="Passed review first time"
-              sub={h.rounds_median === null ? undefined : `approved cases took ${h.rounds_median} ${h.rounds_median === 1 ? "round" : "rounds"} (median)`}
-              title="Share of reviewed cases approved at their first review"
+              label="Through every review first time"
+              sub={h.rounds_median === null ? undefined : `finished cases took ${h.rounds_median} ${h.rounds_median === 1 ? "round" : "rounds"} (median)`}
+              title="Share of reviewed cases no review step ever sent back"
             />
             <Tile
               testId="analytics-tile-hands-on"
@@ -106,13 +106,18 @@ export default function StudyAnalyticsPage() {
             />
           </div>
           <div className="flex flex-wrap gap-1.5 text-xs" data-testid="analytics-states">
-            {(["sent_back", "awaiting_review", "in_progress", "not_started", "approved"] as const).map((s) => (
-              <span key={s} className={STATE_CHIP[s]} title={s === "sent_back" ? "Rejected at review and not re-submitted yet" : undefined}>
+            {STATE_ORDER.filter((s) => s !== "awaiting_next" || h.states.awaiting_next > 0).map((s) => (
+              <span key={s} className={STATE_CHIP[s]} title={STATE_HINT[s]}>
                 {STATE_LABEL[s]} <span className="tabular-nums">{h.states[s]}</span>
               </span>
             ))}
+            {h.problem_cases > 0 && (
+              <button type="button" onClick={() => setTab("cases")} className="badge-red underline decoration-dotted" title="Sent back twice or more -- see the Cases tab" data-testid="analytics-problem-chip">
+                {h.problem_cases} went back and forth
+              </button>
+            )}
             <span className="ml-auto text-gray-400">
-              {h.objects} objects drawn · updated {formatShortWhen(data.generated_at)}
+              {h.objects} objects on {h.slices} slices · updated {formatShortWhen(data.generated_at)}
             </span>
           </div>
 
@@ -148,7 +153,12 @@ export default function StudyAnalyticsPage() {
               <WeeklyCard data={data} />
             </div>
           )}
-          {tab === "cases" && <CasesSection data={data} studyName={name} />}
+          {tab === "cases" && (
+            <div className="space-y-5">
+              <ProblemCasesCard data={data} studyId={studyId} />
+              <CasesSection data={data} studyName={name} studyId={studyId} />
+            </div>
+          )}
           {tab === "labels" && <LabelsSection data={data} studyName={name} />}
           {tab === "people" && <PeopleSection data={data} studyName={name} />}
         </>

@@ -185,16 +185,27 @@ A Usage oldal azt méri, **hogyan használják a felületet**. A study **Analyti
 (Study oldal → Analytics, csak study admin és data manager látja) azt méri, **mi történt
 a study eseteivel** a workflow-n. Mindig a study teljes élettartamára vonatkozik.
 
+**Több lépéses workflow.** Egy workflow-ban tetszőleges számú lépés lehet: csak
+annotálás, egy review, egy második (senior) review, vagy több annotálási lépés.
+Minden beküldés és döntés ahhoz a workflow-kártyához tartozik, ahová az eset
+legutóbb belépett, és ha lehet, ahol a szerzőhöz van kiosztva. Hogy mi jön egy lépés
+után, azt a board élei és a Review kártya approved/rejected ágai döntik el. Az eset
+akkor **kész (Finished)**, ha az utolsó lépése után a boardon nincs több lépés.
+
 | Mérőszám | Mit jelent pontosan |
 |---|---|
 | **Beküldés (round)** | Az annotátor review-ra küldte az esetet. A reviewer saját mentett verziója nem számít beküldésnek. |
-| **Döntés** | Egy review jóváhagyás vagy visszaküldés. Mindkét review-folyamat számít: a viewer objektumonkénti és az admin-ui egész annotációs döntése is. |
-| **Állapot** | A legutolsó beküldés és döntés alapján: *Approved*, *Awaiting review* (beküldve, még nincs döntés), *Being annotated* (visszaküldés után újra piszkozat van), *Sent back* (visszaküldve, még nem javították), *Not started*. |
-| **Lead time** | Naptári idő attól, hogy az eset belépett az első Annotation kártyára, az első jóváhagyásig. Minden kör benne van. |
-| **Passed review first time** | Az esetek hány %-át hagyta jóvá az első review. A csempe és a kártya ugyanabból az esettörténetből számol. |
-| **Times sent back** | A visszaküldések száma. Egy eset többször is visszakerülhet. |
+| **Döntés** | Egy review jóváhagyás vagy visszaküldés, annál a review-lépésnél, ahol történt. Mindkét review-folyamat számít: a viewer objektumonkénti és az admin-ui egész annotációs döntése is. |
+| **Útvonal (Steps)** | Az eset lépései sorban, pl. Annotation ↑ → Review ✕ → Annotation ↑ → Review ✓ → Senior review ✓. Az ismétlődő köröket a tábla „×n” formában összevonja. |
+| **Állapot** | *Finished*, *Awaiting review* (review-lépésre vár, akár egy második review-ra), *Waiting for next step* (egy következő annotálási lépésre vár), *Being annotated* (piszkozat van, vagy visszaküldés után javítják), *Sent back* (visszaküldve, még nem javították), *Not started*. |
+| **Lead time** | Naptári idő attól, hogy az eset belépett az első Annotation kártyára, addig, amíg végzett az utolsó lépéssel. |
+| **Through every review first time** | Az esetek hány %-át nem küldte vissza egyetlen review-lépés sem. |
+| **Kártya: here now** | Hány eset vár most éppen ennél a lépésnél. Ha itt sok van, ez a szűk keresztmetszet. |
+| **Kártya: Passed next review 1st time / Approved at 1st look** | Annotálási lépésnél: az utána következő review hány %-ot hagyott jóvá elsőre. Review-lépésnél: hány %-ot hagyott jóvá, amikor először látta. |
+| **Objects first → final** | Objektumok (annotált példányok) száma az első beküldéskor és a végső verzióban. A különbség az, amit az újrakörök hozzáadtak vagy elvettek. |
+| **Slices** | A DICOM-képek (instance-ok) száma az eset legnagyobb series-ében. |
+| **Went back and forth** | Legalább kétszer visszaküldött esetek. Mindegyiknél látszik az útvonal, az elutasított objektumok a megjelölt okkal (csoportosítva), és a reviewer megjegyzései. |
 | **Hands-on** | A viewerben töltött aktív idő a study jobjain, az üresjárat nélkül. Itt mindenki munkája számít, az admin fiókoké is. |
-| **Drawn / Labels** | Minden eset legutolsó beküldésének objektumai címkénként. A címkénkénti elutasítási arány a reviewer objektumonkénti döntéseiből jön. |
 
 **Használat.** A gráf megmutatja, hol áll a sor: sok „open” egy kártyán szűk
 keresztmetszet. A piros visszacsatoló vonal és a „Times sent back” az újrakör mértéke.

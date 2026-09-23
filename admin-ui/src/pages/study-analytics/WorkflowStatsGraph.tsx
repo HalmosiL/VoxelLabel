@@ -81,20 +81,23 @@ function StatNode({ data }: NodeProps<Node<StatNodeData>>) {
       <div className="mb-1.5 line-clamp-2 text-[15px] font-semibold text-gray-900">{card.title}</div>
       {job && m ? (
         <div className="space-y-0.5">
-          <div className="mb-1 flex h-1.5 overflow-hidden rounded-sm bg-gray-100" title={`${m.finished} of ${m.entered} finished`}>
-            <div className="h-full bg-emerald-500" style={{ width: `${m.entered ? (m.finished / m.entered) * 100 : 0}%` }} />
+          <div className="mb-1 flex h-1.5 overflow-hidden rounded-sm bg-gray-100" title={`${m.finished} of ${m.entered} ${card.type === "review" ? "decided" : "submitted"}`}>
+            <div className="h-full bg-emerald-500" style={{ width: `${m.entered ? Math.min(m.finished / m.entered, 1) * 100 : 0}%` }} />
           </div>
-          <Row label="Cases in · done · open" value={`${m.entered} · ${m.finished} · ${m.open}`} />
-          <Row label="Waited (median)" value={formatDuration(m.wait_median_ms)} title="From entering this card to being opened" />
+          <Row label={card.type === "review" ? "In · decided · here now" : "In · submitted · here now"} value={`${m.entered} · ${m.finished} · ${m.open}`} title="Cases that entered this step · that it has finished with · waiting here right now" tone={m.open ? "text-amber-700 font-medium" : undefined} />
+          <Row label="Waited (median)" value={formatDuration(m.wait_median_ms)} title="From entering this step to being opened" />
           <Row label="Worked (median)" value={formatDuration(m.work_median_ms)} title="From being opened to submitted / decided -- elapsed time" />
           <Row label="Hands-on / case" value={formatDuration(m.hands_on_median_ms)} title="Active time in the viewer per case, idle left out" />
           {card.type === "annotation" ? (
             <>
-              <Row label="Passed review 1st time" value={pct(m.first_pass_rate)} tone={m.first_pass_rate !== null && m.first_pass_rate !== undefined && m.first_pass_rate < 0.7 ? "text-red-700" : undefined} />
-              <Row label="Times sent back" value={String(m.sent_back ?? 0)} tone={m.sent_back ? "text-red-700" : undefined} title="Review rejections of cases from this card -- a case can be sent back more than once" />
+              <Row label="Passed next review 1st time" value={pct(m.first_pass_rate)} tone={m.first_pass_rate !== null && m.first_pass_rate < 0.7 ? "text-red-700" : undefined} title="Of this step's cases, the share the review right after approved at the first submission" />
+              <Row label="Rounds · times sent back" value={`${m.submissions ?? 0} · ${m.sent_back ?? 0}`} tone={m.sent_back ? "text-red-700" : undefined} title="Submissions from this step · how many of them a review sent back" />
             </>
           ) : (
-            <Row label="Approved · sent back" value={`${m.approved ?? 0} · ${m.rejected ?? 0}`} tone={m.rejected ? "text-red-700" : undefined} />
+            <>
+              <Row label="Approved · sent back" value={`${m.approved ?? 0} · ${m.rejected ?? 0}`} tone={m.rejected ? "text-red-700" : undefined} title="Decisions this review step made" />
+              <Row label="Approved at 1st look" value={pct(m.first_pass_rate)} title="Of the cases this step decided on, the share it approved the first time it saw them" />
+            </>
           )}
         </div>
       ) : count !== null && !muted ? (

@@ -1,24 +1,126 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
-import { CaseState, StudyAnalytics, StudyCaseRow } from "../../api/studyAnalyticsApi";
+import { CaseState, CaseStep, StudyAnalytics, StudyCaseRow } from "../../api/studyAnalyticsApi";
 import EmptyState from "../../components/EmptyState";
 import { CardHeader, DownloadCsvButton, formatDuration, formatShortWhen } from "../usage/shared";
 
 export const STATE_LABEL: Record<CaseState, string> = {
   sent_back: "Sent back",
   awaiting_review: "Awaiting review",
+  awaiting_next: "Waiting for next step",
   in_progress: "Being annotated",
   not_started: "Not started",
-  approved: "Approved",
+  done: "Finished",
+};
+
+export const STATE_HINT: Record<CaseState, string> = {
+  sent_back: "Rejected at a review and not re-submitted yet",
+  awaiting_review: "Submitted (or approved by an earlier review), waiting for a review step",
+  awaiting_next: "Passed a step; the next annotation step hasn't finished it yet",
+  in_progress: "Being annotated -- a draft is saved, or it is being reworked after a rejection",
+  not_started: "Entered the workflow, nothing saved yet",
+  done: "Nothing left after its last step: approved by the last review, or submitted where no review follows",
 };
 
 export const STATE_CHIP: Record<CaseState, string> = {
   sent_back: "badge-red",
   awaiting_review: "badge bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200",
+  awaiting_next: "badge bg-violet-50 text-violet-800 ring-1 ring-inset ring-violet-200",
   in_progress: "badge-blue",
   not_started: "badge-gray",
-  approved: "badge-green",
+  done: "badge-green",
 };
+
+export const STATE_ORDER: CaseState[] = ["sent_back", "awaiting_review", "awaiting_next", "in_progress", "not_started", "done"];
+
+const STEP_MARK: Record<CaseStep["kind"], { mark: string; tone: string; word: string }> = {
+  submitted: { mark: "↑", tone: "border-blue-200 bg-blue-50 text-blue-800", word: "sent for review" },
+  approved: { mark: "✓", tone: "border-emerald-200 bg-emerald-50 text-emerald-800", word: "approved" },
+  rejected: { mark: "✕", tone: "border-red-200 bg-red-50 text-red-800", word: "sent back" },
+};
+
+const stepKey = (p: CaseStep) => `${p.step}|${p.kind}`;
+
+/** Folds back-to-back repeats of the same round -- "Annotate ↑ → Review ✕"
+ * five times over -- into one group with a count. */
+export function compressPath(path: CaseStep[]): { steps: CaseStep[]; times: number }[] {
+  const out: { steps: CaseStep[]; times: number }[] = [];
+  let i = 0;
+  while (i < path.length) {
+    const pair = path.slice(i, i + 2);
+    let times = 1;
+    if (pair.length === 2) {
+      while (i + 2 * times + 1 < path.length && stepKey(path[i + 2 * times]) === stepKey(pair[0]) && stepKey(path[i + 2 * times + 1]) === stepKey(pair[1])) times += 1;
+    }
+    if (times > 1) {
+      out.push({ steps: pair, times });
+      i += 2 * times;
+    } else {
+      out.push({ steps: [path[i]], times: 1 });
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function StepChip({ p }: { p: CaseStep }) {
+  const m = STEP_MARK[p.kind];
+  return (
+    <span className={`whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] ${m.tone}`} title={`${p.step ?? "Outside the board"}: ${m.word} by ${p.by}, ${formatShortWhen(p.at)}`}>
+      {p.step ?? "–"} {m.mark}
+    </span>
+  );
+}
+
+/** The steps a case went through, in order: "Annotate ↑ → Review ✕ → Annotate ↑ → Review ✓".
+ * `compact` folds repeated rounds into "(Annotate ↑ → Review ✕) ×5". */
+export function CasePath({ path, compact = false }: { path: CaseStep[]; compact?: boolean }) {
+  if (path.length === 0) return <span className="text-xs text-gray-400">–</span>;
+  const groups = compact ? compressPath(path) : path.map((p) => ({ steps: [p], times: 1 }));
+  return (
+    <ol className="flex flex-wrap items-center gap-1" data-testid="analytics-case-path">
+      {groups.map((g, i) => (
+        <li key={i} className="flex items-center gap-1">
+          {i > 0 && <span className="text-gray-300">→</span>}
+          {g.times > 1 ? (
+            <span className="flex items-center gap-1 rounded-md border border-dashed border-gray-300 px-1 py-0.5" title={`This round happened ${g.times} times in a row`}>
+              {g.steps.map((p, j) => (
+                <span key={j} className="flex items-center gap-1">
+                  {j > 0 && <span className="text-gray-300">→</span>}
+                  <StepChip p={p} />
+                </span>
+              ))}
+              <span className="text-[11px] font-semibold tabular-nums text-gray-600">×{g.times}</span>
+            </span>
+          ) : (
+            <StepChip p={g.steps[0]} />
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Rejected objects grouped by object and reason: "Nodule 1 · boundary off · reviews 1-5 (5×)". */
+function groupRejected(rows: StudyCaseRow["rejected_objects"]) {
+  const groups = new Map<string, { label: string; instance: number | null; reason: string | null; reviews: number[]; comment: string | null }>();
+  for (const o of rows) {
+    const key = `${o.label}|${o.instance}|${o.reason}`;
+    const g = groups.get(key) ?? { label: o.label, instance: o.instance, reason: o.reason, reviews: [], comment: o.comment };
+    g.reviews.push(o.review);
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => b.reviews.length - a.reviews.length);
+}
+
+function CaseLink({ row, studyId }: { row: StudyCaseRow; studyId: string }) {
+  return (
+    <Link to={`/studies/${studyId}/cases/${row.case_id}`} className="font-medium text-blue-700 hover:underline" title={row.case_title ?? row.case_id}>
+      {row.case_title ?? row.case_id.slice(0, 8)}
+    </Link>
+  );
+}
 
 const REASON_LABEL: Record<string, string> = {
   boundary: "boundary off",
@@ -97,9 +199,70 @@ export function WeeklyCard({ data }: { data: StudyAnalytics }) {
   );
 }
 
-// ---------------------------------------------------------------- cases
+// ---------------------------------------------------------------- problem cases
 
-const STATE_ORDER: CaseState[] = ["sent_back", "awaiting_review", "in_progress", "not_started", "approved"];
+/** Cases that went back and forth: sent back twice or more, with what the
+ * reviewers rejected and said. */
+export function ProblemCasesCard({ data, studyId }: { data: StudyAnalytics; studyId: string }) {
+  const rows = data.cases.filter((r) => r.sent_back >= 2).sort((a, b) => b.sent_back - a.sent_back);
+  return (
+    <div className="card" data-guide="analytics-problems" data-testid="analytics-problems">
+      <CardHeader
+        title="Cases that went back and forth"
+        hint="Every case sent back at least twice, most first: the steps it went through, the objects reviewers rejected (with the reason they tagged) and what they wrote. Recurring reasons on the same kind of image usually mean the guideline or the tool, not the person."
+      />
+      {rows.length === 0 ? (
+        <EmptyState message="No case has been sent back more than once." />
+      ) : (
+        <ul className="space-y-3">
+          {rows.map((r) => (
+            <li key={r.case_id} className="rounded-lg border border-red-100 bg-red-50/30 p-3" data-testid="analytics-problem-case">
+              <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2">
+                  <CaseLink row={r} studyId={studyId} />
+                  <span className={STATE_CHIP[r.state]} title={STATE_HINT[r.state]}>
+                    {STATE_LABEL[r.state]}
+                  </span>
+                </div>
+                <span className="text-sm text-red-700">
+                  sent back <strong className="tabular-nums">{r.sent_back}×</strong> · {r.rounds} rounds{r.slices ? ` · ${r.slices} slices` : ""}
+                </span>
+              </div>
+              <CasePath path={r.path} compact />
+              {r.rejected_objects.length > 0 && (
+                <ul className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                  {groupRejected(r.rejected_objects).map((o, i) => (
+                    <li key={i} className="rounded bg-white px-1.5 py-0.5 text-gray-700 ring-1 ring-inset ring-red-200" title={o.comment ?? undefined}>
+                      <strong className="font-medium">
+                        {o.label}
+                        {o.instance ? ` ${o.instance}` : ""}
+                      </strong>{" "}
+                      · {REASON_LABEL[o.reason ?? "untagged"] ?? o.reason} · {o.reviews.length > 1 ? `rejected ${o.reviews.length}× (reviews ${o.reviews.join(", ")})` : `review ${o.reviews[0]}`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {r.review_comments.length > 0 && (
+                <ul className="mt-2 space-y-0.5 text-xs text-gray-600">
+                  {r.review_comments.map((c, i) => (
+                    <li key={i}>
+                      <span className="text-gray-400">
+                        {c.by}, {formatShortWhen(c.at)}:
+                      </span>{" "}
+                      “{c.text}”
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- cases
 
 function labelSummary(r: StudyCaseRow): string {
   return Object.entries(r.labels)
@@ -107,14 +270,14 @@ function labelSummary(r: StudyCaseRow): string {
     .join(", ");
 }
 
-export function CasesSection({ data, studyName }: { data: StudyAnalytics; studyName: string }) {
+export function CasesSection({ data, studyName, studyId }: { data: StudyAnalytics; studyName: string; studyId: string }) {
   const [filter, setFilter] = useState<CaseState | "all">("all");
   const rows = filter === "all" ? data.cases : data.cases.filter((r) => r.state === filter);
   return (
     <div className="card" data-testid="analytics-cases">
       <CardHeader
         title="Cases"
-        hint="Every case in the study's workflow: where it stands, how many rounds it took, how long from entering the workflow to approval, the hands-on time on each side, who worked on it and what was drawn. Open work first."
+        hint="Every case in the study's workflow: where it stands, the steps it went through, how long from entering the workflow to finishing, the hands-on time on each side, the images and what was drawn -- in the first submission and in the final version. Open work first; hover a step for who and when."
         actions={
           <DownloadCsvButton
             filename={csvName(studyName, "cases")}
@@ -123,18 +286,25 @@ export function CasesSection({ data, studyName }: { data: StudyAnalytics; studyN
               { header: "Case", value: (r) => r.case_title ?? r.case_id },
               { header: "Case id", value: (r) => r.case_id },
               { header: "State", value: (r) => STATE_LABEL[r.state] },
+              { header: "Waiting at", value: (r) => r.waiting_at_title },
+              { header: "Steps", value: (r) => r.path.map((p) => `${p.step ?? "-"} ${p.kind}`).join(" > ") },
               { header: "Rounds", value: (r) => r.rounds },
+              { header: "Reviews", value: (r) => r.reviews },
               { header: "Sent back", value: (r) => r.sent_back },
               { header: "Passed first time", value: (r) => r.first_pass },
               { header: "Entered", value: (r) => r.entered_at },
-              { header: "Approved", value: (r) => r.approved_at },
+              { header: "Finished", value: (r) => r.done_at },
               { header: "Lead time (ms)", value: (r) => r.lead_time_ms },
               { header: "Annotating hands-on (ms)", value: (r) => r.annotate_ms },
               { header: "Reviewing hands-on (ms)", value: (r) => r.review_ms },
               { header: "Annotators", value: (r) => r.annotators.join(" ") },
               { header: "Reviewers", value: (r) => r.reviewers.join(" ") },
-              { header: "Objects", value: (r) => r.objects },
-              { header: "Objects by label", value: (r) => labelSummary(r) },
+              { header: "Slices", value: (r) => r.slices },
+              { header: "Objects first submitted", value: (r) => r.objects_first },
+              { header: "Objects final", value: (r) => r.objects },
+              { header: "Final objects by label", value: (r) => labelSummary(r) },
+              { header: "Rejected objects", value: (r) => r.rejected_objects.map((o) => `${o.label} ${o.instance ?? ""} (${o.reason ?? "untagged"}, review ${o.review})`).join("; ") },
+              { header: "Review comments", value: (r) => r.review_comments.map((c) => c.text).join(" | ") },
             ]}
             testId="analytics-export-cases"
           />
@@ -165,42 +335,51 @@ export function CasesSection({ data, studyName }: { data: StudyAnalytics; studyN
               <tr>
                 <th>Case</th>
                 <th>State</th>
-                <th className="text-right" title="Times it was sent for review">
-                  Rounds
+                <th>Steps</th>
+                <th className="text-right" title="Times it was sent back by a review">
+                  Sent back
                 </th>
-                <th className="text-right">Sent back</th>
-                <th className="text-right" title="Entered the workflow → first approval, calendar time">
+                <th className="text-right" title="Entered the workflow → finished, calendar time">
                   Lead time
                 </th>
-                <th className="text-right" title="Active viewer time annotating, all sittings">
-                  Annotating
+                <th className="text-right" title="Active viewer time annotating · reviewing, all sittings">
+                  Hands-on
                 </th>
-                <th className="text-right" title="Active viewer time reviewing, all sittings">
-                  Reviewing
+                <th className="text-right" title="Images in its largest series">
+                  Slices
                 </th>
-                <th>Annotated by</th>
-                <th>Reviewed by</th>
-                <th>Drawn</th>
+                <th className="text-right" title="Objects in the first submission → in the final version">
+                  Objects
+                </th>
+                <th>Final version</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.case_id} data-testid="analytics-case-row">
-                  <td className="max-w-[14rem] truncate" title={r.case_title ?? r.case_id}>
-                    {r.case_title ?? r.case_id.slice(0, 8)}
+                  <td className="max-w-[12rem] truncate">
+                    <CaseLink row={r} studyId={studyId} />
                   </td>
-                  <td>
-                    <span className={STATE_CHIP[r.state]}>{STATE_LABEL[r.state]}</span>
+                  <td className="whitespace-nowrap">
+                    <span className={STATE_CHIP[r.state]} title={STATE_HINT[r.state]}>
+                      {STATE_LABEL[r.state]}
+                    </span>
+                    {r.waiting_at_title && r.state !== "done" && <div className="mt-0.5 text-[11px] text-gray-400">at {r.waiting_at_title}</div>}
                   </td>
-                  <td className="text-right tabular-nums">{r.rounds}</td>
+                  <td className="min-w-[14rem]">
+                    <CasePath path={r.path} compact />
+                  </td>
                   <td className={`text-right tabular-nums ${r.sent_back ? "font-semibold text-red-700" : ""}`}>{r.sent_back}</td>
-                  <td className="text-right tabular-nums" title={r.approved_at ? `Approved ${formatShortWhen(r.approved_at)}` : undefined}>
+                  <td className="text-right tabular-nums" title={r.done_at ? `Finished ${formatShortWhen(r.done_at)}` : undefined}>
                     {formatDuration(r.lead_time_ms)}
                   </td>
-                  <td className="text-right tabular-nums">{r.annotate_ms ? formatDuration(r.annotate_ms) : "–"}</td>
-                  <td className="text-right tabular-nums">{r.review_ms ? formatDuration(r.review_ms) : "–"}</td>
-                  <td className="text-xs text-gray-600">{r.annotators.join(", ") || "–"}</td>
-                  <td className="text-xs text-gray-600">{r.reviewers.join(", ") || "–"}</td>
+                  <td className="whitespace-nowrap text-right tabular-nums">
+                    {r.annotate_ms ? formatDuration(r.annotate_ms) : "–"} · {r.review_ms ? formatDuration(r.review_ms) : "–"}
+                  </td>
+                  <td className="text-right tabular-nums">{r.slices ?? "–"}</td>
+                  <td className="whitespace-nowrap text-right tabular-nums">
+                    {r.objects_first === null ? "–" : r.objects_first === r.objects ? r.objects : `${r.objects_first} → ${r.objects}`}
+                  </td>
                   <td className="text-xs text-gray-600">{r.objects ? labelSummary(r) : "–"}</td>
                 </tr>
               ))}
@@ -221,14 +400,15 @@ export function LabelsSection({ data, studyName }: { data: StudyAnalytics; study
     <div className="card" data-testid="analytics-labels">
       <CardHeader
         title="What was drawn"
-        hint="Per label: objects in each case's latest submission, how many cases have one, and -- from the reviewers' per-object verdicts -- how often objects of that label were rejected, and why. A label rejected far more than the others usually has an unclear definition."
+        hint="Per label: objects in the first submissions and in the final versions (the difference is what rework added or removed), how many cases have one, and -- from the reviewers' per-object verdicts -- how often objects of that label were rejected, and why. A label rejected far more than the others usually has an unclear definition."
         actions={
           <DownloadCsvButton
             filename={csvName(studyName, "labels")}
             rows={rows}
             columns={[
               { header: "Label", value: (r) => r.label },
-              { header: "Objects", value: (r) => r.objects },
+              { header: "Objects first submitted", value: (r) => r.objects_first },
+              { header: "Objects final", value: (r) => r.objects },
               { header: "Cases", value: (r) => r.cases },
               { header: "Objects reviewed", value: (r) => r.reviewed },
               { header: "Objects rejected", value: (r) => r.rejected },
@@ -247,7 +427,9 @@ export function LabelsSection({ data, studyName }: { data: StudyAnalytics; study
             <thead>
               <tr>
                 <th>Label</th>
-                <th className="w-2/5">Objects</th>
+                <th className="w-2/5" title="Objects in the final versions (first submitted → final)">
+                  Objects
+                </th>
                 <th className="text-right">Cases</th>
                 <th className="text-right" title="Objects a reviewer accepted or rejected one by one">
                   Reviewed
@@ -265,7 +447,9 @@ export function LabelsSection({ data, studyName }: { data: StudyAnalytics; study
                       <div className="h-2 flex-1 rounded-sm bg-gray-100">
                         <div className="h-2 rounded-sm bg-blue-600" style={{ width: `${(r.objects / max) * 100}%` }} />
                       </div>
-                      <span className="w-10 text-right tabular-nums">{r.objects}</span>
+                      <span className="w-16 whitespace-nowrap text-right tabular-nums" title="first submitted → final">
+                        {r.objects_first === r.objects ? r.objects : `${r.objects_first} → ${r.objects}`}
+                      </span>
                     </div>
                   </td>
                   <td className="text-right tabular-nums">{r.cases}</td>
@@ -295,7 +479,7 @@ export function PeopleSection({ data, studyName }: { data: StudyAnalytics; study
         hint={
           <>
             Each person's work on this study, both sides. Per case and per object times make people comparable only on similar cases -- read them against the Cases tab, and against the same person's earlier figures, before calling anyone slow or fast. Passed first time is the share of
-            their annotated cases approved at the first review.
+            their annotated cases that got through every review step without being sent back.
           </>
         }
         actions={
@@ -306,7 +490,7 @@ export function PeopleSection({ data, studyName }: { data: StudyAnalytics; study
               { header: "Person", value: (r) => r.username },
               { header: "Cases annotated", value: (r) => r.annotated_cases },
               { header: "Submissions", value: (r) => r.submissions },
-              { header: "Passed first time", value: (r) => r.first_pass_rate },
+              { header: "Through every review first time", value: (r) => r.first_pass_rate },
               { header: "Sent back", value: (r) => r.sent_back },
               { header: "Objects drawn", value: (r) => r.objects },
               { header: "Annotating hands-on total (ms)", value: (r) => r.annotate_total_ms },
@@ -344,7 +528,7 @@ export function PeopleSection({ data, studyName }: { data: StudyAnalytics; study
               </tr>
               <tr>
                 <th className="text-right">Cases</th>
-                <th className="text-right" title="Annotated cases approved at the first review">
+                <th className="text-right" title="Their annotated cases that got through every review without being sent back">
                   1st time
                 </th>
                 <th className="text-right">Sent back</th>

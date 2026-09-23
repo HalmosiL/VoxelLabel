@@ -13,7 +13,9 @@ const seen = () => { try { for (const k of ["studies", "study", "study-analytics
   check("an annotator on the study may not read its analytics", denied.status === 403, denied.status);
   const admin = await token("platform-admin", "platform-admin");
   const body = await (await fetch(`${F.ADMIN}/admin/studies/${F.STUDY}/analytics`, { headers: { Authorization: `Bearer ${admin}` } })).json();
-  check("the API counts the seeded cases, with one approved and one sent back", body.headline.cases >= 6 && body.headline.states.approved >= 1 && body.cases.some((c) => c.sent_back >= 1), body.headline);
+  check("the API counts the seeded cases, with one finished and one sent back", body.headline.cases >= 6 && body.headline.states.done >= 1 && body.cases.some((c) => c.sent_back >= 1), body.headline);
+  check("every case carries the steps it went through", body.cases.filter((c) => c.rounds > 0).every((c) => c.path.length >= 1 && c.path[0].kind === "submitted" && c.path[0].step), body.cases.map((c) => c.path.length));
+  check("the board's two job steps are counted", body.headline.steps === 2 && typeof body.headline.slices === "number");
 
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true });
@@ -26,10 +28,10 @@ const seen = () => { try { for (const k of ["studies", "study", "study-analytics
   await page.waitForSelector('[data-testid="analytics-tiles"]', { timeout: 30000 });
   check("the study page links to its analytics", page.url().endsWith(`/studies/${F.STUDY}/analytics`), page.url());
   check("four headline tiles", (await page.locator('[data-testid="analytics-tiles"] .stat-card').count()) === 4);
-  check("the approved tile reads n / total", /^\d+ \/ \d+$/.test(await page.locator('[data-testid="analytics-tile-progress"] .stat-value').innerText()));
+  check("the finished tile reads n / total", /^\d+ \/ \d+$/.test(await page.locator('[data-testid="analytics-tile-progress"] .stat-value').innerText()));
 
   await page.waitForSelector('[data-testid="analytics-node-annotation"]', { timeout: 20000 });
-  check("the graph draws the annotation and review cards with their figures", (await page.locator('[data-testid="analytics-node-annotation"]').innerText()).includes("Cases in · done · open") && (await page.locator('[data-testid="analytics-node-review"]').innerText()).includes("Approved · sent back"));
+  check("the graph draws the annotation and review cards with their figures", (await page.locator('[data-testid="analytics-node-annotation"]').innerText()).includes("In · submitted · here now") && (await page.locator('[data-testid="analytics-node-review"]').innerText()).includes("Approved · sent back"));
   check("the graph draws the board's connections", (await page.locator('[data-testid="analytics-graph"] .react-flow__edge').count()) >= 2);
   check("week by week shows bars", (await page.locator('[data-testid="analytics-weekly"] rect').count()) >= 1);
   await page.screenshot({ path: "study-analytics.png", fullPage: true });
@@ -41,11 +43,13 @@ const seen = () => { try { for (const k of ["studies", "study", "study-analytics
   await page.locator('[data-testid="analytics-tab-cases"]').click();
   const all = await page.locator('[data-testid="analytics-case-row"]').count();
   check("the cases tab lists every case", all === body.cases.length, { all, api: body.cases.length });
-  await page.locator('[data-testid="analytics-filter-approved"]').click();
-  const approvedRows = await page.locator('[data-testid="analytics-case-row"]').count();
-  check("filtering by state narrows the table", approvedRows === body.headline.states.approved && approvedRows < all, { approvedRows });
+  check("the cases tab lists the cases that went back and forth (or says there are none)", (await page.locator('[data-testid="analytics-problems"]').count()) === 1 && (await page.locator('[data-testid="analytics-problem-case"]').count()) === body.cases.filter((c) => c.sent_back >= 2).length);
+  check("each worked case shows its steps as a path", (await page.locator('[data-testid="analytics-case-row"] [data-testid="analytics-case-path"]').count()) >= 1);
+  await page.locator('[data-testid="analytics-filter-done"]').click();
+  const doneRows = await page.locator('[data-testid="analytics-case-row"]').count();
+  check("filtering by state narrows the table", doneRows === body.headline.states.done && doneRows < all, { doneRows });
   const casesCsv = await downloaded("analytics-export-cases");
-  check("cases CSV has rounds, lead time and who", /^\uFEFFCase,Case id,State,Rounds,Sent back,Passed first time/.test(casesCsv));
+  check("cases CSV has rounds, lead time and who", /^\uFEFFCase,Case id,State,Waiting at,Steps,Rounds,Reviews,Sent back,Passed first time/.test(casesCsv));
 
   await page.locator('[data-testid="analytics-tab-labels"]').click();
   check("the labels tab renders (a table or its empty state)", (await page.locator('[data-testid="analytics-labels"]').count()) === 1);

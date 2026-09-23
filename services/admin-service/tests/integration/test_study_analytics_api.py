@@ -23,13 +23,14 @@ def test_study_analytics_joins_the_workflow_the_annotations_and_the_viewer_work(
 
     client.as_admin()
     body = client.get(f"/admin/studies/{sid}/analytics").json()
-    assert body["headline"]["cases"] == 2 and body["headline"]["states"]["approved"] == 1 and body["headline"]["states"]["not_started"] == 1
+    assert body["headline"]["cases"] == 2 and body["headline"]["states"]["done"] == 1 and body["headline"]["states"]["not_started"] == 1
     assert body["headline"]["first_pass_rate"] == 1.0 and body["headline"]["hands_on_total_ms"] == 60_000
-    approved = next(r for r in body["cases"] if r["state"] == "approved")
-    assert approved["labels"] == {"Nodule": 2} and approved["annotators"] == ["dr-test"] and approved["reviewers"] == ["dr-review"]
-    assert approved["annotate_ms"] == 60_000 and approved["approved_at"] is not None
+    done = next(r for r in body["cases"] if r["state"] == "done")
+    assert done["labels"] == {"Nodule": 2} and done["annotators"] == ["dr-test"] and done["reviewers"] == ["dr-review"]
+    assert done["annotate_ms"] == 60_000 and done["done_at"] is not None and done["slices"] == 0
+    assert [(p["step"], p["kind"]) for p in done["path"]] == [("Annotate", "submitted"), ("Review", "approved")]
     assert body["cards"][ann["id"]]["entered"] == 2 and body["cards"][ann["id"]]["assignee"] == "dr-test"
-    assert body["labels"][0]["label"] == "Nodule" and body["labels"][0]["objects"] == 2
+    assert body["labels"][0]["label"] == "Nodule" and body["labels"][0]["objects"] == 2 and body["headline"]["steps"] == 2
     assert {p["username"] for p in body["people"]} >= {"dr-test", "dr-review"}
     assert body["weekly"] and body["weekly"][-1]["approved"] == 1
 
