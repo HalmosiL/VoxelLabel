@@ -9,6 +9,7 @@ import {
   listUsageSessions,
   setUsageUserSwitch,
   UsageHeatmap,
+  UsageJobMode,
   UsageOverview,
   UsagePerson,
   UsageRange,
@@ -117,6 +118,7 @@ export default function UsagePage() {
   const [people, setPeople] = useState<UsagePerson[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [heatRoute, setHeatRoute] = useState<string>("");
+  const [heatMode, setHeatMode] = useState<UsageJobMode | null>(null);
   const [heatmap, setHeatmap] = useState<UsageHeatmap | null>(null);
   const [sessionsFor, setSessionsFor] = useState<{ user_id: string; username: string } | null>(null);
   const [sessions, setSessions] = useState<UsageSession[] | null>(null);
@@ -172,11 +174,11 @@ export default function UsagePage() {
       return;
     }
     const seq = ++heatmapSeq.current;
-    getUsageHeatmap(heatRoute, range, userFilter || null)
+    getUsageHeatmap(heatRoute, range, userFilter || null, heatMode)
       .then((h) => seq === heatmapSeq.current && setHeatmap(h))
       .catch((err) => seq === heatmapSeq.current && setError(describeApiError(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  }, [heatRoute, rangeKey, userFilter]);
+  }, [heatRoute, rangeKey, userFilter, heatMode]);
 
   function loadSessions(who: { user_id: string; username: string }, replayLatest: boolean) {
     const seq = ++sessionsSeq.current;
@@ -345,7 +347,17 @@ export default function UsagePage() {
           onError={setError}
         />
       )}
-      {summary && tab === "behaviour" && <BehaviourTab summary={summary} heatRoute={heatRoute} onHeatRoute={setHeatRoute} heatmap={heatmap} />}
+      {summary && tab === "behaviour" && <BehaviourTab
+          summary={summary}
+          heatRoute={heatRoute}
+          onHeatRoute={(r) => {
+            setHeatRoute(r);
+            setHeatMode(null);
+          }}
+          heatmap={heatmap}
+          heatMode={heatMode}
+          onHeatMode={setHeatMode}
+        />}
       {overview && summary && tab === "friction" && <FrictionTab summary={summary} pipelineHealth={overview.pipeline} personName={chosen?.username ?? null} />}
       {summary && tab === "cases" && <CasesTab summary={summary} />}
       {overview && summary && tab === "people" && (

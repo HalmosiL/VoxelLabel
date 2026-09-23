@@ -20,6 +20,8 @@ CATEGORY_OF_EVENT = {
     "key": "track_keys",
     "error": "track_errors",
     "perf": "track_perf",
+    # the screen's layout behind the click heatmap: part of recording clicks
+    "layout": "track_clicks",
 }
 CATEGORY_FLAGS = ("track_pages", "track_actions", "track_clicks", "track_mouse", "track_scroll", "track_keys", "track_errors", "track_perf")
 

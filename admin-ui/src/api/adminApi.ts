@@ -736,10 +736,27 @@ export interface UsageSessionDetail {
   events: UsageEventRow[];
 }
 
+/** A screen as recorded boxes: [x, y, w, h, kind, label?, background?] in viewport px. */
+export interface UsageLayout {
+  elements: [number, number, number, number, "panel" | "media" | "heading" | "button" | "link" | "input", string?, string?][];
+  viewport: [number, number];
+  bg?: string;
+  occurred_at?: string;
+  app_version?: string | null;
+  mode?: UsageJobMode;
+}
+
+/** The kind of job a click was made in: an Annotation or Review card's case, or neither. */
+export type UsageJobMode = "annotation" | "review" | "other";
+
 export interface UsageHeatmap {
   route: string;
   days: number;
-  points: { x: number; y: number; target: string | null; user_id: string; dead: boolean }[];
+  points: { x: number; y: number; target: string | null; user_id: string; dead: boolean; mode: UsageJobMode }[];
+  /** Clicks per kind of job, before any mode filter. */
+  modes: Record<UsageJobMode, number>;
+  /** The screen's most recent recorded layout (in the chosen kind of job), to draw behind the clicks. */
+  layout: UsageLayout | null;
   /** Who clicked, most clicks first -- the legend's order and colour key. */
   users: { user_id: string; username: string; clicks: number }[];
 }
@@ -795,10 +812,11 @@ export function getUsageSession(sessionId: string): Promise<UsageSessionDetail> 
   return apiFetch(base, `/admin/usage/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-export function getUsageHeatmap(route: string, range: UsageRange, userId?: string | null): Promise<UsageHeatmap> {
+export function getUsageHeatmap(route: string, range: UsageRange, userId?: string | null, mode?: UsageJobMode | null): Promise<UsageHeatmap> {
   const params = rangeParams(range);
   params.set("route", route);
   if (userId) params.set("user_id", userId);
+  if (mode) params.set("mode", mode);
   return apiFetch(base, `/admin/usage/heatmap?${params}`);
 }
 

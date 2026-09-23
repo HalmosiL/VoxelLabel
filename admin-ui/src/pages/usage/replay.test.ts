@@ -16,8 +16,10 @@ const EVENTS = [
   ev("page_view", "/viewer/:id", 90, { viewport: [1600, 900] }),
   // trace starts at 2 000 ms; points are relative to that start
   ev("mouse_trace", "/viewer/:id", 2000, { viewport: [1600, 900], points: [[0, 100, 100], [200, 200, 150], [400, 300, 200]] }),
+  ev("layout", "/viewer/:id", 2500, { elements: [[0, 0, 300, 900, "panel"]], viewport: [1600, 900] }),
   ev("click", "/viewer/:id", 3000, { x: 300, y: 200, target: "testid:tool-cursor", viewport: [1600, 900] }),
   ev("key", "/viewer/:id", 3100, null, { name: "Escape" }),
+  ev("perf", "/viewer/:id", 3200, { endpoint: "/volume", count: 3, ms: 900, max: 400, slow: 0, failures: 0 }),
   // a long pause, then one more click
   ev("click", "/viewer/:id", 60000, { x: 10, y: 10, target: "button:Save", viewport: [1600, 900] }),
 ];
@@ -42,6 +44,9 @@ describe("buildTimeline", () => {
     expect(tl.marks.map((m) => m.event.event_type)).toEqual(["page_view", "page_leave", "page_view", "click", "key", "click"]);
     expect(tl.duration).toBe(60000);
     expect(tl.ticks).toEqual([0, 90, 2000, 2200, 2400, 3000, 3100, 60000]);
+    // the layout is the page's picture, not a step in the log
+    expect(tl.pages[1].layout?.elements).toEqual([[0, 0, 300, 900, "panel"]]);
+    expect(tl.pages[0].layout).toBeNull();
   });
 
   it("handles an empty session", () => {

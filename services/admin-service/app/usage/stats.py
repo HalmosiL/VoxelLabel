@@ -731,18 +731,50 @@ def per_user(events: list[dict], effort: list[dict] | None = None) -> list[dict]
 def click_points(events: list[dict], route: str) -> list[dict]:
     """Every click on `route`, normalised to 0..1 by the viewport it was
     recorded in, so clicks from differently sized windows overlay. Each
-    carries who clicked, so the heatmap can colour people apart, and
-    whether it was dead. Tutorial-overlay clicks are left out."""
+    carries who clicked, whether it was dead, and the job it was made in
+    (the job_id of the page view it happened on -- the API turns that
+    into annotation / review). Tutorial-overlay clicks are left out.
+    `events` may include the route's page views (for the job) and any
+    other event types, which are ignored."""
     points = []
-    for e in events:
-        if e["event_type"] != "click" or e["route"] != route or _is_guide_click(e):
-            continue
-        d = e.get("detail") or {}
-        viewport = d.get("viewport") or []
-        if len(viewport) != 2 or not viewport[0] or not viewport[1] or "x" not in d or "y" not in d:
-            continue
-        points.append({"x": round(d["x"] / viewport[0], 4), "y": round(d["y"] / viewport[1], 4), "target": d.get("target"), "user_id": e["user_id"], "dead": _click_signal(e) is True})
+    for rows in _by_session([e for e in events if e["route"] == route]).values():
+        job_id = None
+        for e in rows:
+            if e["event_type"] == "page_view":
+                job_id = (e.get("detail") or {}).get("job_id")
+                continue
+            if e["event_type"] != "click" or _is_guide_click(e):
+                continue
+            d = e.get("detail") or {}
+            viewport = d.get("viewport") or []
+            if len(viewport) != 2 or not viewport[0] or not viewport[1] or "x" not in d or "y" not in d:
+                continue
+            points.append(
+                {
+                    "x": round(d["x"] / viewport[0], 4),
+                    "y": round(d["y"] / viewport[1], 4),
+                    "target": d.get("target"),
+                    "user_id": e["user_id"],
+                    "dead": _click_signal(e) is True,
+                    "job_id": job_id,
+                }
+            )
     return points
+
+
+def screen_layouts(events: list[dict], route: str) -> list[dict]:
+    """The recorded layouts of `route` (see the tracker's captureLayout),
+    newest first, each with the job it was taken in."""
+    out = []
+    for rows in _by_session([e for e in events if e["route"] == route]).values():
+        job_id = None
+        for e in rows:
+            if e["event_type"] == "page_view":
+                job_id = (e.get("detail") or {}).get("job_id")
+            elif e["event_type"] == "layout" and (e.get("detail") or {}).get("elements"):
+                out.append({"occurred_at": e["occurred_at"], "job_id": job_id, "app_version": e.get("app_version"), **e["detail"]})
+    out.sort(key=lambda r: _ms(r["occurred_at"]), reverse=True)
+    return out
 
 
 def summarize(events: list[dict]) -> dict:

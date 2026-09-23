@@ -26,6 +26,13 @@
  * measured are summed per endpoint and sent once per flush as `perf`
  * events -- which calls people wait on, and which fail.
  *
+ * Once per screen per session, shortly after it opens, the screen's
+ * *layout* is recorded (`layout` events): where its panels, buttons,
+ * inputs, headings and images are, with short control labels -- enough
+ * to draw a miniature of the screen behind the click heatmap and the
+ * replay. Never pixels: an image, canvas or video (the CT slices) is
+ * only a grey "image" block, and no field's value is ever read.
+ *
  * Every category has a switch a platform admin flips on the Usage page;
  * the effective config is fetched at start and re-polled, so a change
  * reaches every open tab. Nothing here may ever break the app: every
@@ -47,7 +54,8 @@ export type UsageEventType =
   | "focus"
   | "idle"
   | "error"
-  | "perf";
+  | "perf"
+  | "layout";
 
 export interface UsageConfig {
   enabled: boolean;
@@ -64,7 +72,8 @@ export interface UsageConfig {
   rating_every_n?: number;
 }
 
-export type UsageDetail = Record<string, string | number | boolean | number[] | number[][] | null | undefined>;
+export type LayoutElement = [number, number, number, number, string, string?, string?];
+export type UsageDetail = Record<string, string | number | boolean | number[] | number[][] | LayoutElement[] | null | undefined>;
 
 export interface UsageEvent {
   session_id: string;
@@ -117,6 +126,8 @@ const CATEGORY: Record<UsageEventType, keyof UsageConfig> = {
   key: "track_keys",
   error: "track_errors",
   perf: "track_perf",
+  // the screen behind the click heatmap -- rides on the clicks switch
+  layout: "track_clicks",
 };
 
 const OFF: UsageConfig = {
@@ -163,6 +174,9 @@ interface State {
   /** API timings since the last flush, per normalised endpoint. */
   perf: Map<string, { count: number; ms: number; max: number; slow: number; failures: number }>;
   perfObserver: PerformanceObserver | null;
+  /** Screens whose layout was already recorded this session. */
+  layouts: Set<string>;
+  layoutTimer: number;
 }
 
 const state: State = {
@@ -187,6 +201,8 @@ const state: State = {
   observer: null,
   perf: new Map(),
   perfObserver: null,
+  layouts: new Set(),
+  layoutTimer: 0,
 };
 
 function now(): number {
@@ -400,6 +416,106 @@ export function trackPageView(pathname: string, detail?: UsageDetail): void {
   state.wheelTicks = 0;
   state.trace = null;
   push("page_view", { detail: { ...detail, viewport: viewport(), device: inputDevice() } });
+  if (typeof window !== "undefined") {
+    window.clearTimeout(state.layoutTimer);
+    // let the screen load its data and draw before taking its layout
+    state.layoutTimer = window.setTimeout(() => recordLayout(), LAYOUT_DELAY_MS);
+  }
+}
+
+const LAYOUT_DELAY_MS = 2500;
+const MAX_LAYOUT_ELEMENTS = 350;
+const LAYOUT_SELECTOR =
+  'button, a[href], input, select, textarea, [role="button"], [role="tab"], canvas, img, video, svg, h1, h2, h3, nav, aside, header, main, section, [data-guide], [data-testid]';
+const PANEL_TAGS = new Set(["nav", "aside", "header", "main", "section"]);
+
+function colorOf(el: Element): string | undefined {
+  try {
+    const bg = window.getComputedStyle(el).backgroundColor;
+    return bg && bg !== "transparent" && !bg.startsWith("rgba(0, 0, 0, 0)") ? bg.slice(0, 32) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function shortLabel(el: Element): string | undefined {
+  const aria = el.getAttribute("aria-label") ?? el.getAttribute("title");
+  const text = (aria ?? el.textContent ?? "").trim().replace(/\s+/g, " ").replace(ID_LIKE, "#");
+  return text ? text.slice(0, 28) : undefined;
+}
+
+/** The current screen as boxes: [x, y, w, h, kind, label?, background?]
+ * in viewport pixels. Kinds: panel, media, heading, button, link, input.
+ * Media is only its box; inputs carry no label and never their value. */
+export function captureLayout(root: ParentNode = document): { elements: LayoutElement[]; viewport: number[]; bg?: string } {
+  const [vw, vh] = viewport();
+  const out: LayoutElement[] = [];
+  const nodes = Array.from(root.querySelectorAll(LAYOUT_SELECTOR)).slice(0, 4000);
+  for (const el of nodes) {
+    if (out.length >= MAX_LAYOUT_ELEMENTS) break;
+    if (el.closest("[data-guide-overlay]")) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4 || r.right <= 0 || r.bottom <= 0 || r.left >= vw || r.top >= vh) continue;
+    const tag = el.tagName.toLowerCase();
+    const area = r.width * r.height;
+    let kind: string | null = null;
+    let label: string | undefined;
+    let bg: string | undefined;
+    if (tag === "canvas" || tag === "img" || tag === "video" || (tag === "svg" && area > 4000)) kind = "media";
+    else if (tag === "svg") continue;
+    else if (tag === "input" || tag === "select" || tag === "textarea") kind = "input";
+    else if (tag === "button" || el.getAttribute("role") === "button" || el.getAttribute("role") === "tab") {
+      kind = "button";
+      label = shortLabel(el);
+      bg = colorOf(el);
+    } else if (tag === "a") {
+      kind = "link";
+      label = shortLabel(el);
+    } else if (tag === "h1" || tag === "h2" || tag === "h3") {
+      kind = "heading";
+      label = shortLabel(el);
+    } else if ((PANEL_TAGS.has(tag) || el.hasAttribute("data-guide") || el.hasAttribute("data-testid")) && area >= vw * vh * 0.01) {
+      kind = "panel";
+      bg = colorOf(el);
+    }
+    if (!kind) continue;
+    const box: LayoutElement = [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height), kind];
+    if (label || bg) box.push(label ?? "");
+    if (bg) box.push(bg);
+    out.push(box);
+  }
+  // panels first, so everything else draws on top of them
+  const order: Record<string, number> = { panel: 0, media: 1, heading: 2, input: 3, link: 4, button: 5 };
+  out.sort((a, b) => order[a[4]] - order[b[4]]);
+  let pageBg: string | undefined;
+  try {
+    pageBg = colorOf(document.body) ?? colorOf(document.documentElement);
+  } catch {
+    pageBg = undefined;
+  }
+  return { elements: out, viewport: [vw, vh], bg: pageBg };
+}
+
+const LAYOUT_RETRY_MS = 4000;
+
+function recordLayout(retried = false): void {
+  if (!state.options || state.route === null || (state.configKnown && !allows("layout"))) return;
+  const [vw] = viewport();
+  const key = `${state.route}|${state.pageDetail?.job_id ?? ""}|${Math.round(vw / 200)}`;
+  if (state.layouts.has(key)) return;
+  try {
+    const layout = captureLayout();
+    // a viewer page whose image hasn't drawn yet isn't the screen people
+    // work on -- give it one more chance
+    if (!retried && state.route.startsWith("/viewer") && !layout.elements.some((b) => b[4] === "media")) {
+      state.layoutTimer = window.setTimeout(() => recordLayout(true), LAYOUT_RETRY_MS);
+      return;
+    }
+    state.layouts.add(key);
+    push("layout", { detail: layout });
+  } catch {
+    // never let tracking surface as an app error
+  }
 }
 
 export function trackAction(name: string, detail?: UsageDetail): void {
@@ -665,6 +781,7 @@ export function _reset(): void {
     state.pendingClicks.forEach((p) => window.clearTimeout(p.timer));
     state.observer?.disconnect();
     state.perfObserver?.disconnect();
+    window.clearTimeout(state.layoutTimer);
   }
   Object.assign(state, {
     options: null,
@@ -688,5 +805,7 @@ export function _reset(): void {
     observer: null,
     perf: new Map(),
     perfObserver: null,
+    layouts: new Set(),
+    layoutTimer: 0,
   });
 }

@@ -1,11 +1,26 @@
 import { useState } from "react";
 
-import { UsageHeatmap, UsageSummary } from "../../api/adminApi";
+import { UsageHeatmap, UsageJobMode, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
-import { ACCENT, BarList, CardHeader, DownloadCsvButton, formatDuration } from "./shared";
+import LayoutBackdrop from "./LayoutBackdrop";
+import { ACCENT, BarList, CardHeader, DownloadCsvButton, formatDuration, formatShortWhen } from "./shared";
 
-export default function BehaviourTab({ summary, heatRoute, onHeatRoute, heatmap }: { summary: UsageSummary; heatRoute: string; onHeatRoute: (r: string) => void; heatmap: UsageHeatmap | null }) {
+export default function BehaviourTab({
+  summary,
+  heatRoute,
+  onHeatRoute,
+  heatmap,
+  heatMode,
+  onHeatMode,
+}: {
+  summary: UsageSummary;
+  heatRoute: string;
+  onHeatRoute: (r: string) => void;
+  heatmap: UsageHeatmap | null;
+  heatMode: UsageJobMode | null;
+  onHeatMode: (m: UsageJobMode | null) => void;
+}) {
   return (
     <div className="space-y-5">
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -17,7 +32,7 @@ export default function BehaviourTab({ summary, heatRoute, onHeatRoute, heatmap 
         <ToolTimeCard summary={summary} />
       </div>
       <ActionsCard summary={summary} />
-      <HeatmapCard summary={summary} route={heatRoute} onRoute={onHeatRoute} heatmap={heatmap} />
+      <HeatmapCard summary={summary} route={heatRoute} onRoute={onHeatRoute} heatmap={heatmap} mode={heatMode} onMode={onHeatMode} />
     </div>
   );
 }
@@ -283,8 +298,46 @@ const USER_COLORS = ["#2563eb", "#d97706", "#7c3aed", "#0891b2", "#db2777"];
 const OTHERS_COLOR = "#9ca3af";
 const OTHERS = "__others__";
 
-function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSummary; route: string; onRoute: (r: string) => void; heatmap: UsageHeatmap | null }) {
+const MODE_LABEL: Record<UsageJobMode, string> = { annotation: "Annotation job", review: "Review job", other: "Not in a job" };
+
+/** One click mark: a circle in an annotation job, a square in a review
+ * job, a small circle elsewhere; hollow when it got no response. */
+function ClickMark({ p, color, title }: { p: UsageHeatmap["points"][number]; color: string; title: string }) {
+  const cx = p.x * 160;
+  const cy = p.y * 90;
+  const common = { fill: p.dead ? "none" : color, fillOpacity: 0.55, stroke: p.dead ? color : "#ffffff", strokeWidth: p.dead ? 0.6 : 0.25, "data-testid": "usage-heatmap-dot", "data-dead": p.dead ? "" : undefined, "data-mode": p.mode } as const;
+  if (p.mode === "review") {
+    const r = p.dead ? 2 : 1.7;
+    return (
+      <rect x={cx - r} y={cy - r} width={r * 2} height={r * 2} {...common}>
+        <title>{title}</title>
+      </rect>
+    );
+  }
+  return (
+    <circle cx={cx} cy={cy} r={p.mode === "annotation" ? (p.dead ? 2.2 : 1.8) : 1.4} {...common}>
+      <title>{title}</title>
+    </circle>
+  );
+}
+
+function HeatmapCard({
+  summary,
+  route,
+  onRoute,
+  heatmap,
+  mode,
+  onMode,
+}: {
+  summary: UsageSummary;
+  route: string;
+  onRoute: (r: string) => void;
+  heatmap: UsageHeatmap | null;
+  mode: UsageJobMode | null;
+  onMode: (m: UsageJobMode | null) => void;
+}) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [showScreen, setShowScreen] = useState(true);
   const users = heatmap?.users ?? [];
   const colorOf = new Map<string, string>(summary.users.slice(0, USER_COLORS.length).map((u, i) => [u.user_id, USER_COLORS[i]]));
   const named = users.filter((u) => colorOf.has(u.user_id));
@@ -293,6 +346,9 @@ function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSumma
   const single = users.length <= 1;
   const points = (heatmap?.points ?? []).filter((p) => !hidden.has(keyOf(p.user_id)));
   const nameOf = new Map(users.map((u) => [u.user_id, u.username]));
+  const modes = heatmap?.modes ?? { annotation: 0, review: 0, other: 0 };
+  const inJobs = modes.annotation + modes.review > 0;
+  const layout = heatmap?.layout ?? null;
 
   function toggle(key: string) {
     setHidden((h) => {
@@ -307,7 +363,7 @@ function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSumma
     <div className="card" data-testid="usage-heatmap">
       <CardHeader
         title="Click heatmap"
-        hint="Every click on one screen, on a window scaled to 16:9, one colour per person (the same colour on every screen). A hollow ring is a click that got no response -- clusters of those are the thing to fix. Click a name to hide or show their clicks."
+        hint="Every click on one screen, drawn over a miniature of that screen, one colour per person (the same colour on every screen). A hollow mark is a click that got no response -- clusters of those are the thing to fix. In the viewer, circles are clicks in an annotation job and squares in a review job. Click a name to hide or show their clicks."
         actions={
           <select className="input" value={route} onChange={(e) => onRoute(e.target.value)} aria-label="Screen" data-testid="usage-heatmap-route">
             {summary.routes.map((r) => (
@@ -318,10 +374,38 @@ function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSumma
           </select>
         }
       />
-      {!heatmap || heatmap.points.length === 0 ? (
+      {!heatmap || (modes.annotation + modes.review + modes.other === 0 && !layout) ? (
         <EmptyState message="No clicks recorded on this screen yet." />
       ) : (
         <>
+          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+            {inJobs && (
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Kind of job" data-testid="usage-heatmap-modes">
+                {([null, "annotation", "review", "other"] as const).map((m) => {
+                  const n = m ? modes[m] : modes.annotation + modes.review + modes.other;
+                  if (m && !n) return null;
+                  return (
+                    <button
+                      key={m ?? "all"}
+                      type="button"
+                      onClick={() => onMode(m)}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs ${mode === m ? "border-blue-600 bg-blue-600 text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                      data-testid={`usage-heatmap-mode-${m ?? "all"}`}
+                    >
+                      {m === "annotation" ? "● " : m === "review" ? "■ " : ""}
+                      {m ? MODE_LABEL[m] : "All clicks"} <span className="tabular-nums opacity-75">{n}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {layout && (
+              <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                <input type="checkbox" checked={showScreen} onChange={(e) => setShowScreen(e.target.checked)} data-testid="usage-heatmap-show-screen" />
+                show the screen behind
+              </label>
+            )}
+          </div>
           {!single && (
             <ul className="mb-2 flex flex-wrap gap-x-3 gap-y-1" data-testid="usage-heatmap-legend">
               {[...named.map((u) => ({ key: u.user_id, label: u.username, clicks: u.clicks, color: colorOf.get(u.user_id) as string })), ...(others.length ? [{ key: OTHERS, label: `Others (${others.length})`, clicks: others.reduce((n, u) => n + u.clicks, 0), color: OTHERS_COLOR }] : [])].map((item) => (
@@ -335,17 +419,23 @@ function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSumma
             </ul>
           )}
           <svg viewBox="0 0 160 90" className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`${heatmap.points.length} clicks on ${heatmap.route} by ${users.length} ${users.length === 1 ? "person" : "people"}`} data-testid="usage-heatmap-svg">
+            {layout && showScreen && <LayoutBackdrop layout={layout} />}
             {points.map((p, i) => {
               const color = single ? ACCENT : (colorOf.get(p.user_id) ?? OTHERS_COLOR);
-              return (
-                <circle key={i} cx={p.x * 160} cy={p.y * 90} r={p.dead ? 2.2 : 1.8} fill={p.dead ? "none" : color} fillOpacity={0.45} stroke={p.dead ? color : "none"} strokeWidth={0.6} data-dead={p.dead ? "" : undefined}>
-                  <title>{`${nameOf.get(p.user_id) ?? p.user_id}: ${p.target ?? "click"}${p.dead ? " -- no response" : ""}`}</title>
-                </circle>
-              );
+              return <ClickMark key={i} p={p} color={color} title={`${nameOf.get(p.user_id) ?? p.user_id} · ${MODE_LABEL[p.mode]}: ${p.target ?? "click"}${p.dead ? " -- no response" : ""}`} />;
             })}
           </svg>
           <p className="hint mt-2">
-            {heatmap.points.length} clicks in this period{single && users[0] ? `, all by ${users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.
+            {heatmap.points.length} clicks{mode ? ` in ${MODE_LABEL[mode].toLowerCase()}s` : ""} in this period{single && users[0] ? `, all by ${users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.
+            {!layout && " No picture of this screen yet -- it appears once someone opens it with the current version."}
+            {layout && (
+              <span data-testid="usage-heatmap-layout-note">
+                {" "}
+                Screen recorded {formatShortWhen(layout.occurred_at)}
+                {layout.app_version ? ` (build ${layout.app_version})` : ""}
+                {layout.mode && layout.mode !== "other" ? `, in a ${MODE_LABEL[layout.mode].toLowerCase()}` : ""} -- images show as grey blocks; their content is never recorded.
+              </span>
+            )}
           </p>
         </>
       )}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { _reset, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
+import { _reset, captureLayout, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
 
 const ON: UsageConfig = {
   enabled: true,
@@ -313,5 +313,36 @@ describe("versions, devices, request timings, rating cadence", () => {
     expect([ratingDue(), ratingDue(), ratingDue(), ratingDue()]).toEqual([false, true, false, true]);
     setConfig({ ...ON, rating_every_n: 0 });
     expect(ratingDue()).toBe(false);
+  });
+});
+
+describe("screen layout", () => {
+  function place(el: Element, x: number, y: number, w: number, h: number) {
+    el.getBoundingClientRect = () => ({ left: x, top: y, width: w, height: h, right: x + w, bottom: y + h, x, y, toJSON: () => ({}) }) as DOMRect;
+    return el;
+  }
+
+  it("records boxes and short labels -- media only as a box, inputs never with their value", () => {
+    const root = document.createElement("div");
+    const panel = place(document.createElement("aside"), 0, 0, 300, 700);
+    const canvas = place(document.createElement("canvas"), 300, 0, 800, 600);
+    const button = place(document.createElement("button"), 10, 10, 120, 30);
+    button.textContent = "Mark as annotated";
+    const input = place(document.createElement("input"), 10, 50, 200, 24) as HTMLInputElement;
+    input.value = "secret";
+    const tiny = place(document.createElement("button"), 0, 0, 2, 2);
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-guide-overlay", "");
+    const tourButton = place(document.createElement("button"), 500, 500, 80, 30);
+    tourButton.textContent = "Next";
+    overlay.appendChild(tourButton);
+    root.append(panel, canvas, button, input, tiny, overlay);
+    const { elements, viewport } = captureLayout(root);
+    expect(viewport).toHaveLength(2);
+    expect(elements.map((e) => e[4])).toEqual(["panel", "media", "input", "button"]);
+    expect(elements.find((e) => e[4] === "button")?.[5]).toBe("Mark as annotated");
+    expect(elements.find((e) => e[4] === "input")).toEqual([10, 50, 200, 24, "input"]);
+    expect(JSON.stringify(elements)).not.toContain("secret");
+    expect(elements.find((e) => e[4] === "media")).toEqual([300, 0, 800, 600, "media"]);
   });
 });

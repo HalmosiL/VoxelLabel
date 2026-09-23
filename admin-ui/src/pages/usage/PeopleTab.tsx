@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
+import LayoutBackdrop from "./LayoutBackdrop";
 import { advance, buildTimeline, GAP_MS, markIndexAt, pageAt } from "./replay";
 import { ACCENT, CardHeader, DownloadCsvButton, formatDuration, formatWhen } from "./shared";
 
@@ -239,6 +240,8 @@ function describeEvent(e: UsageEventRow): string {
       return `Idle for ${formatDuration(e.duration_ms)}`;
     case "error":
       return `Error: ${typeof d.message === "string" ? d.message : "?"}`;
+    case "layout":
+      return "Screen layout recorded";
     default:
       return e.event_type;
   }
@@ -323,7 +326,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
     <div className="card" data-testid="usage-timeline">
       <CardHeader
         title={`Replay · ${session.username} · ${session.app}`}
-        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. The window is scaled to 16:9.`}
+        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them a miniature of the screen as it was (images as grey blocks), scaled to 16:9.`}
         actions={
           <DownloadCsvButton
             filename={`usage-session-${session.session_id.slice(0, 8)}.csv`}
@@ -385,8 +388,15 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
             data-testid="usage-replay-scrub"
           />
           <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
-            <span className="font-mono" data-testid="usage-replay-page">
-              {page ? page.route : "–"}
+            <span className="flex items-center gap-1.5">
+              <span className="font-mono" data-testid="usage-replay-page">
+                {page ? page.route : "–"}
+              </span>
+              {page?.jobType && (
+                <span className={page.jobType === "review" ? "badge bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200" : "badge-blue"} data-testid="usage-replay-job-type">
+                  {page.jobType === "review" ? "Review job" : "Annotation job"}
+                </span>
+              )}
             </span>
             {page && (
               <span>
@@ -398,6 +408,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
             <EmptyState message="No page views in this session." />
           ) : (
             <svg viewBox={`0 0 ${STAGE_W} ${STAGE_H}`} className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`Replay of ${page?.route ?? "the session"}`} data-testid="usage-replay-svg">
+              {page?.layout && <LayoutBackdrop layout={page.layout} width={STAGE_W} height={STAGE_H} opacity={0.5} />}
               {shownPoints.length > 1 && <polyline points={path} fill="none" stroke={ACCENT} strokeWidth={0.5} strokeOpacity={0.7} strokeLinejoin="round" />}
               {shownClicks.map((c, i) => {
                 const fresh = head - c.t <= CLICK_FLASH_MS;

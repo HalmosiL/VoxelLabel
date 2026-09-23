@@ -149,7 +149,7 @@ def test_summary_sessions_and_heatmap(client):
     assert client.get("/admin/usage/sessions/nope").status_code == 404
 
     heat = client.get("/admin/usage/heatmap", params={"route": "/my-jobs"}).json()
-    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT, "dead": False}]
+    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT, "dead": False, "mode": "other"}]
     assert heat["users"] == [{"user_id": ANNOTATOR_SUBJECT, "username": "dr-test", "clicks": 1}]
     assert client.get("/admin/usage/heatmap", params={"route": "/nothing"}).json()["points"] == []
 
@@ -342,3 +342,47 @@ def test_the_case_table_joins_viewer_work_with_what_made_the_case_hard(client, d
     assert summary["tools"]["tools"][0]["tool"] == "paint"
     assert client.get("/admin/usage/config").json()["rating_every_n"] == 3
     assert "0.1.0+test" in client.get("/admin/usage/export/events.csv").text
+
+
+def test_layouts_are_sanitised_and_the_heatmap_splits_clicks_by_job_kind(client, db):
+    """A screen layout keeps only boxes, known kinds, short masked labels
+    and CSS colours; the heatmap tells annotation-job clicks from
+    review-job clicks and draws the matching layout behind them."""
+    client.as_admin()
+    sid = make_study(client)
+    ann = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "annotation", "title": "Annotate", "position_x": 0, "position_y": 0, "config": {}}).json()
+    rev = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "review", "title": "Review", "position_x": 300, "position_y": 0, "config": {}}).json()
+    boxes = [
+        [0, 0, 300, 700, "panel", "", "rgb(26, 26, 46)"],
+        [300, 0, 800, 600, "media", "should not be kept"],
+        [10, 10, 120, 30, "button", "Patient 09a1d4c3 case", "url(javascript:1)"],
+        [10, 50, 200, 24, "input", "typed secret"],
+        [1, 2, 3, 4, "script"],
+        ["x", 0, 1, 1, "button"],
+    ]
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    click = lambda s, at: ev("click", "/viewer/:id", session=s, app="viewer", at_s=at, detail={"x": 800, "y": 450, "viewport": [1600, 900], "target": "canvas"})  # noqa: E731
+    post(
+        client,
+        [
+            ev("page_view", "/viewer/:id", session="a", app="viewer", at_s=0, detail={"job_id": ann["id"], "case_id": "c"}),
+            ev("layout", "/viewer/:id", session="a", app="viewer", at_s=2, detail={"elements": boxes, "viewport": [1600, 900], "bg": "rgb(10, 10, 20)"}),
+            click("a", 3),
+            ev("page_view", "/viewer/:id", session="r", app="viewer", at_s=10, detail={"job_id": rev["id"], "case_id": "c"}),
+            click("r", 11),
+            click("r", 12),
+        ],
+    )
+    stored = db.query(UsageEvent).filter_by(event_type="layout").one().detail
+    assert stored["elements"] == [[0, 0, 300, 700, "panel", "", "rgb(26, 26, 46)"], [300, 0, 800, 600, "media"], [10, 10, 120, 30, "button", "Patient # case"], [10, 50, 200, 24, "input"]]
+    assert stored["bg"] == "rgb(10, 10, 20)"
+
+    client.as_admin()
+    heat = client.get("/admin/usage/heatmap", params={"route": "/viewer/:id"}).json()
+    assert heat["modes"] == {"annotation": 1, "review": 2, "other": 0} and len(heat["points"]) == 3
+    assert heat["layout"]["mode"] == "annotation" and heat["layout"]["viewport"] == [1600, 900]
+    review_only = client.get("/admin/usage/heatmap", params={"route": "/viewer/:id", "mode": "review"}).json()
+    assert {p["mode"] for p in review_only["points"]} == {"review"} and review_only["layout"] is None
+    session = client.get("/admin/usage/sessions/r").json()
+    assert session["events"][0]["detail"]["job_type"] == "review"
+    assert "layout" not in client.get("/admin/usage/export/events.csv").text.split("\n", 1)[1]

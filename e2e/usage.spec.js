@@ -64,6 +64,9 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const all = posted.flatMap((b) => b.events);
     const types = new Set(all.map((e) => e.event_type));
     check("viewer shipped page_view, click, mouse_trace and key events", ["page_view", "click", "mouse_trace", "key"].every((t) => types.has(t)), [...types]);
+    const layouts = all.filter((e) => e.event_type === "layout");
+    const boxes = layouts.flatMap((e) => e.detail.elements);
+    check("viewer recorded the screen's layout once: the image as a bare block, controls with labels", layouts.length >= 1 && boxes.some((b) => b[4] === "media" && b.length === 5) && boxes.some((b) => b[4] === "button" && b[5]), layouts.map((e) => e.detail.elements.length));
     check("every viewer event carries its build", all.length > 0 && all.every((e) => typeof e.app_version === "string" && e.app_version.length > 0), [...new Set(all.map((e) => e.app_version))]);
     check("viewer page views say mouse or touch", all.some((e) => e.event_type === "page_view" && ["mouse", "touch"].includes(e.detail && e.detail.device)));
     check("viewer sent request timings per endpoint", all.some((e) => e.event_type === "perf" && e.detail && e.detail.endpoint && e.detail.count >= 1), all.filter((e) => e.event_type === "perf").slice(0, 3));
@@ -149,7 +152,15 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("navigation map draws screens and the moves between them", (await page.locator('[data-testid="usage-navmap-node"]').count()) >= 2 && (await page.locator('[data-testid="usage-navmap-edge"]').count()) >= 1);
     await page.locator('[data-testid="usage-heatmap-route"]').selectOption("/viewer/:id");
     await page.waitForTimeout(800);
-    check("heatmap shows click dots", (await page.locator('[data-testid="usage-heatmap-svg"] circle').count()) >= 1);
+    check("heatmap shows click dots", (await page.locator('[data-testid="usage-heatmap-dot"]').count()) >= 1);
+    check("the screen is drawn behind the clicks, with its image as a grey block", (await page.locator('[data-testid="usage-heatmap-svg"] [data-testid="usage-layout-backdrop"]').count()) === 1 && (await page.locator('[data-testid="usage-layout-backdrop"] text', { hasText: "image" }).count()) >= 1);
+    check("clicks are split by the kind of job they were made in", (await page.locator('[data-testid="usage-heatmap-mode-annotation"]').count()) === 1);
+    await page.locator('[data-testid="usage-heatmap-mode-annotation"]').click();
+    await page.waitForTimeout(800);
+    const modesShown = await page.locator('[data-testid="usage-heatmap-dot"]').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute("data-mode")))]);
+    check("filtering to annotation jobs leaves only annotation-job clicks", modesShown.length === 1 && modesShown[0] === "annotation", modesShown);
+    await page.locator('[data-testid="usage-heatmap-mode-all"]').click();
+    await page.waitForTimeout(800);
     // One colour per person: the legend appears once two people have
     // clicked on the screen, and hiding a person hides their dots.
     const heat = (await api(admin, `${ADMIN}/admin/usage/heatmap?route=${encodeURIComponent("/viewer/:id")}&days=7`)).body;
@@ -157,10 +168,10 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("heatmap legend lists each person who clicked (none for a single person)", heat.users.length >= 2 ? legendItems === Math.min(heat.users.length, 5) + (heat.users.length > 5 ? 1 : 0) : legendItems === 0, { users: heat.users.length, legendItems });
     check("heatmap points carry who clicked", heat.points.every((p) => typeof p.user_id === "string"));
     if (heat.users.length >= 2) {
-      const before = await page.locator('[data-testid="usage-heatmap-svg"] circle').count();
+      const before = await page.locator('[data-testid="usage-heatmap-dot"]').count();
       await page.locator('[data-testid="usage-heatmap-legend-item"]').first().click();
       await page.waitForTimeout(200);
-      const after = await page.locator('[data-testid="usage-heatmap-svg"] circle').count();
+      const after = await page.locator('[data-testid="usage-heatmap-dot"]').count();
       check("hiding a person in the legend removes their dots", after === before - heat.users[0].clicks, { before, after, clicks: heat.users[0].clicks });
       await page.locator('[data-testid="usage-heatmap-legend-item"]').first().click();
     }
@@ -247,6 +258,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
       if (!traced) await page.waitForTimeout(250);
     }
     check("playing draws the pointer path as it happened", traced);
+    check("the replay draws the screen behind the pointer and says it was an annotation job", (await page.locator('[data-testid="usage-replay-svg"] [data-testid="usage-layout-backdrop"]').count()) === 1 && (await page.locator('[data-testid="usage-replay-job-type"]').innerText()) === "Annotation job");
     const clockText = await page.locator('[data-testid="usage-replay-clock"]').innerText();
     check("the replay clock advances", !clockText.startsWith("0:00 /"), clockText);
     check("the log lists the session's events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);

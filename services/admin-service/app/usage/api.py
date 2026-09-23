@@ -49,7 +49,12 @@ ALLOWED_DETAIL_KEYS = {
     "device", "decision", "reason", "rating", "task", "step", "steps",
     # perf: one API endpoint's timings aggregated over a flush interval
     "endpoint", "count", "ms", "max", "slow", "failures",
+    # layout: the screen as boxes (see _clean_layout), and its background
+    "elements", "bg",
 }  # fmt: skip
+MAX_LAYOUT_ELEMENTS = 400
+LAYOUT_KINDS = {"panel", "media", "heading", "button", "link", "input"}
+_CSS_COLOR = re.compile(r"^(#[0-9a-fA-F]{3,8}|rgba?\([0-9., ]+\))$")
 # Id-like runs inside a control's label ("Patient 09a1d4c3…", "Case 20931")
 # become "#": they'd split one control into one row per record, and an
 # identifier is not what a usage figure is about.
@@ -57,7 +62,7 @@ _ID_LIKE = re.compile(r"[0-9A-Fa-f]{6,}|[0-9]{4,}")
 # A clock skewed this far ahead is still accepted, stamped "now".
 MAX_CLOCK_SKEW = timedelta(minutes=5)
 
-EventType = Literal["page_view", "page_leave", "action", "click", "mouse_trace", "scroll", "key", "focus", "idle", "error", "perf"]
+EventType = Literal["page_view", "page_leave", "action", "click", "mouse_trace", "scroll", "key", "focus", "idle", "error", "perf", "layout"]
 
 
 class EventIn(BaseModel):
@@ -105,6 +110,35 @@ def _require_global_admin(user: CurrentUser) -> None:
         raise HTTPException(status_code=403, detail="Admin realm role required")
 
 
+def _clean_color(value) -> str | None:
+    return value if isinstance(value, str) and len(value) <= 32 and _CSS_COLOR.match(value) else None
+
+
+def _clean_layout(value) -> list | None:
+    """[x, y, w, h, kind, label?, background?] boxes only: numbers in
+    range, a known kind, a short label with id-like runs masked, a CSS
+    colour -- anything else in a box is dropped."""
+    if not isinstance(value, list):
+        return None
+    out = []
+    for box in value[:MAX_LAYOUT_ELEMENTS]:
+        if not isinstance(box, (list, tuple)) or len(box) < 5 or box[4] not in LAYOUT_KINDS:
+            continue
+        if not all(isinstance(v, (int, float)) and -10_000 <= v <= 20_000 for v in box[:4]):
+            continue
+        clean = [int(v) for v in box[:4]] + [box[4]]
+        label = box[5] if len(box) > 5 and isinstance(box[5], str) else ""
+        color = _clean_color(box[6]) if len(box) > 6 else None
+        # only controls and headings carry words; an image or a field never does
+        label = _ID_LIKE.sub("#", label)[:40] if box[4] in ("button", "link", "heading") else ""
+        if label or color:
+            clean.append(label)
+        if color:
+            clean.append(color)
+        out.append(clean)
+    return out
+
+
 def _clean_detail(detail: dict | None) -> dict | None:
     if not detail:
         return None
@@ -120,6 +154,14 @@ def _clean_detail(detail: dict | None) -> dict | None:
                 for p in value[:MAX_TRACE_POINTS]
                 if isinstance(p, (list, tuple)) and len(p) == 3 and all(isinstance(v, (int, float)) for v in p)
             ]
+        elif key == "elements":
+            boxes = _clean_layout(value)
+            if boxes is not None:
+                cleaned[key] = boxes
+        elif key == "bg":
+            color = _clean_color(value)
+            if color:
+                cleaned[key] = color
         elif key == "viewport":
             if isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
                 cleaned[key] = [int(value[0]), int(value[1])]
@@ -631,7 +673,8 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
     if user_id:
         query = query.filter(UsageEvent.user_id == user_id)
     if not include_mouse:
-        query = query.filter(UsageEvent.event_type != "mouse_trace")
+        # the bulky visual records: pointer traces and screen layouts
+        query = query.filter(UsageEvent.event_type.notin_(("mouse_trace", "layout")))
     if not_counted:
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
     for e in query.order_by(UsageEvent.occurred_at).yield_per(1000):
@@ -709,13 +752,32 @@ def read_session(session_id: str, db: Session = Depends(get_db), user: CurrentUs
     if not rows:
         raise HTTPException(status_code=404, detail="Session not found")
     names = _usernames()
+    events = [_serialize_event(e) for e in rows]
+    job_types = _job_types(db, {(e["detail"] or {}).get("job_id") for e in events if e["event_type"] == "page_view"})
+    for e in events:
+        job_id = (e["detail"] or {}).get("job_id") if e["event_type"] == "page_view" else None
+        if job_id in job_types:
+            e["detail"] = {**e["detail"], "job_type": job_types[job_id]}
     return {
         "session_id": session_id,
         "user_id": rows[0].user_id,
         "username": names.get(rows[0].user_id, {}).get("username", rows[0].user_id),
         "app": rows[0].app,
-        "events": [_serialize_event(e) for e in rows],
+        "events": events,
     }
+
+
+def _job_types(db: Session, job_ids: set) -> dict[str, str]:
+    """job_id -> "annotation" / "review" for the ids that are job cards."""
+    ids = set()
+    for j in job_ids:
+        try:
+            ids.add(uuid.UUID(str(j)))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return {}
+    return {str(c.id): c.type.value for c in db.query(WorkflowCard.id, WorkflowCard.type).filter(WorkflowCard.id.in_(ids)).all() if c.type.value in ("annotation", "review")}
 
 
 @router.get("/heatmap")
@@ -725,15 +787,20 @@ def read_heatmap(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    mode: Literal["annotation", "review", "other"] | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    """Every click on one screen, each with who made it, whether it got a
+    response and the kind of job it was made in (annotation / review /
+    other -- `mode` filters to one), plus the most recent recorded
+    layout of that screen (in that kind of job), to draw behind them."""
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
     query = db.query(UsageEvent).filter(
         UsageEvent.occurred_at >= window_since,
         UsageEvent.occurred_at <= window_until,
-        UsageEvent.event_type == "click",
+        UsageEvent.event_type.in_(("click", "page_view", "layout")),
         UsageEvent.route == route,
     )
     if user_id:
@@ -742,12 +809,31 @@ def read_heatmap(
     not_counted = _not_counted(get_settings(db), names)
     if not_counted:
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
-    rows = query.order_by(UsageEvent.occurred_at).all()
-    points = stats.click_points(_rows_as_dicts(rows), route)
+    events = _rows_as_dicts(query.order_by(UsageEvent.occurred_at).all())
+    points = stats.click_points(events, route)
+    layouts = stats.screen_layouts(events, route)
+    job_types = _job_types(db, {p["job_id"] for p in points} | {lay["job_id"] for lay in layouts})
+    for p in points:
+        p["mode"] = job_types.get(p.pop("job_id"), "other")
+    for lay in layouts:
+        lay["mode"] = job_types.get(lay.pop("job_id"), "other")
+    modes = Counter(p["mode"] for p in points)
+    if mode:
+        points = [p for p in points if p["mode"] == mode]
+    layout = next((lay for lay in layouts if not mode or lay["mode"] == mode), None)
+    if layout:
+        layout = {**layout, "occurred_at": _iso(layout["occurred_at"])}
     # Who clicked, most clicks first -- the heatmap's legend and colour key.
     clicks_by_user = Counter(p["user_id"] for p in points)
     users = [
         {"user_id": user_id, "username": names.get(user_id, {}).get("username", user_id), "clicks": n}
         for user_id, n in sorted(clicks_by_user.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
-    return {"route": route, "days": days, "points": points, "users": users}
+    return {
+        "route": route,
+        "days": days,
+        "points": points,
+        "users": users,
+        "modes": {m: modes.get(m, 0) for m in ("annotation", "review", "other")},
+        "layout": layout,
+    }

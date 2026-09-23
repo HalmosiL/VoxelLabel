@@ -180,7 +180,7 @@ def test_per_user_figures():
 
 def test_click_points_normalise_by_viewport_and_skip_incomplete_ones():
     points = stats.click_points(EVENTS, "/studies")
-    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE, "dead": False}]
+    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE, "dead": False, "job_id": None}]
     no_viewport = [ev("s", "click", "/x", detail={"x": 1, "y": 1})]
     assert stats.click_points(no_viewport, "/x") == []
 
@@ -380,3 +380,18 @@ def test_correlation_needs_enough_pairs_and_spread():
     assert stats.correlation([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]) == 1.0
     assert stats.correlation([1, 2, 3, 4], [1, 2, 3, 4]) is None  # too few
     assert stats.correlation([1, 1, 1, 1, 1], [1, 2, 3, 4, 5]) is None  # no spread
+
+
+def test_clicks_and_layouts_carry_the_job_of_the_page_they_were_on():
+    job = {"job_id": "job-1", "case_id": "c"}
+    boxes = [[0, 0, 300, 700, "panel", "", "rgb(26, 26, 46)"], [300, 0, 800, 600, "media"]]
+    events = [
+        ev("s", "page_view", "/viewer/:id", at_s=0, app="viewer", detail=job),
+        ev("s", "layout", "/viewer/:id", at_s=2, app="viewer", detail={"elements": boxes, "viewport": [1600, 900]}),
+        ev("s", "click", "/viewer/:id", at_s=3, app="viewer", detail={"x": 800, "y": 450, "viewport": [1600, 900], "target": "canvas"}),
+        ev("t", "click", "/viewer/:id", at_s=4, app="viewer", detail={"x": 10, "y": 10, "viewport": [1600, 900]}),  # no page view: no job
+    ]
+    points = stats.click_points(events, "/viewer/:id")
+    assert [p["job_id"] for p in points] == ["job-1", None] and points[0]["x"] == 0.5
+    [layout] = stats.screen_layouts(events, "/viewer/:id")
+    assert layout["job_id"] == "job-1" and layout["elements"] == boxes and layout["viewport"] == [1600, 900]

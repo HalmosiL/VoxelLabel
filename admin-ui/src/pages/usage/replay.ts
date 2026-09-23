@@ -1,4 +1,4 @@
-import { UsageEventRow } from "../../api/adminApi";
+import { UsageEventRow, UsageLayout } from "../../api/adminApi";
 
 /** A session laid out on one clock, for playing back what a person did
  * in the order and at the pace it happened: the pages they were on,
@@ -11,6 +11,10 @@ export interface ReplayPage {
   /** When the page was opened. */
   at: number;
   viewport: [number, number] | null;
+  /** The page's recorded layout, to draw behind the pointer. */
+  layout: UsageLayout | null;
+  /** The kind of job the page was opened from (viewer pages), else null. */
+  jobType: "annotation" | "review" | null;
 }
 
 export interface ReplayPoint {
@@ -65,9 +69,19 @@ export function buildTimeline(events: UsageEventRow[]): Timeline {
     const detail = e.detail ?? {};
     end = Math.max(end, t);
     if (e.event_type === "page_view") {
-      current = { index: pages.length, route: e.route, at: t, viewport: viewportOf(detail) };
+      const jobType = detail.job_type === "annotation" || detail.job_type === "review" ? detail.job_type : null;
+      current = { index: pages.length, route: e.route, at: t, viewport: viewportOf(detail), layout: null, jobType };
       pages.push(current);
       marks.push({ t, event: e });
+    } else if (e.event_type === "perf") {
+      // request timings summed over a flush -- not a step the person took
+      continue;
+    } else if (e.event_type === "layout") {
+      // a picture of the screen, not something the person did
+      if (current && !current.layout && Array.isArray(detail.elements)) {
+        const vp = viewportOf(detail);
+        if (vp) current.layout = { elements: detail.elements as UsageLayout["elements"], viewport: vp, bg: typeof detail.bg === "string" ? detail.bg : undefined };
+      }
     } else if (e.event_type === "mouse_trace") {
       // Stamped with the trace's start; each point's own t is relative to it.
       if (current && Array.isArray(detail.points)) {
