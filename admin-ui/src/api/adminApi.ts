@@ -771,6 +771,8 @@ export interface UsageSnapshotMeta {
   viewport: [number, number];
   occurred_at: string | null;
   mode?: UsageJobMode;
+  study_id?: string | null;
+  structure_key?: string | null;
 }
 
 /** The kind of job a click was made in: an Annotation or Review card's case, or neither. */
@@ -779,7 +781,11 @@ export type UsageJobMode = "annotation" | "review" | "other";
 export interface UsageHeatmap {
   route: string;
   days: number;
-  points: { x: number; y: number; target: string | null; user_id: string; dead: boolean; mode: UsageJobMode }[];
+  /** placed: on its own element (exact), on the same kind of element (similar), or at its screen position (screen). */
+  points: { x: number; y: number; target: string | null; user_id: string; dead: boolean; mode: UsageJobMode; placed: "exact" | "similar" | "screen" }[];
+  /** Clicks on elements the picture doesn't have (a pane switched off...). */
+  hidden: { target: string; clicks: number }[];
+  placement: { total: number; exact: number; similar: number; screen: number; hidden: number };
   /** Clicks per kind of job, before any mode filter. */
   modes: Record<UsageJobMode, number>;
   /** The screen's most recent recorded layout (in the chosen kind of job), to draw behind the clicks. */
@@ -818,9 +824,10 @@ export interface UsageOverview {
   findings: UsageFinding[];
 }
 
-export function getUsageOverview(range: UsageRange, userId?: string | null): Promise<UsageOverview> {
+export function getUsageOverview(range: UsageRange, userId?: string | null, studyId?: string | null): Promise<UsageOverview> {
   const params = rangeParams(range);
   if (userId) params.set("user_id", userId);
+  if (studyId) params.set("study_id", studyId);
   return apiFetch(base, `/admin/usage/overview?${params}`);
 }
 
@@ -830,10 +837,11 @@ export function getUsageSummary(range: UsageRange, userId?: string | null): Prom
   return apiFetch(base, `/admin/usage/summary?${params}`);
 }
 
-export function listUsageSessions(range: UsageRange, userId?: string | null, limit = 100): Promise<UsageSession[]> {
+export function listUsageSessions(range: UsageRange, userId?: string | null, limit = 100, studyId?: string | null): Promise<UsageSession[]> {
   const params = rangeParams(range);
   params.set("limit", String(limit));
   if (userId) params.set("user_id", userId);
+  if (studyId) params.set("study_id", studyId);
   return apiFetch(base, `/admin/usage/sessions?${params}`);
 }
 
@@ -841,10 +849,11 @@ export function getUsageSession(sessionId: string): Promise<UsageSessionDetail> 
   return apiFetch(base, `/admin/usage/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-export function getUsageHeatmap(route: string, range: UsageRange, userId?: string | null, mode?: UsageJobMode | null): Promise<UsageHeatmap> {
+export function getUsageHeatmap(route: string, range: UsageRange, userId?: string | null, mode?: UsageJobMode | null, studyId?: string | null): Promise<UsageHeatmap> {
   const params = rangeParams(range);
   params.set("route", route);
   if (userId) params.set("user_id", userId);
+  if (studyId) params.set("study_id", studyId);
   if (mode) params.set("mode", mode);
   return apiFetch(base, `/admin/usage/heatmap?${params}`);
 }
@@ -862,9 +871,10 @@ async function fetchWithToken(path: string): Promise<Response> {
 }
 
 /** The Overview as Markdown -- text, not JSON, so not apiFetch. */
-export async function getUsageReportMarkdown(range: UsageRange, userId?: string | null): Promise<string> {
+export async function getUsageReportMarkdown(range: UsageRange, userId?: string | null, studyId?: string | null): Promise<string> {
   const params = rangeParams(range);
   if (userId) params.set("user_id", userId);
+  if (studyId) params.set("study_id", studyId);
   return (await fetchWithToken(`/admin/usage/report.md?${params}`)).text();
 }
 
@@ -872,9 +882,10 @@ export async function getUsageReportMarkdown(range: UsageRange, userId?: string 
  * fetched with the bearer token (a plain <a href> couldn't carry it)
  * and saved through a temporary download link, the same way
  * downloadBackup does. */
-export async function downloadUsageEventsCsv(range: UsageRange, userId?: string | null, includeMouse = false): Promise<string> {
+export async function downloadUsageEventsCsv(range: UsageRange, userId?: string | null, includeMouse = false, studyId?: string | null): Promise<string> {
   const params = rangeParams(range);
   if (userId) params.set("user_id", userId);
+  if (studyId) params.set("study_id", studyId);
   if (includeMouse) params.set("include_mouse", "true");
   const response = await fetchWithToken(`/admin/usage/export/events.csv?${params}`);
   const disposition = response.headers.get("content-disposition") ?? "";

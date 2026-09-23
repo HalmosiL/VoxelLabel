@@ -315,11 +315,17 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   // own aspect; without one, the layout outline at 16:9.
   const sessionStart = Date.parse(session.events[0].occurred_at);
   const nextPage = page ? timeline.pages[page.index + 1] : undefined;
-  const pageSnapshot = page
-    ? (session.snapshots ?? []).find((sn) => {
+  // A page can have several snapshots (a new one whenever its structure
+  // changed -- a pane switched off, a panel opened): show the one in
+  // force at the playhead, else the page's first, else any of this screen.
+  const onThisPage = page
+    ? (session.snapshots ?? []).filter((sn) => {
         const t = Date.parse(sn.occurred_at ?? "") - sessionStart;
         return sn.route === page.route && t >= page.at && (!nextPage || t < nextPage.at);
-      }) ?? (session.snapshots ?? []).find((sn) => sn.route === page.route)
+      })
+    : [];
+  const pageSnapshot = page
+    ? ([...onThisPage].reverse().find((sn) => Date.parse(sn.occurred_at ?? "") - sessionStart <= head) ?? onThisPage[0] ?? (session.snapshots ?? []).find((sn) => sn.route === page.route))
     : undefined;
   const stageH = pageSnapshot ? (STAGE_W * pageSnapshot.viewport[1]) / pageSnapshot.viewport[0] : STAGE_H;
   const sx = (x: number) => (x / vp[0]) * STAGE_W;

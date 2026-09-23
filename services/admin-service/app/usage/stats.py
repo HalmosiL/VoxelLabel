@@ -8,6 +8,7 @@ event list.
 Friction thresholds live here as constants so the page's wording ("left
 within 3 s", "3 clicks within half a second") and the numbers behind it
 can't drift apart."""
+import re
 from collections import Counter, defaultdict
 from datetime import datetime
 from statistics import mean, median
@@ -738,10 +739,11 @@ def click_points(events: list[dict], route: str) -> list[dict]:
     other event types, which are ignored."""
     points = []
     for rows in _by_session([e for e in events if e["route"] == route]).values():
-        job_id = None
+        job_id = study_id = None
         for e in rows:
             if e["event_type"] == "page_view":
                 job_id = (e.get("detail") or {}).get("job_id")
+                study_id = (e.get("detail") or {}).get("study_id")
                 continue
             if e["event_type"] != "click" or _is_guide_click(e):
                 continue
@@ -757,9 +759,78 @@ def click_points(events: list[dict], route: str) -> list[dict]:
                     "user_id": e["user_id"],
                     "dead": _click_signal(e) is True,
                     "job_id": job_id,
+                    "study_id": study_id,
+                    # where inside its target element (0..1), when recorded
+                    "rx": d.get("rx") if isinstance(d.get("rx"), (int, float)) else None,
+                    "ry": d.get("ry") if isinstance(d.get("ry"), (int, float)) else None,
                 }
             )
     return points
+
+
+_DIGITS = re.compile(r"\d+")
+
+
+def _pattern(descriptor: str) -> str:
+    """"testid:object-7" and "testid:object-2" are the same kind of element."""
+    return _DIGITS.sub("#", descriptor)
+
+
+def anchor_coverage(points: list[dict], anchors: list | None) -> int:
+    """How many of the clicks this picture can place on their element."""
+    if not anchors:
+        return 0
+    exact = {a[0] for a in anchors}
+    similar = {_pattern(a[0]) for a in anchors}
+    return sum(1 for p in points if p.get("rx") is not None and p.get("target") and (p["target"] in exact or _pattern(p["target"]) in similar))
+
+
+def place_clicks(points: list[dict], anchors: list | None, viewport: list[int]) -> tuple[list[dict], list[dict]]:
+    """Puts each click on the same element of one recorded screen: its
+    target's box there, at the same relative spot inside it -- so clicks
+    made with more objects in a list, a pane switched off or another
+    window size still land on the right control. A target missing from
+    the picture is tried as the same *kind* of element (object 7 -> an
+    object row); if there is none, the click is left out and counted as
+    hidden. Clicks recorded before targets had a relative position keep
+    their screen position. Each placed point says how: exact, similar or
+    screen."""
+    boxes: dict[str, list] = {}
+    kinds: dict[str, list] = {}
+    for a in anchors or []:
+        boxes.setdefault(a[0], a)
+        kinds.setdefault(_pattern(a[0]), a)
+    vw, vh = viewport
+    placed, hidden = [], Counter()
+    for p in points:
+        target = p.get("target")
+        if p.get("rx") is None or not target or not anchors:
+            placed.append({**p, "placed": "screen"})
+            continue
+        box, how = boxes.get(target), "exact"
+        if box is None:
+            box, how = kinds.get(_pattern(target)), "similar"
+        if box is None:
+            hidden[target] += 1
+            continue
+        _, x, y, w, h = box
+        placed.append({**p, "x": round((x + p["rx"] * w) / vw, 4), "y": round((y + p["ry"] * h) / vh, 4), "placed": how})
+    return placed, [{"target": t, "clicks": n} for t, n in hidden.most_common(10)]
+
+
+def within_study(events: list[dict], study_id: str) -> list[dict]:
+    """Only what happened on pages of one study: every event belongs to
+    the page view before it in its session, and a page view says its
+    study (the viewer's studyId, admin-ui's /studies/<id>/...)."""
+    out = []
+    for rows in _by_session(events).values():
+        current = None
+        for e in rows:
+            if e["event_type"] == "page_view":
+                current = (e.get("detail") or {}).get("study_id")
+            if current == study_id:
+                out.append(e)
+    return out
 
 
 def screen_layouts(events: list[dict], route: str) -> list[dict]:

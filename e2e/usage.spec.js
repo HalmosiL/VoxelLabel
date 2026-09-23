@@ -61,6 +61,10 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.locator('[data-testid="tool-cursor"]').click();
     await page.keyboard.press("Escape");
     await page.locator("header h1").click();
+    // Switching a pane off changes the screen's structure: the tracker
+    // takes another snapshot of it.
+    await page.waitForTimeout(4000);
+    await page.locator('[data-testid="pane-axial-hide"]').click();
     // The tracker flushes every 10 s; wait for the periodic flush.
     await page.waitForTimeout(11500);
     const all = posted.flatMap((b) => b.events);
@@ -69,6 +73,8 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const layouts = all.filter((e) => e.event_type === "layout");
     const boxes = layouts.flatMap((e) => e.detail.elements);
     check("viewer sent a snapshot of the screen and it was stored", snapshotsStored.some((b) => b && b.stored === true), snapshotsStored);
+    check("switching a pane off made the tracker take another snapshot", snapshotsStored.filter((b) => b && b.stored).length >= 2, snapshotsStored.length);
+    check("clicks carry where inside their element they landed", all.some((e) => e.event_type === "click" && typeof e.detail.rx === "number" && typeof e.detail.ry === "number"));
     check("viewer recorded the screen's layout once: the image as a bare block, controls with labels", layouts.length >= 1 && boxes.some((b) => b[4] === "media" && b.length === 5) && boxes.some((b) => b[4] === "button" && b[5]), layouts.map((e) => e.detail.elements.length));
     check("every viewer event carries its build", all.length > 0 && all.every((e) => typeof e.app_version === "string" && e.app_version.length > 0), [...new Set(all.map((e) => e.app_version))]);
     check("viewer page views say mouse or touch", all.some((e) => e.event_type === "page_view" && ["mouse", "touch"].includes(e.detail && e.detail.device)));
@@ -162,6 +168,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("the recorded screen is drawn behind the clicks, in a sandboxed frame", (await frame.getAttribute("sandbox")) === "" && (await page.locator('[data-testid="usage-screen-snapshot"] [data-testid="usage-heatmap-svg"]').count()) === 1);
     check("the recorded screen keeps the page's controls but no image, canvas or script", srcdoc.includes("data-vl-image") && srcdoc.includes("Mark as") && !/<canvas|<img|<script/i.test(srcdoc), srcdoc.length);
     check("clicks are split by the kind of job they were made in", (await page.locator('[data-testid="usage-heatmap-mode-annotation"]').count()) === 1);
+    check("the heatmap says how the clicks were placed on this picture", /on the same element/.test(await page.locator('[data-testid="usage-heatmap-placement"]').innerText()) && (await page.locator('[data-testid="usage-heatmap-dot"][data-placed="exact"]').count()) >= 1);
     await page.locator('[data-testid="usage-heatmap-mode-annotation"]').click();
     await page.waitForTimeout(800);
     const modesShown = await page.locator('[data-testid="usage-heatmap-dot"]').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute("data-mode")))]);
@@ -217,6 +224,19 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     }
     check("an empty calendar window zeroes the figures", / 0 people, 0 sessions, 0 events/.test(settled), settled);
     await page.locator('[data-testid="usage-calendar-clear"]').click();
+    await page.waitForTimeout(800);
+    // one study only: every figure follows it
+    await page.locator('[data-testid="usage-study-filter"]').selectOption(F.STUDY);
+    let studyBasis = "";
+    for (let i = 0; i < 20; i++) {
+      studyBasis = await page.locator('[data-testid="usage-range-label"]').innerText();
+      if (studyBasis.includes("· study")) break;
+      await page.waitForTimeout(300);
+    }
+    const byStudy = (await api(admin, `${ADMIN}/admin/usage/summary?days=30&study_id=${F.STUDY}`)).body;
+    const everyone = (await api(admin, `${ADMIN}/admin/usage/summary?days=30`)).body;
+    check("the study filter narrows the figures to that study's pages", studyBasis.includes("· study") && byStudy.totals.events > 0 && byStudy.totals.events < everyone.totals.events, { study: byStudy.totals.events, all: everyone.totals.events });
+    await page.locator('[data-testid="usage-study-filter"]').selectOption("");
     await page.waitForTimeout(800);
     check("clearing the calendar restores the 30-day preset", await page.locator('[data-testid="usage-range-30"]').evaluate((el) => el.className.includes("bg-blue-600")));
     // The last hour in the browser's own (Budapest) time must contain the

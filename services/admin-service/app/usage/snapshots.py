@@ -130,4 +130,6 @@ def meta(snap: UsageSnapshot) -> dict:
         "job_id": snap.job_id,
         "viewport": [snap.viewport_w, snap.viewport_h],
         "occurred_at": snap.occurred_at.isoformat() if snap.occurred_at else None,
+        "study_id": snap.study_id,
+        "structure_key": snap.structure_key,
     }

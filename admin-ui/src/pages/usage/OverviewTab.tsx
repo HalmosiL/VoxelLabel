@@ -34,6 +34,7 @@ export default function OverviewTab({
   learningCurve,
   range,
   userFilter,
+  studyFilter,
   personName,
   onGoTo,
   onError,
@@ -46,6 +47,7 @@ export default function OverviewTab({
   learningCurve: LearningCurvePoint[] | null;
   range: UsageRange;
   userFilter: string;
+  studyFilter: string;
   personName: string | null;
   onGoTo: (tab: UsageTab) => void;
   onError: (message: string) => void;
@@ -59,7 +61,7 @@ export default function OverviewTab({
         <ReleasesCard summary={summary} />
         <ReasonsCard summary={summary} />
       </div>
-      <ExportCard summary={summary} previous={previous} findings={findings} pipelineHealth={pipelineHealth} pipelineHealthPrevious={pipelineHealthPrevious} learningCurve={learningCurve} range={range} userFilter={userFilter} onError={onError} />
+      <ExportCard summary={summary} previous={previous} findings={findings} pipelineHealth={pipelineHealth} pipelineHealthPrevious={pipelineHealthPrevious} learningCurve={learningCurve} range={range} userFilter={userFilter} studyFilter={studyFilter} onError={onError} />
       <HowToRead />
     </div>
   );
@@ -465,6 +467,7 @@ function ExportCard({
   learningCurve,
   range,
   userFilter,
+  studyFilter,
   onError,
 }: {
   summary: UsageSummary;
@@ -475,6 +478,7 @@ function ExportCard({
   learningCurve: LearningCurvePoint[] | null;
   range: UsageRange;
   userFilter: string;
+  studyFilter: string;
   onError: (message: string) => void;
 }) {
   const [includeMouse, setIncludeMouse] = useState(false);
@@ -495,18 +499,18 @@ function ExportCard({
 
   const events = () =>
     run("events", async () => {
-      const name = await downloadUsageEventsCsv(range, userFilter || null, includeMouse);
+      const name = await downloadUsageEventsCsv(range, userFilter || null, includeMouse, studyFilter || null);
       return `Downloaded ${name}`;
     });
   const copyReport = () =>
     run("copy", async () => {
-      const text = await getUsageReportMarkdown(range, userFilter || null);
+      const text = await getUsageReportMarkdown(range, userFilter || null, studyFilter || null);
       await navigator.clipboard.writeText(text);
       return "Summary copied -- paste it into Jira, Slack or an e-mail.";
     });
   const downloadReport = () =>
     run("report", async () => {
-      const text = await getUsageReportMarkdown(range, userFilter || null);
+      const text = await getUsageReportMarkdown(range, userFilter || null, studyFilter || null);
       const name = exportFilename("report", summary.since, summary.until, "md");
       downloadText(name, text, "text/markdown;charset=utf-8");
       return `Downloaded ${name}`;

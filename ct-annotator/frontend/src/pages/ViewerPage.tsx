@@ -3402,6 +3402,7 @@ export default function ViewerPage() {
                     onClick={() => toggleMaximized(pane)}
                     className="text-gray-500 hover:text-white"
                     title={maximizedPane === pane ? "Restore" : "Maximize"}
+                    data-testid={`pane-${pane}-maximize`}
                   >
                     {maximizedPane === pane ? <FullscreenExitIcon /> : <FullscreenIcon />}
                   </button>
@@ -3409,12 +3410,16 @@ export default function ViewerPage() {
                     onClick={() => togglePaneVisible(pane)}
                     className="text-gray-500 hover:text-white"
                     title="Hide this pane"
+                    data-testid={`pane-${pane}-hide`}
                   >
                     <EyeIcon visible={true} />
                   </button>
                 </div>
                 <div
                   ref={paneContainerRefs[pane]}
+                  // names the pane for usage tracking: a click here is placed
+                  // on this pane in a recorded screen, whichever panes were on
+                  data-testid={`pane-${pane}`}
                   className="relative flex flex-1 items-center justify-center overflow-hidden bg-black"
                   style={{
                     // The browser must not scroll/zoom the page on a

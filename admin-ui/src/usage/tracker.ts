@@ -187,6 +187,10 @@ interface State {
   layoutTimer: number;
   /** Stylesheet hashes already sent with a snapshot this session. */
   cssSent: Set<string>;
+  /** The current page's last snapshotted structure, and how many snapshots it has had. */
+  structureKey: string | null;
+  pageSnapshots: number;
+  structureTimer: number;
 }
 
 const state: State = {
@@ -214,6 +218,9 @@ const state: State = {
   layouts: new Set(),
   layoutTimer: 0,
   cssSent: new Set(),
+  structureKey: null,
+  pageSnapshots: 0,
+  structureTimer: 0,
 };
 
 function now(): number {
@@ -250,21 +257,30 @@ export function isEditableTarget(el: EventTarget | null): boolean {
  * visible text. Walks up a few ancestors so a click on an icon inside a
  * button still names the button. Never reads input values. */
 export function describeTarget(el: EventTarget | null): string {
+  return anchorOf(el).descriptor;
+}
+
+/** The element a click is "on" for analysis, and its name: the nearest
+ * ancestor (up to six levels) with a test id, a tour anchor or an aria
+ * label, or a button/link by its text -- else the clicked tag itself.
+ * The same function names the elements of a snapshot, so a click and a
+ * screen agree on what "the Save button" or "the axial pane" is. */
+export function anchorOf(el: EventTarget | null): { descriptor: string; element: Element | null } {
   let node: Element | null = el instanceof Element ? el : null;
   for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {
     const testId = node.getAttribute("data-testid");
-    if (testId) return `testid:${testId}`;
+    if (testId) return { descriptor: `testid:${testId}`, element: node };
     const guide = node.getAttribute("data-guide");
-    if (guide) return `guide:${guide}`;
+    if (guide) return { descriptor: `guide:${guide}`, element: node };
     const aria = node.getAttribute("aria-label");
-    if (aria) return `aria:${aria.slice(0, 40)}`;
+    if (aria) return { descriptor: `aria:${aria.slice(0, 40)}`, element: node };
     const tag = node.tagName.toLowerCase();
     if (tag === "button" || tag === "a") {
       const text = (node.textContent ?? "").trim().replace(/\s+/g, " ").replace(ID_LIKE, "#").slice(0, 40);
-      return text ? `${tag}:${text}` : tag;
+      return { descriptor: text ? `${tag}:${text}` : tag, element: node };
     }
   }
-  return el instanceof Element ? el.tagName.toLowerCase() : "unknown";
+  return { descriptor: el instanceof Element ? el.tagName.toLowerCase() : "unknown", element: el instanceof Element ? el : null };
 }
 
 /** "Ctrl+Shift+Z", "Escape", "ArrowUp", "p" -- null for a bare modifier. */
@@ -427,8 +443,11 @@ export function trackPageView(pathname: string, detail?: UsageDetail): void {
   state.wheelTicks = 0;
   state.trace = null;
   push("page_view", { detail: { ...detail, viewport: viewport(), device: inputDevice() } });
+  state.structureKey = null;
+  state.pageSnapshots = 0;
   if (typeof window !== "undefined") {
     window.clearTimeout(state.layoutTimer);
+    window.clearTimeout(state.structureTimer);
     // let the screen load its data and draw before taking its layout
     state.layoutTimer = window.setTimeout(() => recordLayout(), LAYOUT_DELAY_MS);
   }
@@ -550,6 +569,61 @@ export function textHash(text: string): string {
  * and iframe replaced by a same-sized "image" placeholder; scripts,
  * stylesheets (sent separately), the tutorial overlay and every typed
  * value removed. Plus the page's CSS with its url()s taken out. */
+const ANCHOR_SELECTOR = "[data-testid], [data-guide], [aria-label], button, a[href]";
+const MAX_ANCHORS = 1500;
+const MAX_PAGE_SNAPSHOTS = 6;
+const STRUCTURE_CHECK_MS = 1500;
+
+function visibleBox(el: Element): DOMRect | null {
+  const r = el.getBoundingClientRect();
+  const [vw, vh] = viewport();
+  return r.width >= 1 && r.height >= 1 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh ? r : null;
+}
+
+/** Every identifiable element on screen with its box: [descriptor, x,
+ * y, w, h] -- only elements that name themselves (anchorOf returns the
+ * element itself), so each box is the element a click on it reports. */
+export function captureAnchors(doc: Document = document): [string, number, number, number, number][] {
+  const out: [string, number, number, number, number][] = [];
+  for (const el of Array.from(doc.querySelectorAll(ANCHOR_SELECTOR))) {
+    if (out.length >= MAX_ANCHORS) break;
+    if (el.closest("[data-guide-overlay]")) continue;
+    const anchor = anchorOf(el);
+    if (anchor.element !== el) continue;
+    const r = visibleBox(el);
+    if (r) out.push([anchor.descriptor, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]);
+  }
+  return out;
+}
+
+/** Which identifiable parts the screen shows right now -- a pane
+ * switched off, a panel opened or a list grown changes it. */
+export function structureKey(doc: Document = document): string {
+  const ids: string[] = [];
+  for (const el of Array.from(doc.querySelectorAll("[data-testid], [data-guide]"))) {
+    if (el.closest("[data-guide-overlay]") || !visibleBox(el)) continue;
+    ids.push(el.getAttribute("data-testid") ?? `g:${el.getAttribute("data-guide")}`);
+  }
+  const [vw] = viewport();
+  return textHash(`${Math.round(vw / 200)}|${ids.sort().join(",")}`);
+}
+
+/** After a click or a key, look again (debounced): if the screen's
+ * structure changed since its last snapshot, take another one. */
+function scheduleStructureCheck(): void {
+  if (typeof window === "undefined" || !state.options?.snapshotUrl) return;
+  window.clearTimeout(state.structureTimer);
+  state.structureTimer = window.setTimeout(() => {
+    if (state.route === null || state.structureKey === null || state.pageSnapshots >= MAX_PAGE_SNAPSHOTS) return;
+    if (state.configKnown && !allows("click")) return;
+    try {
+      if (structureKey() !== state.structureKey) void sendSnapshot();
+    } catch {
+      // never let tracking surface as an app error
+    }
+  }, STRUCTURE_CHECK_MS);
+}
+
 export function captureSnapshot(doc: Document = document): { html: string; css: string; cssHash: string } {
   const live = Array.from(doc.querySelectorAll(MEDIA_SELECTOR));
   const clone = doc.documentElement.cloneNode(true) as HTMLElement;
@@ -597,6 +671,10 @@ async function sendSnapshot(): Promise<void> {
   const token = options?.getToken();
   if (!options?.snapshotUrl || !token || state.route === null) return;
   try {
+    const key = structureKey();
+    state.structureKey = key;
+    state.pageSnapshots += 1;
+    const anchors = captureAnchors();
     const snap = captureSnapshot();
     const withCss = !state.cssSent.has(snap.cssHash);
     const body = {
@@ -608,6 +686,9 @@ async function sendSnapshot(): Promise<void> {
       viewport: viewport(),
       occurred_at: new Date(now()).toISOString(),
       css_hash: snap.cssHash,
+      anchors,
+      study_id: typeof state.pageDetail?.study_id === "string" ? state.pageDetail.study_id : undefined,
+      structure_key: key,
       ...(await pack("html", snap.html)),
       ...(withCss ? await pack("css", snap.css) : {}),
     };
@@ -684,6 +765,15 @@ export function ratingDue(): boolean {
   return n % every === 0;
 }
 
+/** Where inside an element a point is, 0..1 each way -- what lets the
+ * click be put on the same element of a screen laid out differently. */
+function relativeIn(el: Element | null, x: number, y: number): { rx?: number; ry?: number } {
+  const r = el?.getBoundingClientRect();
+  if (!r || r.width < 1 || r.height < 1) return {};
+  const clamp = (v: number) => Math.round(Math.min(Math.max(v, 0), 1) * 1000) / 1000;
+  return { rx: clamp((x - r.left) / r.width), ry: clamp((y - r.top) / r.height) };
+}
+
 function noteResponse(): void {
   state.lastResponseAt = now();
 }
@@ -710,6 +800,8 @@ function onClick(e: MouseEvent): void {
     // ignore
   }
   const at = now();
+  const anchor = anchorOf(e.target);
+  scheduleStructureCheck();
   const event: UsageEvent = {
     session_id: state.sessionId,
     app: state.options.app,
@@ -719,7 +811,8 @@ function onClick(e: MouseEvent): void {
     detail: {
       x: Math.round(e.clientX),
       y: Math.round(e.clientY),
-      target: describeTarget(e.target),
+      target: anchor.descriptor,
+      ...relativeIn(anchor.element, e.clientX, e.clientY),
       viewport: viewport(),
       button: e.button,
       interactive: onCanvas || Boolean(el?.closest(INTERACTIVE_SELECTOR)),
@@ -769,6 +862,8 @@ function onKeyDown(e: KeyboardEvent): void {
   if (isEditableTarget(e.target)) return;
   const name = describeKey(e);
   if (name) push("key", { name });
+  // a shortcut can switch a pane or a panel just like a click can
+  if (name) scheduleStructureCheck();
 }
 
 function onFocus(): void {
@@ -912,5 +1007,8 @@ export function _reset(): void {
     layouts: new Set(),
     layoutTimer: 0,
     cssSent: new Set(),
+    structureKey: null,
+    pageSnapshots: 0,
+    structureTimer: 0,
   });
 }

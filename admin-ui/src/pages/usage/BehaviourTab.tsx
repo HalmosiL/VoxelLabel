@@ -306,7 +306,17 @@ const MODE_LABEL: Record<UsageJobMode, string> = { annotation: "Annotation job",
 function ClickMark({ p, color, title, height = 90 }: { p: UsageHeatmap["points"][number]; color: string; title: string; height?: number }) {
   const cx = p.x * 160;
   const cy = p.y * height;
-  const common = { fill: p.dead ? "none" : color, fillOpacity: 0.55, stroke: p.dead ? color : "#ffffff", strokeWidth: p.dead ? 0.6 : 0.25, "data-testid": "usage-heatmap-dot", "data-dead": p.dead ? "" : undefined, "data-mode": p.mode } as const;
+  // a click only placed by its screen position (no element to go by) is fainter
+  const common = {
+    fill: p.dead ? "none" : color,
+    fillOpacity: p.placed === "screen" ? 0.3 : 0.55,
+    stroke: p.dead ? color : "#ffffff",
+    strokeWidth: p.dead ? 0.6 : 0.25,
+    "data-testid": "usage-heatmap-dot",
+    "data-dead": p.dead ? "" : undefined,
+    "data-mode": p.mode,
+    "data-placed": p.placed,
+  } as const;
   if (p.mode === "review") {
     const r = p.dead ? 2 : 1.7;
     return (
@@ -436,6 +446,19 @@ function HeatmapCard({
               {layout && showScreen && <LayoutBackdrop layout={layout} />}
               {marks(90)}
             </svg>
+          )}
+          {snapshot && heatmap.placement.total > 0 && (
+            <p className="mt-2 text-xs text-gray-600" data-testid="usage-heatmap-placement">
+              Each click is put on the element it was made on, wherever that element sits on this picture: {heatmap.placement.exact} on the same element
+              {heatmap.placement.similar ? `, ${heatmap.placement.similar} on the same kind of element (e.g. another object row)` : ""}
+              {heatmap.placement.screen ? `, ${heatmap.placement.screen} by screen position only (fainter -- recorded without an element)` : ""}.
+              {heatmap.hidden.length > 0 && (
+                <span className="text-amber-700" data-testid="usage-heatmap-hidden">
+                  {" "}
+                  Not on this picture: {heatmap.hidden.map((h) => `${h.target.replace(/^(testid|guide|aria):/, "")} (${h.clicks})`).join(", ")} -- e.g. a pane switched off here.
+                </span>
+              )}
+            </p>
           )}
           <p className="hint mt-2">
             {heatmap.points.length} clicks{mode ? ` in ${MODE_LABEL[mode].toLowerCase()}s` : ""} in this period{single && users[0] ? `, all by ${users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.

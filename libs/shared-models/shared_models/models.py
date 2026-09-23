@@ -880,6 +880,16 @@ class UsageSnapshot(Base):
     html_gz: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     css_hash: Mapped[str | None] = mapped_column(String(64))
     occurred_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Where each identifiable element was on this screen: [[descriptor,
+    # x, y, w, h], ...] -- what lets a click recorded on another screen
+    # (more objects in a list, a pane hidden, another window size) be put
+    # on the same element in this picture.
+    anchors: Mapped[list | None] = mapped_column(JSONB)
+    # The study the screen belonged to, and a hash of which identifiable
+    # elements were visible (a pane switched off changes it) -- a new
+    # snapshot is taken whenever that changes.
+    study_id: Mapped[str | None] = mapped_column(String(64))
+    structure_key: Mapped[str | None] = mapped_column(String(64))
 
 
 class UsageSnapshotStyle(Base):

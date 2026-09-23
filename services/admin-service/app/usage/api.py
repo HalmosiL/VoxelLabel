@@ -51,6 +51,8 @@ ALLOWED_DETAIL_KEYS = {
     "endpoint", "count", "ms", "max", "slow", "failures",
     # layout: the screen as boxes (see _clean_layout), and its background
     "elements", "bg",
+    # click: where inside its target element (0..1)
+    "rx", "ry",
 }  # fmt: skip
 MAX_LAYOUT_ELEMENTS = 400
 LAYOUT_KINDS = {"panel", "media", "heading", "button", "link", "input"}
@@ -94,6 +96,21 @@ class SnapshotIn(BaseModel):
     css_hash: str | None = Field(default=None, max_length=64)
     css: str | None = None
     css_gz: str | None = Field(default=None, max_length=3_000_000)
+    anchors: list | None = Field(default=None, max_length=2000)
+    study_id: str | None = Field(default=None, max_length=64)
+    structure_key: str | None = Field(default=None, max_length=64)
+
+
+def _clean_anchors(value: list | None) -> list | None:
+    """[[descriptor, x, y, w, h], ...] -- descriptors normalised exactly
+    as click targets are (see _clean_detail), so the two match."""
+    if not value:
+        return None
+    out = []
+    for a in value[:2000]:
+        if isinstance(a, (list, tuple)) and len(a) == 5 and isinstance(a[0], str) and all(isinstance(v, (int, float)) and -10_000 <= v <= 20_000 for v in a[1:]):
+            out.append([_ID_LIKE.sub("#", a[0])[:MAX_TEXT], *(int(v) for v in a[1:])])
+    return out or None
 
 
 class EventsBody(BaseModel):
@@ -378,6 +395,9 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
             html_gz=snapshots.gz(snapshots.clean_html(html)),
             css_hash=body.css_hash,
             occurred_at=min(occurred_at, datetime.now(timezone.utc) + MAX_CLOCK_SKEW),
+            anchors=_clean_anchors(body.anchors),
+            study_id=body.study_id,
+            structure_key=body.structure_key,
         )
     )
     db.flush()
@@ -550,7 +570,7 @@ def _case_table(db: Session, entries: list[dict], rating_rows: list[dict], card_
     return rows[:MAX_CASE_ROWS], {"cases": len(worked), "per_object_median_ms": int(median(per_object)) if per_object else None, "drivers": drivers}
 
 
-def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None, people: dict | None = None) -> dict:
+def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None, people: dict | None = None, study_id: str | None = None) -> dict:
     """The /summary payload for an explicit window (usernames resolved,
     friction score and per-case effort attached, excluded accounts left
     out) -- shared by /summary, /overview, /findings and /report.md so a
@@ -559,6 +579,8 @@ def build_usage_summary(db: Session, window_since: datetime, window_until: datet
     settings = get_settings(db)
     not_counted = _not_counted(settings, people)
     events = _load(db, window_since, window_until, user_id, not_counted)
+    if study_id:
+        events = stats.within_study(events, study_id)
     summary = stats.summarize(events)
     entries, rating_rows = summary.pop("_effort"), summary.pop("_ratings")
     card_types = _card_types(db, entries)
@@ -592,13 +614,13 @@ def _previous_window(window_since: datetime, window_until: datetime) -> tuple[da
     return window_since - (window_until - window_since), window_since
 
 
-def _build_findings_bundle(db: Session, window_since: datetime, window_until: datetime, user_id: str | None) -> dict:
+def _build_findings_bundle(db: Session, window_since: datetime, window_until: datetime, user_id: str | None, study_id: str | None = None) -> dict:
     prev_since, prev_until = _previous_window(window_since, window_until)
     people = _people()
-    usage = build_usage_summary(db, window_since, window_until, user_id, people)
-    usage_previous = build_usage_summary(db, prev_since, prev_until, user_id, people)
-    pipeline = build_pipeline_summary(db, window_since, window_until, person_id=user_id)
-    pipeline_previous = build_pipeline_summary(db, prev_since, prev_until, person_id=user_id)
+    usage = build_usage_summary(db, window_since, window_until, user_id, people, study_id)
+    usage_previous = build_usage_summary(db, prev_since, prev_until, user_id, people, study_id)
+    pipeline = build_pipeline_summary(db, window_since, window_until, person_id=user_id, study_id=study_id)
+    pipeline_previous = build_pipeline_summary(db, prev_since, prev_until, person_id=user_id, study_id=study_id)
     learning = build_learning_curve(db)
     return {
         "since": window_since.isoformat(),
@@ -618,12 +640,13 @@ def read_summary(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
-    return {"days": days, **build_usage_summary(db, window_since, window_until, user_id)}
+    return {"days": days, **build_usage_summary(db, window_since, window_until, user_id, study_id=study_id)}
 
 
 @router.get("/overview")
@@ -632,6 +655,7 @@ def read_overview(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
@@ -642,7 +666,7 @@ def read_overview(
     four times over."""
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
-    bundle = _build_findings_bundle(db, window_since, window_until, user_id)
+    bundle = _build_findings_bundle(db, window_since, window_until, user_id, study_id)
     return {
         "since": bundle["since"],
         "until": bundle["until"],
@@ -687,6 +711,7 @@ def read_findings(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
@@ -695,7 +720,7 @@ def read_findings(
     Overview can render both from one call."""
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
-    bundle = _build_findings_bundle(db, window_since, window_until, user_id)
+    bundle = _build_findings_bundle(db, window_since, window_until, user_id, study_id)
     return {"since": bundle["since"], "until": bundle["until"], "findings": bundle["findings"], "friction_score": bundle["usage"]["friction_score"]}
 
 
@@ -705,6 +730,7 @@ def read_report(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> PlainTextResponse:
@@ -712,7 +738,7 @@ def read_report(
     rendered from the same bundle /findings uses."""
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
-    bundle = _build_findings_bundle(db, window_since, window_until, user_id)
+    bundle = _build_findings_bundle(db, window_since, window_until, user_id, study_id)
     text = render_markdown(window_since, window_until, bundle["usage"], bundle["pipeline"], bundle["findings"], bundle["learning_curve"])
     return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
@@ -728,7 +754,7 @@ def _safe_cell(value):
     return value
 
 
-def _events_csv(db: Session, window_since: datetime, window_until: datetime, user_id: str | None, include_mouse: bool) -> Iterator[str]:
+def _events_csv(db: Session, window_since: datetime, window_until: datetime, user_id: str | None, include_mouse: bool, study_id: str | None = None) -> Iterator[str]:
     """Streams one CSV row per event -- a generator so a 90-day window
     is never built in memory. Mouse traces (bulky, rarely wanted in a
     spreadsheet) only with include_mouse. `detail` is JSON text."""
@@ -749,6 +775,10 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
         query = query.filter(UsageEvent.event_type.notin_(("mouse_trace", "layout")))
     if not_counted:
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
+    if study_id:
+        # every event of the sittings that opened a page of the study
+        sessions_of_study = db.query(UsageEvent.session_id).filter(UsageEvent.event_type == "page_view", UsageEvent.detail["study_id"].astext == study_id).distinct()
+        query = query.filter(UsageEvent.session_id.in_(sessions_of_study))
     for e in query.order_by(UsageEvent.occurred_at).yield_per(1000):
         writer.writerow(
             [_safe_cell(v) for v in [
@@ -776,6 +806,7 @@ def export_events_csv(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     include_mouse: bool = False,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -788,7 +819,7 @@ def export_events_csv(
     window_since, window_until = _window(days, since, until)
     name = f"usage-events-{window_since.strftime('%Y%m%d')}-{window_until.strftime('%Y%m%d')}.csv"
     return StreamingResponse(
-        _events_csv(db, window_since, window_until, user_id, include_mouse),
+        _events_csv(db, window_since, window_until, user_id, include_mouse, study_id),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
@@ -800,6 +831,7 @@ def list_sessions(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -807,7 +839,10 @@ def list_sessions(
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
     names = _usernames()
-    rows = stats.sessions(_load(db, window_since, window_until, user_id))[:limit]
+    events = _load(db, window_since, window_until, user_id)
+    if study_id:
+        events = stats.within_study(events, study_id)
+    rows = stats.sessions(events)[:limit]
     for s in rows:
         s["username"] = names.get(s["user_id"], {}).get("username", s["user_id"])
         s["started_at"] = _iso(s["started_at"])
@@ -861,6 +896,7 @@ def read_heatmap(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     user_id: str | None = None,
+    study_id: str | None = None,
     mode: Literal["annotation", "review", "other"] | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -885,8 +921,13 @@ def read_heatmap(
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
     events = _rows_as_dicts(query.order_by(UsageEvent.occurred_at).all())
     points = stats.click_points(events, route)
+    if study_id:
+        points = [p for p in points if p["study_id"] == study_id]
     layouts = stats.screen_layouts(events, route)
-    snaps = db.query(UsageSnapshot).filter(UsageSnapshot.route == route).order_by(UsageSnapshot.occurred_at.desc()).limit(snapshots.KEEP_PER_SCREEN).all()
+    snap_query = db.query(UsageSnapshot).filter(UsageSnapshot.route == route)
+    if study_id:
+        snap_query = snap_query.filter(UsageSnapshot.study_id == study_id)
+    snaps = snap_query.order_by(UsageSnapshot.occurred_at.desc()).limit(snapshots.KEEP_PER_SCREEN).all()
     job_types = _job_types(db, {p["job_id"] for p in points} | {lay["job_id"] for lay in layouts} | {snap.job_id for snap in snaps})
     for p in points:
         p["mode"] = job_types.get(p.pop("job_id"), "other")
@@ -896,7 +937,19 @@ def read_heatmap(
     if mode:
         points = [p for p in points if p["mode"] == mode]
     layout = next((lay for lay in layouts if not mode or lay["mode"] == mode), None)
-    snapshot = next((snap for snap in snaps if not mode or job_types.get(snap.job_id, "other") == mode), None)
+    # the picture that can show the most of these clicks on their element
+    # (newest first among equals) -- screens differ between people and cases
+    candidates = [snap for snap in snaps if not mode or job_types.get(snap.job_id, "other") == mode]
+    snapshot = max(candidates, key=lambda snap: stats.anchor_coverage(points, snap.anchors), default=None) if candidates else None
+    hidden: list[dict] = []
+    total = len(points)
+    if snapshot is not None and snapshot.anchors:
+        points, hidden = stats.place_clicks(points, snapshot.anchors, [snapshot.viewport_w, snapshot.viewport_h])
+    else:
+        points = [{**p, "placed": "screen"} for p in points]
+    for p in points:
+        for key in ("rx", "ry", "study_id"):
+            p.pop(key, None)
     if layout:
         layout = {**layout, "occurred_at": _iso(layout["occurred_at"])}
     # Who clicked, most clicks first -- the heatmap's legend and colour key.
@@ -913,4 +966,7 @@ def read_heatmap(
         "modes": {m: modes.get(m, 0) for m in ("annotation", "review", "other")},
         "layout": layout,
         "snapshot": {**snapshots.meta(snapshot), "mode": job_types.get(snapshot.job_id, "other")} if snapshot else None,
+        # clicks on elements this picture doesn't have (a pane switched off...)
+        "hidden": hidden,
+        "placement": {"total": total, "exact": sum(1 for p in points if p["placed"] == "exact"), "similar": sum(1 for p in points if p["placed"] == "similar"), "screen": sum(1 for p in points if p["placed"] == "screen"), "hidden": sum(h["clicks"] for h in hidden)},
     }

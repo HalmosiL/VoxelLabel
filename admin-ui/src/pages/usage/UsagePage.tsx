@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  listStudies,
+  Study,
   getUsageHeatmap,
   getUsageOverview,
   getUsageSession,
@@ -112,6 +114,10 @@ export default function UsagePage() {
   const [tab, setTab] = useState<UsageTab>("overview");
   const [range, setRange] = useState<UsageRange>({ days: 30 });
   const [userFilter, setUserFilter] = useState<string>("");
+  // One study's work only -- every figure, the heatmap (and the picture
+  // behind it) and the sessions follow it.
+  const [studyFilter, setStudyFilter] = useState<string>("");
+  const [studies, setStudies] = useState<Study[]>([]);
   const [overview, setOverview] = useState<UsageOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [settings, setSettings] = useState<UsageSettings | null>(null);
@@ -136,7 +142,7 @@ export default function UsagePage() {
   function refreshOverview() {
     const seq = ++overviewSeq.current;
     setLoading(true);
-    getUsageOverview(range, userFilter || null)
+    getUsageOverview(range, userFilter || null, studyFilter || null)
       .then((o) => {
         if (seq !== overviewSeq.current) return;
         setOverview(o);
@@ -153,12 +159,15 @@ export default function UsagePage() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  useEffect(refreshOverview, [rangeKey, userFilter]);
+  useEffect(refreshOverview, [rangeKey, userFilter, studyFilter]);
   useEffect(() => {
     getUsageSettings()
       .then(setSettings)
       .catch((err) => setError(describeApiError(err)));
     refreshPeople();
+    listStudies()
+      .then(setStudies)
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -174,16 +183,16 @@ export default function UsagePage() {
       return;
     }
     const seq = ++heatmapSeq.current;
-    getUsageHeatmap(heatRoute, range, userFilter || null, heatMode)
+    getUsageHeatmap(heatRoute, range, userFilter || null, heatMode, studyFilter || null)
       .then((h) => seq === heatmapSeq.current && setHeatmap(h))
       .catch((err) => seq === heatmapSeq.current && setError(describeApiError(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  }, [heatRoute, rangeKey, userFilter, heatMode]);
+  }, [heatRoute, rangeKey, userFilter, heatMode, studyFilter]);
 
   function loadSessions(who: { user_id: string; username: string }, replayLatest: boolean) {
     const seq = ++sessionsSeq.current;
     setSessions(null);
-    listUsageSessions(range, who.user_id)
+    listUsageSessions(range, who.user_id, 100, studyFilter || null)
       .then((list) => {
         if (seq !== sessionsSeq.current) return;
         setSessions(list);
@@ -200,7 +209,7 @@ export default function UsagePage() {
   useEffect(() => {
     if (sessionsFor) loadSessions(sessionsFor, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the window changes
-  }, [rangeKey]);
+  }, [rangeKey, studyFilter]);
 
   function openUserSessions(user_id: string, username: string, replayLatest = false) {
     setTab("people");
@@ -267,6 +276,14 @@ export default function UsagePage() {
                 </option>
               ))}
             </select>
+            <select className="input w-56 max-w-full" value={studyFilter} onChange={(e) => setStudyFilter(e.target.value)} aria-label="Study" data-testid="usage-study-filter">
+              <option value="">All studies</option>
+              {studies.map((st) => (
+                <option key={st.id} value={st.id}>
+                  {st.name}
+                </option>
+              ))}
+            </select>
             <div className="flex rounded-md border border-gray-200 bg-white" role="group" aria-label="Range">
               {RANGES.map((n) => (
                 <button
@@ -285,6 +302,7 @@ export default function UsagePage() {
       <p className="text-sm text-gray-500" data-testid="usage-range-label">
         {"from" in range ? `Showing ${formatWhen(range.from)} – ${range.to ? formatWhen(range.to) : "now"}` : `Showing the last ${range.days} days`}
         {chosen ? ` · only ${chosen.username}` : " · everyone"}
+        {studyFilter && ` · study ${studies.find((st) => st.id === studyFilter)?.name ?? ""}`}
         {summary && (
           <span data-testid="usage-basis">
             {" "}
@@ -342,6 +360,7 @@ export default function UsagePage() {
           learningCurve={overview.learning_curve}
           range={range}
           userFilter={userFilter}
+          studyFilter={studyFilter}
           personName={chosen?.username ?? null}
           onGoTo={setTab}
           onError={setError}

@@ -20,7 +20,10 @@ export default function UsageTracker() {
     });
   }, []);
   useEffect(() => {
-    trackPageView(location.pathname);
+    // /studies/<id>/... pages belong to that study -- what the Usage
+    // page's study filter goes by
+    const study = /^\/studies\/([0-9a-f-]{36})/i.exec(location.pathname)?.[1];
+    trackPageView(location.pathname, study ? { study_id: study } : undefined);
   }, [location.pathname]);
   return null;
 }

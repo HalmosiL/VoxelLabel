@@ -180,7 +180,7 @@ def test_per_user_figures():
 
 def test_click_points_normalise_by_viewport_and_skip_incomplete_ones():
     points = stats.click_points(EVENTS, "/studies")
-    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE, "dead": False, "job_id": None}]
+    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE, "dead": False, "job_id": None, "study_id": None, "rx": None, "ry": None}]
     no_viewport = [ev("s", "click", "/x", detail={"x": 1, "y": 1})]
     assert stats.click_points(no_viewport, "/x") == []
 
@@ -395,3 +395,36 @@ def test_clicks_and_layouts_carry_the_job_of_the_page_they_were_on():
     assert [p["job_id"] for p in points] == ["job-1", None] and points[0]["x"] == 0.5
     [layout] = stats.screen_layouts(events, "/viewer/:id")
     assert layout["job_id"] == "job-1" and layout["elements"] == boxes and layout["viewport"] == [1600, 900]
+
+
+def test_clicks_land_on_the_same_element_of_another_screen():
+    """Recorded on a screen with the object list lower down (more
+    objects above it), placed on a picture where it sits higher."""
+    anchors = [["testid:object-1", 1200, 300, 200, 20], ["testid:pane-coronal", 400, 100, 400, 400], ["button:Save", 10, 10, 60, 20]]
+    points = [
+        {"x": 0.9, "y": 0.9, "target": "testid:object-1", "rx": 0.5, "ry": 0.5, "user_id": ALICE},
+        {"x": 0.9, "y": 0.9, "target": "testid:object-9", "rx": 0.0, "ry": 1.0, "user_id": ALICE},  # a row the picture doesn't have: same kind
+        {"x": 0.3, "y": 0.3, "target": "testid:pane-axial", "rx": 0.5, "ry": 0.5, "user_id": ALICE},  # pane switched off in the picture
+        {"x": 0.2, "y": 0.1, "target": "button:Save", "rx": None, "ry": None, "user_id": ALICE},  # recorded before relative positions
+    ]
+    placed, hidden = stats.place_clicks(points, anchors, [1600, 900])
+    assert [(p["target"], p["placed"], p["x"], p["y"]) for p in placed] == [
+        ("testid:object-1", "exact", round(1300 / 1600, 4), round(310 / 900, 4)),
+        ("testid:object-9", "similar", round(1200 / 1600, 4), round(320 / 900, 4)),
+        ("button:Save", "screen", 0.2, 0.1),
+    ]
+    assert hidden == [{"target": "testid:pane-axial", "clicks": 1}]
+    assert stats.anchor_coverage(points, anchors) == 2 and stats.anchor_coverage(points, None) == 0
+
+
+def test_within_study_keeps_only_the_study_s_pages():
+    events = [
+        ev("s", "page_view", "/studies/:id", at_s=0, detail={"study_id": "st-1"}),
+        ev("s", "click", "/studies/:id", at_s=1, detail={"x": 1, "y": 1}),
+        ev("s", "page_leave", "/studies/:id", at_s=2, duration_ms=2000),
+        ev("s", "page_view", "/my-jobs", at_s=2),
+        ev("s", "click", "/my-jobs", at_s=3, detail={"x": 1, "y": 1}),
+        ev("t", "page_view", "/viewer/:id", at_s=0, app="viewer", detail={"study_id": "st-2"}),
+    ]
+    kept = stats.within_study(events, "st-1")
+    assert [(e["event_type"], e["route"]) for e in kept] == [("page_view", "/studies/:id"), ("click", "/studies/:id"), ("page_leave", "/studies/:id")]

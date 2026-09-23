@@ -259,14 +259,18 @@ def _window(days: int, since: datetime | None, until: datetime | None) -> tuple[
     return since, until
 
 
-def build_summary(db: Session, window_since: datetime, window_until: datetime, card_id: str | None = None, person_id: str | None = None) -> dict:
+def build_summary(db: Session, window_since: datetime, window_until: datetime, card_id: str | None = None, person_id: str | None = None, study_id: str | None = None) -> dict:
     """The /summary payload for an explicit window -- also what the
     Usage page's overview/findings/report endpoints (app/usage) call, so
     the pipeline half of a finding is the same number the page shows.
     With `person_id`, only the cases that person was assigned or did;
     the "usual wait" a bottleneck is judged against stays every case's,
     so one person's cases aren't flagged by a yardstick of their own."""
-    all_legs = _load_legs(db, card_id)
+    try:
+        study_uuid = uuid.UUID(study_id) if study_id else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail="study_id must be a UUID") from None
+    all_legs = _load_legs(db, card_id, study_uuid)
     legs = [leg for leg in all_legs if person_id in (leg["assignee_id"], leg["actor_id"])] if person_id else all_legs
     windowed = [leg for leg in legs if leg["terminal_at"] is not None and window_since <= leg["terminal_at"] <= window_until]
     names = _usernames()

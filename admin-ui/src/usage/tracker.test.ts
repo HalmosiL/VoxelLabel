@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { _reset, captureLayout, captureSnapshot, textHash, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
+import { _reset, anchorOf, captureAnchors, captureLayout, captureSnapshot, structureKey, textHash, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
 
 const ON: UsageConfig = {
   enabled: true,
@@ -374,5 +374,47 @@ describe("screen snapshot", () => {
   it("hashes text stably and tells different texts apart", () => {
     expect(textHash(".a{color:red}")).toBe(textHash(".a{color:red}"));
     expect(textHash(".a{color:red}")).not.toBe(textHash(".a{color:blue}"));
+  });
+});
+
+describe("clicks tied to elements", () => {
+  function place(el: Element, x: number, y: number, w: number, h: number) {
+    el.getBoundingClientRect = () => ({ left: x, top: y, width: w, height: h, right: x + w, bottom: y + h, x, y, toJSON: () => ({}) }) as DOMRect;
+    return el;
+  }
+
+  it("records where inside its element a click landed", async () => {
+    trackPageView("/viewer/x");
+    const pane = place(document.createElement("div"), 100, 200, 400, 400);
+    pane.setAttribute("data-testid", "pane-axial");
+    const canvas = document.createElement("canvas");
+    pane.appendChild(canvas);
+    document.body.appendChild(pane);
+    canvas.dispatchEvent(new MouseEvent("click", { clientX: 300, clientY: 300, bubbles: true }));
+    settleClicks();
+    const click = pendingEvents().find((e) => e.event_type === "click");
+    expect(click?.detail).toMatchObject({ target: "testid:pane-axial", rx: 0.5, ry: 0.25 });
+    expect(anchorOf(canvas).element).toBe(pane);
+  });
+
+  it("lists every identifiable element with its box, and keys the screen by what it shows", () => {
+    document.body.innerHTML = "";
+    const coronal = place(document.createElement("div"), 0, 0, 400, 400);
+    coronal.setAttribute("data-testid", "pane-coronal");
+    const axial = place(document.createElement("div"), 400, 0, 400, 400);
+    axial.setAttribute("data-testid", "pane-axial");
+    const save = place(document.createElement("button"), 10, 500, 60, 20);
+    save.textContent = "Save";
+    const icon = place(document.createElement("span"), 12, 502, 10, 10);
+    save.appendChild(icon);
+    document.body.append(coronal, axial, save);
+    expect(captureAnchors()).toEqual([
+      ["testid:pane-coronal", 0, 0, 400, 400],
+      ["testid:pane-axial", 400, 0, 400, 400],
+      ["button:Save", 10, 500, 60, 20],
+    ]);
+    const both = structureKey();
+    place(axial, 0, 0, 0, 0); // the axial pane switched off
+    expect(structureKey()).not.toBe(both);
   });
 });

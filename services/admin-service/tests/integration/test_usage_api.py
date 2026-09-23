@@ -152,7 +152,7 @@ def test_summary_sessions_and_heatmap(client):
     assert client.get("/admin/usage/sessions/nope").status_code == 404
 
     heat = client.get("/admin/usage/heatmap", params={"route": "/my-jobs"}).json()
-    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT, "dead": False, "mode": "other"}]
+    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT, "dead": False, "mode": "other", "placed": "screen"}]
     assert heat["users"] == [{"user_id": ANNOTATOR_SUBJECT, "username": "dr-test", "clicks": 1}]
     assert client.get("/admin/usage/heatmap", params={"route": "/nothing"}).json()["points"] == []
 
@@ -441,3 +441,49 @@ def test_screen_snapshots_are_cleaned_stored_and_drawn_behind_the_clicks(client,
     db.commit()
     purge_expired(db, get_settings(db), force=True)
     assert db.query(UsageSnapshot).count() == 0 and db.query(UsageSnapshotStyle).count() == 0
+
+
+def test_heatmap_places_clicks_on_the_element_in_the_best_picture_and_filters_by_study(client, db):
+    client.as_admin()
+    sid = make_study(client)
+    other = make_study(client, name="Study B")
+    snap = {
+        "session_id": "pic",
+        "app": "viewer",
+        "route": "/viewer/:id",
+        "viewport": [1600, 900],
+        "occurred_at": (BASE + timedelta(seconds=30)).isoformat(),
+        "html": "<html><head></head><body><div data-testid='pane-coronal'></div></body></html>",
+        "anchors": [["testid:pane-coronal", 400, 100, 400, 400], ["testid:object-1", 1200, 300, 200, 20]],
+        "study_id": sid,
+        "structure_key": "k1",
+    }
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    assert client.post("/admin/usage/snapshots", json=snap).json() == {"stored": True}
+    assert client.post("/admin/usage/snapshots", json={**snap, "anchors": [["testid:pane-axial", 0, 0, 10, 10]], "study_id": other, "structure_key": "k2"}).json() == {"stored": True}
+    click = lambda s, at, target, rx, ry: ev("click", "/viewer/:id", session=s, app="viewer", at_s=at, detail={"x": 5, "y": 5, "viewport": [800, 600], "target": target, "rx": rx, "ry": ry})  # noqa: E731
+    post(
+        client,
+        [
+            ev("page_view", "/viewer/:id", session="a", app="viewer", detail={"study_id": sid}),
+            click("a", 1, "testid:pane-coronal", 0.5, 0.5),
+            click("a", 2, "testid:object-4", 0.5, 0.5),
+            click("a", 3, "testid:pane-axial", 0.5, 0.5),
+            ev("page_view", "/viewer/:id", session="b", app="viewer", at_s=10, detail={"study_id": other}),
+            click("b", 11, "testid:pane-axial", 0.1, 0.1),
+        ],
+    )
+    client.as_admin()
+    heat = client.get("/admin/usage/heatmap", params={"route": "/viewer/:id", "study_id": sid}).json()
+    assert heat["snapshot"]["study_id"] == sid and heat["snapshot"]["structure_key"] == "k1"
+    placed = {p["target"]: p for p in heat["points"]}
+    assert (placed["testid:pane-coronal"]["x"], placed["testid:pane-coronal"]["y"], placed["testid:pane-coronal"]["placed"]) == (0.375, round(300 / 900, 4), "exact")
+    assert placed["testid:object-4"]["placed"] == "similar"
+    assert heat["hidden"] == [{"target": "testid:pane-axial", "clicks": 1}]
+    assert heat["placement"] == {"total": 3, "exact": 1, "similar": 1, "screen": 0, "hidden": 1}
+    # the other study's clicks, on its own picture
+    heat_b = client.get("/admin/usage/heatmap", params={"route": "/viewer/:id", "study_id": other}).json()
+    assert [p["target"] for p in heat_b["points"]] == ["testid:pane-axial"] and heat_b["snapshot"]["study_id"] == other
+    # the rest of the page follows the study too
+    assert client.get("/admin/usage/summary", params={"study_id": sid}).json()["totals"]["sessions"] == 1
+    assert [s_["session_id"] for s_ in client.get("/admin/usage/sessions", params={"study_id": other}).json()] == ["b"]
