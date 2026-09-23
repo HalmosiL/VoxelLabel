@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getUsageSnapshotDocument, LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
+import { fitWidth, FullscreenButton, useFullscreen } from "./fullscreen";
 import LayoutBackdrop from "./LayoutBackdrop";
 import ScreenSnapshot from "./ScreenSnapshot";
 import { advance, buildTimeline, GAP_MS, markIndexAt, pageAt } from "./replay";
@@ -272,6 +273,8 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<number>(4);
   const [skipGaps, setSkipGaps] = useState(true);
+  const [showImages, setShowImages] = useState(true);
+  const stage = useFullscreen<HTMLDivElement>();
   const logRef = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
@@ -333,6 +336,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   const pageSnapshot = page
     ? ([...onThisPage].reverse().find((sn) => Date.parse(sn.occurred_at ?? "") - sessionStart <= head) ?? onThisPage[0] ?? (session.snapshots ?? []).find((sn) => sn.route === page.route))
     : undefined;
+  const anyImages = (session.snapshots ?? []).some((sn) => sn.has_images);
   const stageH = pageSnapshot ? (STAGE_W * pageSnapshot.viewport[1]) / pageSnapshot.viewport[0] : STAGE_H;
   const sx = (x: number) => (x / vp[0]) * STAGE_W;
   const sy = (y: number) => (y / vp[1]) * stageH;
@@ -351,7 +355,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
     <div className="card" data-testid="usage-timeline">
       <CardHeader
         title={`Replay · ${session.username} · ${session.app}`}
-        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them the screen as it was -- its images as grey blocks.`}
+        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them the screen as it was -- its images as grey blocks, or the case images themselves where they were recorded.`}
         actions={
           <DownloadCsvButton
             filename={`usage-session-${session.session_id.slice(0, 8)}.csv`}
@@ -369,7 +373,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
         }
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div>
+        <div ref={stage.ref} className={stage.active ? "overflow-auto bg-white p-6" : undefined} data-testid="usage-replay-stage">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -386,7 +390,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => seek(0)} title="Back to the start" aria-label="Back to the start">
               ⏮
             </button>
-            <select className="input h-8 py-0 text-sm" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed" data-testid="usage-replay-speed">
+            <select className="input h-8 w-auto py-0 text-sm" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed" data-testid="usage-replay-speed">
               {SPEEDS.map((s) => (
                 <option key={s} value={s}>
                   {s}×
@@ -397,6 +401,13 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
               <input type="checkbox" checked={skipGaps} onChange={(e) => setSkipGaps(e.target.checked)} data-testid="usage-replay-skip-gaps" />
               skip pauses
             </label>
+            {anyImages && (
+              <label className="flex items-center gap-1 text-xs text-gray-600" title="The case images recorded with this session -- off: grey blocks">
+                <input type="checkbox" checked={showImages} onChange={(e) => setShowImages(e.target.checked)} data-testid="usage-replay-images" />
+                case images
+              </label>
+            )}
+            {stage.supported && <FullscreenButton active={stage.active} onClick={stage.toggle} testId="usage-replay-fullscreen" />}
             <span className="ml-auto tabular-nums text-sm text-gray-700" data-testid="usage-replay-clock">
               {clock(head)} / {clock(timeline.duration)}
             </span>
@@ -429,11 +440,12 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
               </span>
             )}
           </div>
+          <div style={stage.active ? { width: fitWidth(pageSnapshot?.viewport ?? [STAGE_W, STAGE_H], 170), marginInline: "auto" } : undefined}>
           {timeline.pages.length === 0 ? (
             <EmptyState message="No page views in this session." />
           ) : (
             pageSnapshot ? (
-              <ScreenSnapshot snapshot={pageSnapshot}>
+              <ScreenSnapshot snapshot={pageSnapshot} images={showImages}>
                 <svg viewBox={`0 0 ${STAGE_W} ${stageH}`} className="h-full w-full" role="img" aria-label={`Replay of ${page?.route ?? "the session"}`} data-testid="usage-replay-svg">
               {shownPoints.length > 1 && <polyline points={path} fill="none" stroke={ACCENT} strokeWidth={0.5} strokeOpacity={0.7} strokeLinejoin="round" />}
               {shownClicks.map((c, i) => {
@@ -489,6 +501,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
               </svg>
             )
           )}
+          </div>
         </div>
         <div className="max-h-[28rem] overflow-y-auto">
           <ul className="divide-y divide-gray-100 text-sm" ref={logRef}>

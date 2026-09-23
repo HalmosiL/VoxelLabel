@@ -16,11 +16,13 @@ import re
 from shared_models.models import UsageSnapshot, UsageSnapshotStyle
 from sqlalchemy.orm import Session
 
-MAX_HTML_BYTES = 4_000_000
+# Room for the case images when they are recorded (the tracker caps its
+# inline pictures at ~2.5 MB of text per snapshot).
+MAX_HTML_BYTES = 6_000_000
 MAX_CSS_BYTES = 3_000_000
 # Newest snapshots kept per (app, screen); older ones go -- the heatmap
 # only needs the latest, a replay falls back to the layout outline.
-KEEP_PER_SCREEN = 50
+KEEP_PER_SCREEN = 300
 
 _SCRIPT = re.compile(r"<(script|noscript|template)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 _MEDIA_PAIRED = re.compile(r"<(canvas|video|audio|iframe|object|picture)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
@@ -31,6 +33,13 @@ _TEXTAREA = re.compile(r"(<textarea\b[^>]*>).*?(</textarea\s*>)", re.IGNORECASE 
 _CSS_URL = re.compile(r"url\(\s*(['\"]?)[^)]*\1\s*\)", re.IGNORECASE)
 _CSS_IMPORT = re.compile(r"@import[^;]*;", re.IGNORECASE)
 _STYLE_BG_URL = re.compile(r"url\(\s*(&quot;|['\"])?[^)]*?(&quot;|['\"])?\s*\)", re.IGNORECASE)
+# A case image exactly as the tracker writes it (captureSnapshot): an
+# inline WebP/PNG/JPEG and nothing that could fetch anything -- the only
+# <img> ever kept, and only while track_screen_images is on.
+SHOT_MARK = "data-vl-shot"
+_SHOT = re.compile(
+    r'<img data-vl-shot="" (?:class="[^"<>]*" )?src="data:image/(?:webp|png|jpeg);base64,[A-Za-z0-9+/=]+" style="[^"<>()]*">'
+)
 
 # Makes the frozen page sit still and never scroll inside its frame.
 _FREEZE = "<style>html,body{overflow:hidden!important}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style>"
@@ -55,8 +64,18 @@ def decode(text: str | None, gz_b64: str | None, limit: int) -> str | None:
     return text
 
 
-def clean_html(html: str) -> str:
-    """No scripts, no event handlers, no media, no typed values."""
+def clean_html(html: str, *, keep_images: bool = False) -> str:
+    """No scripts, no event handlers, no media, no typed values. With
+    keep_images, the tracker's inline case images survive (their style
+    may hold no parentheses, so no url()); every other <img> still goes."""
+    kept: list[str] = []
+    if keep_images:
+
+        def park(m: re.Match) -> str:
+            kept.append(m.group(0))
+            return f"\x00shot{len(kept) - 1}\x00"
+
+        html = _SHOT.sub(park, html.replace("\x00", ""))
     html = _SCRIPT.sub("", html)
     html = _MEDIA_PAIRED.sub('<span data-vl-image="">image</span>', html)
     html = _MEDIA_VOID.sub("", html)
@@ -64,7 +83,15 @@ def clean_html(html: str) -> str:
     html = _VALUE_ATTR.sub(r"\1", html)
     html = _TEXTAREA.sub(r"\1\2", html)
     html = _STYLE_BG_URL.sub("none", html)
-    return html
+    for i, tag in enumerate(kept):
+        html = html.replace(f"\x00shot{i}\x00", tag)
+    return html.replace("\x00", "")
+
+
+def has_images(cleaned_html: str) -> bool:
+    """Whether a cleaned snapshot still carries a case image -- only a
+    kept tracker picture can start with this after clean_html."""
+    return f"<img {SHOT_MARK}" in cleaned_html
 
 
 def clean_css(css: str) -> str:
@@ -132,4 +159,5 @@ def meta(snap: UsageSnapshot) -> dict:
         "occurred_at": snap.occurred_at.isoformat() if snap.occurred_at else None,
         "study_id": snap.study_id,
         "structure_key": snap.structure_key,
+        "has_images": bool(snap.has_images),
     }

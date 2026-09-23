@@ -3,7 +3,7 @@ one particular caller, and the retention purge."""
 import time
 from datetime import datetime, timedelta, timezone
 
-from shared_models.models import UsageEvent, UsageSettings, UsageSnapshot, UsageSnapshotStyle
+from shared_models.models import UsageEvent, UsageEventArchive, UsageSettings, UsageSnapshot, UsageSnapshotArchive, UsageSnapshotStyle
 from sqlalchemy.orm import Session
 
 # Which switch governs which event type. focus/idle ride along with page
@@ -23,7 +23,9 @@ CATEGORY_OF_EVENT = {
     # the screen's layout behind the click heatmap: part of recording clicks
     "layout": "track_clicks",
 }
-CATEGORY_FLAGS = ("track_pages", "track_actions", "track_clicks", "track_mouse", "track_scroll", "track_keys", "track_errors", "track_perf")
+# track_screen_images governs no event type: it lets screen snapshots
+# carry the case images (see snapshots.clean_html).
+CATEGORY_FLAGS = ("track_pages", "track_actions", "track_clicks", "track_mouse", "track_scroll", "track_keys", "track_errors", "track_perf", "track_screen_images")
 
 PURGE_INTERVAL_SECONDS = 3600
 _last_purge_at = 0.0
@@ -63,7 +65,8 @@ def allows(config: dict, event_type: str) -> bool:
 def purge_expired(db: Session, settings: UsageSettings, *, force: bool = False) -> int:
     """Deletes events older than retention_days -- at most once an hour
     from the ingest path (mouse traces are bulky, so this isn't optional),
-    or on demand with force=True. Returns how many rows went."""
+    or on demand with force=True. Archived rows (a cleared log waiting to
+    be restored) age out the same way. Returns how many live rows went."""
     global _last_purge_at
     now = time.monotonic()
     if not force and now - _last_purge_at < PURGE_INTERVAL_SECONDS:
@@ -72,7 +75,11 @@ def purge_expired(db: Session, settings: UsageSettings, *, force: bool = False) 
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.retention_days)
     deleted = db.query(UsageEvent).filter(UsageEvent.occurred_at < cutoff).delete(synchronize_session=False)
     db.query(UsageSnapshot).filter(UsageSnapshot.occurred_at < cutoff).delete(synchronize_session=False)
-    used = db.query(UsageSnapshot.css_hash).filter(UsageSnapshot.css_hash.isnot(None)).distinct()
-    db.query(UsageSnapshotStyle).filter(UsageSnapshotStyle.css_hash.notin_(used)).delete(synchronize_session=False)
+    db.query(UsageEventArchive).filter(UsageEventArchive.occurred_at < cutoff).delete(synchronize_session=False)
+    db.query(UsageSnapshotArchive).filter(UsageSnapshotArchive.occurred_at < cutoff).delete(synchronize_session=False)
+    # A stylesheet goes once no snapshot needs it -- live or archived.
+    used = db.query(UsageSnapshot.css_hash).filter(UsageSnapshot.css_hash.isnot(None))
+    archived = db.query(UsageSnapshotArchive.css_hash).filter(UsageSnapshotArchive.css_hash.isnot(None))
+    db.query(UsageSnapshotStyle).filter(UsageSnapshotStyle.css_hash.notin_(used), UsageSnapshotStyle.css_hash.notin_(archived)).delete(synchronize_session=False)
     db.commit()
     return deleted

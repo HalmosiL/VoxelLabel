@@ -32,10 +32,11 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
   const admin = await token("platform-admin", "platform-admin");
   const annot = await token("dr-test", "Test1234!");
   // Start from "everything on" so the run is repeatable.
-  await api(admin, `${ADMIN}/admin/usage/settings`, { method: "PUT", body: JSON.stringify({ enabled: true, track_mouse: true, track_clicks: true, track_keys: true }) });
+  await api(admin, `${ADMIN}/admin/usage/settings`, { method: "PUT", body: JSON.stringify({ enabled: true, track_mouse: true, track_clicks: true, track_keys: true, track_screen_images: true }) });
   await api(admin, `${ADMIN}/admin/usage/settings/users/${F.ANNOTATOR.subject}`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
   const cfg = await api(annot, `${ADMIN}/admin/usage/config`);
   check("annotator's config: recording on", cfg.status === 200 && cfg.body.enabled === true && cfg.body.track_mouse === true, cfg.body);
+  check("annotator's config: case images switched on", cfg.body.track_screen_images === true, cfg.body);
   check("annotator cannot read the summary", (await api(annot, `${ADMIN}/admin/usage/summary`)).status === 403);
 
   const jobs = (await api(annot, `${ADMIN}/admin/my-jobs`)).body;
@@ -53,6 +54,12 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const posted = [];
     page.on("request", (r) => { if (r.url().endsWith("/usage/events") && r.method() === "POST") posted.push(r.postDataJSON()); });
     const snapshotsStored = [];
+    const snapshotHtml = [];
+    page.on("request", (r) => {
+      if (!r.url().endsWith("/usage/snapshots") || r.method() !== "POST") return;
+      const b = r.postDataJSON();
+      snapshotHtml.push(b.html_gz ? require("zlib").gunzipSync(Buffer.from(b.html_gz, "base64")).toString() : b.html || "");
+    });
     page.on("response", async (r) => { if (r.url().endsWith("/usage/snapshots") && r.request().method() === "POST") snapshotsStored.push(await r.json().catch(() => null)); });
     await login(page, "dr-test", "Test1234!", `${VIEWER}/viewer/series/${series}?studyId=${F.STUDY}&caseId=${kase.id}&jobId=${F.ANNOT_CARD}`);
     await page.waitForFunction(() => document.querySelectorAll("canvas").length >= 1, null, { timeout: 60000 });
@@ -73,6 +80,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const layouts = all.filter((e) => e.event_type === "layout");
     const boxes = layouts.flatMap((e) => e.detail.elements);
     check("viewer sent a snapshot of the screen and it was stored", snapshotsStored.some((b) => b && b.stored === true), snapshotsStored);
+    check("with case images on, a snapshot carries the slice as an inline picture", snapshotHtml.some((h) => /<img data-vl-shot="" [^>]*src="data:image\/(webp|png|jpeg);base64,/.test(h)), snapshotHtml.map((h) => (h.match(/data-vl-shot/g) || []).length));
     check("switching a pane off made the tracker take another snapshot", snapshotsStored.filter((b) => b && b.stored).length >= 2, snapshotsStored.length);
     check("clicks carry where inside their element they landed", all.some((e) => e.event_type === "click" && typeof e.detail.rx === "number" && typeof e.detail.ry === "number"));
     check("viewer recorded the screen's layout once: the image as a bare block, controls with labels", layouts.length >= 1 && boxes.some((b) => b[4] === "media" && b.length === 5) && boxes.some((b) => b[4] === "button" && b[5]), layouts.map((e) => e.detail.elements.length));
@@ -167,7 +175,14 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await frame.waitFor({ timeout: 15000 });
     const srcdoc = (await frame.getAttribute("srcdoc")) || "";
     check("the recorded screen is drawn behind the clicks, in a sandboxed frame", (await frame.getAttribute("sandbox")) === "" && (await page.locator('[data-testid="usage-screen-snapshot"] [data-testid="usage-heatmap-svg"]').count()) === 1);
-    check("the recorded screen keeps the page's controls but no image, canvas or script", srcdoc.includes("data-vl-image") && srcdoc.includes("Mark as") && !/<canvas|<img|<script/i.test(srcdoc), srcdoc.length);
+    // Case images are on in this run: the only <img> allowed is the
+    // tracker's inline picture -- never a canvas, a script or a fetched image.
+    const foreignImg = (srcdoc.match(/<img\b[^>]*>/gi) || []).filter((t) => !/^<img data-vl-shot="" (class="[^"]*" )?src="data:image\/(webp|png|jpeg);base64,/.test(t));
+    check("the recorded screen keeps the page's controls; no canvas, script or fetched image", srcdoc.includes("Mark as") && !/<canvas|<script/i.test(srcdoc) && foreignImg.length === 0, { length: srcdoc.length, foreignImg: foreignImg.slice(0, 2) });
+    if (/data-vl-shot/.test(srcdoc)) {
+      check("the heatmap offers the case images of its screen", (await page.locator('[data-testid="usage-heatmap-images"]').count()) === 1);
+    }
+    check("the heatmap can go full screen", (await page.locator('[data-testid="usage-heatmap-fullscreen"]').count()) === 1);
     check("clicks are split by the kind of job they were made in", (await page.locator('[data-testid="usage-heatmap-mode-annotation"]').count()) === 1);
     check("the heatmap says how the clicks were placed on this picture", /on the same element/.test(await page.locator('[data-testid="usage-heatmap-placement"]').innerText()) && (await page.locator('[data-testid="usage-heatmap-dot"][data-placed="exact"]').count()) >= 1);
     await page.locator('[data-testid="usage-heatmap-mode-annotation"]').click();
@@ -291,6 +306,19 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const replayFrames = await page.locator('[data-testid="usage-timeline"] [data-testid="usage-screen-snapshot-frame"]').count();
     const replayJob = await page.locator('[data-testid="usage-replay-job-type"]').allInnerTexts();
     check("the replay draws the recorded screen behind the pointer and says it was an annotation job", replayFrames === 1 && replayJob[0] === "Annotation job", { replayFrames, replayJob });
+    const frameDoc = () => page.locator('[data-testid="usage-timeline"] [data-testid="usage-screen-snapshot-frame"]').first().getAttribute("srcdoc");
+    check("the replay offers the recorded case images, shown by default", (await page.locator('[data-testid="usage-replay-images"]').isChecked()) && /data-vl-shot/.test((await frameDoc()) || ""));
+    await page.locator('[data-testid="usage-replay-images"]').uncheck();
+    await page.waitForTimeout(300);
+    check("switching the case images off draws them as grey blocks", /img\[data-vl-shot\]\{object-position/.test((await frameDoc()) || ""));
+    await page.locator('[data-testid="usage-replay-images"]').check();
+    await page.locator('[data-testid="usage-replay-fullscreen"]').click();
+    await page.waitForTimeout(500);
+    const full = await page.evaluate(() => document.fullscreenElement && document.fullscreenElement.getAttribute("data-testid"));
+    check("the replay goes full screen, controls and all", full === "usage-replay-stage" && (await page.locator('[data-testid="usage-replay-fullscreen"]').getAttribute("aria-pressed")) === "true", full);
+    await page.locator('[data-testid="usage-replay-fullscreen"]').click();
+    await page.waitForTimeout(300);
+    check("and back", await page.evaluate(() => document.fullscreenElement === null));
     const clockText = await page.locator('[data-testid="usage-replay-clock"]').innerText();
     check("the replay clock advances", !clockText.startsWith("0:00 /"), clockText);
     check("the log lists the session's events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);
@@ -320,11 +348,27 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.waitForTimeout(800);
     const after = (await api(annot, `${ADMIN}/admin/usage/config`)).body;
     check("switch off reaches the annotator's config", after.track_mouse === false && after.track_clicks === true, after);
+
+    // ---- Settings: clear the whole log, then undo it ----
+    check("the case-images switch is on the recording card", await page.locator('[data-testid="usage-switch-track_screen_images"]').isChecked());
+    const liveBefore = (await api(admin, `${ADMIN}/admin/usage/clears`)).body.live;
+    await page.locator('[data-testid="usage-clear-log-button"]').click();
+    await page.locator('[data-testid="usage-clear-confirm"]').click();
+    await page.locator('[data-testid="usage-clear-notice"]').waitFor({ timeout: 30000 });
+    const afterClear = (await api(admin, `${ADMIN}/admin/usage/clears`)).body;
+    const cleared = afterClear.clears[0];
+    check("clearing moves the whole log aside, restorable", cleared.status === "archived" && cleared.events >= liveBefore.events && afterClear.live.events < liveBefore.events, { liveBefore, live: afterClear.live, cleared });
+    check("the cleared log is listed with a Restore button", (await page.locator('[data-testid="usage-clear-row"]').first().locator('[data-testid="usage-clear-restore"]').count()) === 1);
+    await page.locator('[data-testid="usage-clear-undo"]').click();
+    await page.waitForFunction(() => /Restored/.test(document.querySelector('[data-testid="usage-clear-notice"]')?.textContent || ""), null, { timeout: 30000 });
+    const afterUndo = (await api(admin, `${ADMIN}/admin/usage/clears`)).body;
+    check("Undo puts every event back", afterUndo.clears[0].status === "restored" && afterUndo.live.events >= liveBefore.events, { liveBefore, live: afterUndo.live });
+    check("the restored clear says so", /restored/.test(await page.locator('[data-testid="usage-clear-status"]').first().innerText()));
     check("admin-ui: no page errors", errors.length === 0, errors);
     await ctx.close();
   }
   // restore
-  await api(admin, `${ADMIN}/admin/usage/settings`, { method: "PUT", body: JSON.stringify({ track_mouse: true }) });
+  await api(admin, `${ADMIN}/admin/usage/settings`, { method: "PUT", body: JSON.stringify({ track_mouse: true, track_screen_images: false }) });
   await browser.close();
   const fails = results.filter((r) => !r.ok);
   console.log(`checks ${results.length}, fails ${fails.length}`);

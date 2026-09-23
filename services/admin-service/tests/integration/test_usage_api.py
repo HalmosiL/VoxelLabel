@@ -487,3 +487,126 @@ def test_heatmap_places_clicks_on_the_element_in_the_best_picture_and_filters_by
     # the rest of the page follows the study too
     assert client.get("/admin/usage/summary", params={"study_id": sid}).json()["totals"]["sessions"] == 1
     assert [s_["session_id"] for s_ in client.get("/admin/usage/sessions", params={"study_id": other}).json()] == ["b"]
+
+
+def _snapshot_body(session, css_hash="st1"):
+    import base64
+    import gzip
+
+    return {
+        "session_id": session,
+        "app": "viewer",
+        "route": "/viewer/:id",
+        "viewport": [1600, 900],
+        "occurred_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+        "html_gz": base64.b64encode(gzip.compress(b"<html><head></head><body><h1>V</h1></body></html>")).decode(),
+        "css_hash": css_hash,
+        "css": ".a{color:red}",
+    }
+
+
+def test_clearing_the_log_is_admin_only_moves_everything_out_and_restores_it(client, db):
+    from shared_models.models import AuditLog, UsageEventArchive, UsageSnapshot, UsageSnapshotArchive, UsageSnapshotStyle
+
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    post(client, [ev("page_view", "/my-jobs", session="c1"), ev("click", "/my-jobs", session="c1", at_s=1, detail={"x": 1, "y": 1, "viewport": [1600, 900]})])
+    assert client.post("/admin/usage/snapshots", json=_snapshot_body("c1")).json() == {"stored": True}
+    assert client.post("/admin/usage/clear", json={"confirm": True}).status_code == 403
+    assert client.get("/admin/usage/clears").status_code == 403
+
+    client.as_admin()
+    # the confirmation has to be sent explicitly
+    assert client.post("/admin/usage/clear", json={}).status_code == 422
+    assert client.post("/admin/usage/clear", json={"confirm": False}).status_code == 422
+    before = client.get("/admin/usage/clears").json()
+    assert before["live"] == {"events": 2, "snapshots": 1} and before["clears"] == []
+
+    r = client.post("/admin/usage/clear", json={"confirm": True})
+    assert r.status_code == 200, r.text
+    cleared = r.json()["clear"]
+    assert cleared["events"] == 2 and cleared["snapshots"] == 1 and cleared["status"] == "archived"
+    assert cleared["first_at"] is not None and cleared["last_at"] >= cleared["first_at"]
+    assert r.json()["live"] == {"events": 0, "snapshots": 0}
+    assert db.query(UsageEvent).count() == 0 and db.query(UsageSnapshot).count() == 0
+    assert db.query(UsageEventArchive).count() == 2 and db.query(UsageSnapshotArchive).count() == 1
+    # every figure now starts from empty
+    assert client.get("/admin/usage/summary").json()["totals"]["events"] == 0
+    # nothing left to clear
+    assert client.post("/admin/usage/clear", json={"confirm": True}).status_code == 409
+
+    # the purge keeps a stylesheet an archived snapshot still needs
+    purge_expired(db, get_settings(db), force=True)
+    assert db.query(UsageSnapshotStyle).count() == 1
+
+    # new activity after the clear merges with the restored log
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    post(client, [ev("page_view", "/studies", session="c2", at_s=5)])
+    client.as_admin()
+    r = client.post(f"/admin/usage/clears/{cleared['id']}/restore")
+    assert r.status_code == 200, r.text
+    assert r.json()["restored"] == {"events": 2, "snapshots": 1}
+    assert db.query(UsageEvent).count() == 3 and db.query(UsageSnapshot).count() == 1 and db.query(UsageEventArchive).count() == 0
+    listed = r.json()["clears"][0]
+    assert listed["status"] == "restored" and listed["restored_at"] is not None
+    # a restore happens once; a restored clear can't be deleted either
+    assert client.post(f"/admin/usage/clears/{cleared['id']}/restore").status_code == 409
+    assert client.delete(f"/admin/usage/clears/{cleared['id']}").status_code == 409
+    assert client.post("/admin/usage/clears/not-a-uuid/restore").status_code == 404
+
+    actions = sorted(a.action for a in db.query(AuditLog).filter(AuditLog.action.like("usage.%")).all())
+    assert actions == ["usage.clear", "usage.restore"]
+
+
+def test_a_cleared_log_can_be_deleted_for_good_and_ages_out_with_retention(client, db):
+    from shared_models.models import UsageEventArchive, UsageSnapshotArchive
+
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    post(client, [ev("page_view", "/my-jobs", session="d1")])
+    client.as_admin()
+    first = client.post("/admin/usage/clear", json={"confirm": True}).json()["clear"]
+    r = client.delete(f"/admin/usage/clears/{first['id']}")
+    assert r.status_code == 200 and r.json()["clears"][0]["status"] == "deleted"
+    assert db.query(UsageEventArchive).count() == 0
+    assert client.post(f"/admin/usage/clears/{first['id']}/restore").status_code == 409
+
+    # an archived clear older than the retention period expires
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    post(client, [ev("page_view", "/my-jobs", session="d2")])
+    assert client.post("/admin/usage/snapshots", json=_snapshot_body("d2")).json() == {"stored": True}
+    client.as_admin()
+    second = client.post("/admin/usage/clear", json={"confirm": True}).json()["clear"]
+    db.query(UsageEventArchive).update({"occurred_at": datetime.now(timezone.utc) - timedelta(days=400)})
+    db.query(UsageSnapshotArchive).update({"occurred_at": datetime.now(timezone.utc) - timedelta(days=400)})
+    db.commit()
+    purge_expired(db, get_settings(db), force=True)
+    listed = {c["id"]: c for c in client.get("/admin/usage/clears").json()["clears"]}
+    assert listed[second["id"]]["status"] == "expired" and listed[second["id"]]["remaining"] == {"events": 0, "snapshots": 0}
+
+
+def test_case_images_ride_along_only_while_the_switch_is_on(client, db):
+    import base64
+    import gzip
+
+    shot = '<img data-vl-shot="" src="data:image/webp;base64,UklGRg==" style="width:800px;height:600px;object-fit:fill;">'
+
+    def body(session):
+        html = f"<html><head></head><body><h1>V</h1>{shot}</body></html>"
+        return {**_snapshot_body(session), "html_gz": base64.b64encode(gzip.compress(html.encode())).decode()}
+
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    assert client.get("/admin/usage/config").json()["track_screen_images"] is False
+    assert client.post("/admin/usage/snapshots", json=body("i1")).json() == {"stored": True}
+
+    client.as_admin()
+    assert client.get("/admin/usage/settings").json()["track_screen_images"] is False
+    assert client.put("/admin/usage/settings", json={"track_screen_images": True}).json()["track_screen_images"] is True
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    assert client.get("/admin/usage/config").json()["track_screen_images"] is True
+    assert client.post("/admin/usage/snapshots", json=body("i2")).json() == {"stored": True}
+
+    from shared_models.models import UsageSnapshot
+
+    client.as_admin()
+    off, on = (client.get(f"/admin/usage/snapshots/{db.query(UsageSnapshot).filter_by(session_id=sid).one().id}").json() for sid in ("i1", "i2"))
+    assert off["has_images"] is False and on["has_images"] is True
+    assert "data-vl-shot" not in off["document"] and shot in on["document"]

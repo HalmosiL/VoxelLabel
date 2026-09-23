@@ -6,8 +6,10 @@ import { getUsageSnapshotDocument, UsageSnapshotMeta } from "../../api/adminApi"
  * placeholders when it was recorded) in a sandboxed iframe -- no
  * scripts, no same-origin access, no pointer events -- laid out at the
  * recorded window size and scaled down to fit. `children` (an SVG of
- * clicks or a pointer path, in the same aspect) sit on top. */
-export default function ScreenSnapshot({ snapshot, children, dim = 0.15 }: { snapshot: UsageSnapshotMeta; children?: ReactNode; dim?: number }) {
+ * clicks or a pointer path, in the same aspect) sit on top. A snapshot
+ * recorded with the case images shows them unless `images` is false --
+ * then they are drawn as the same grey blocks as everywhere else. */
+export default function ScreenSnapshot({ snapshot, children, dim = 0.15, images = true }: { snapshot: UsageSnapshotMeta; children?: ReactNode; dim?: number; images?: boolean }) {
   const [vw, vh] = snapshot.viewport;
   const box = useRef<HTMLDivElement>(null);
   const [boxW, setBoxW] = useState(0);
@@ -45,7 +47,7 @@ export default function ScreenSnapshot({ snapshot, children, dim = 0.15 }: { sna
       {shown && boxW > 0 && (
         <iframe
           title="Recorded screen"
-          srcDoc={shown.doc}
+          srcDoc={images ? shown.doc : withoutImages(shown.doc)}
           sandbox=""
           tabIndex={-1}
           aria-hidden="true"
@@ -60,4 +62,14 @@ export default function ScreenSnapshot({ snapshot, children, dim = 0.15 }: { sna
       <div className="absolute inset-0">{children}</div>
     </div>
   );
+}
+
+// Hides the recorded case images in place: the picture moves out of its
+// box, the box keeps the grey placeholder look.
+const HIDE_IMAGES =
+  "<style>img[data-vl-shot]{object-position:-100000px -100000px!important;background:repeating-linear-gradient(45deg,#9ca3af33,#9ca3af33 6px,#9ca3af22 6px,#9ca3af22 12px)!important;outline:1px dashed #9ca3af;outline-offset:-1px}</style>";
+
+export function withoutImages(doc: string): string {
+  const head = doc.search(/<\/head\s*>/i);
+  return head >= 0 ? doc.slice(0, head) + HIDE_IMAGES + doc.slice(head) : HIDE_IMAGES + doc;
 }

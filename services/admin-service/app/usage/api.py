@@ -18,15 +18,27 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import Annotation, AnnotationStatus, Case, ImagingStudy, Instance, Series, UsageEvent, UsageSnapshot, WorkflowCard
+from shared_models.models import (
+    Annotation,
+    AnnotationStatus,
+    Case,
+    ImagingStudy,
+    Instance,
+    Series,
+    UsageClear,
+    UsageEvent,
+    UsageSnapshot,
+    WorkflowCard,
+)
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.api.audit import record as audit
 from app.keycloak_admin import list_realm_users
 from app.pipeline_health.api import build_learning_curve
 from app.pipeline_health.api import build_summary as build_pipeline_summary
 
-from . import snapshots, stats
+from . import clearing, snapshots, stats
 from .findings import findings as compute_findings
 from .findings import friction_score
 from .report import render_markdown
@@ -130,6 +142,7 @@ class SettingsPatch(BaseModel):
     retention_days: int | None = Field(default=None, ge=1, le=3650)
     exclude_admins: bool | None = None
     track_perf: bool | None = None
+    track_screen_images: bool | None = None
     rating_every_n: int | None = Field(default=None, ge=0, le=50)
 
 
@@ -369,6 +382,7 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
     settings = get_settings(db)
     if not allows(effective_config(settings, user.subject), "click"):
         return {"stored": False}
+    keep_images = bool(effective_config(settings, user.subject).get("track_screen_images"))
     try:
         html = snapshots.decode(body.html, body.html_gz, snapshots.MAX_HTML_BYTES)
         css = snapshots.decode(body.css, body.css_gz, snapshots.MAX_CSS_BYTES)
@@ -381,6 +395,7 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
     if css and body.css_hash:
         snapshots.store_style(db, body.css_hash, css)
     occurred_at = body.occurred_at if body.occurred_at.tzinfo else body.occurred_at.replace(tzinfo=timezone.utc)
+    cleaned = snapshots.clean_html(html, keep_images=keep_images)
     db.add(
         UsageSnapshot(
             id=uuid.uuid4(),
@@ -392,7 +407,8 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
             job_id=body.job_id,
             viewport_w=max(1, min(body.viewport[0], 20_000)),
             viewport_h=max(1, min(body.viewport[1], 20_000)),
-            html_gz=snapshots.gz(snapshots.clean_html(html)),
+            html_gz=snapshots.gz(cleaned),
+            has_images=snapshots.has_images(cleaned),
             css_hash=body.css_hash,
             occurred_at=min(occurred_at, datetime.now(timezone.utc) + MAX_CLOCK_SKEW),
             anchors=_clean_anchors(body.anchors),
@@ -459,6 +475,80 @@ def set_user_switch(
     db.commit()
     db.refresh(row)
     return _serialize_settings(row)
+
+
+class ClearIn(BaseModel):
+    # Must be sent explicitly -- a stray POST never empties the log.
+    confirm: Literal[True]
+
+
+def _clear_or_404(db: Session, clear_id: str) -> UsageClear:
+    try:
+        row = db.get(UsageClear, uuid.UUID(clear_id))
+    except ValueError:
+        row = None
+    if row is None:
+        raise HTTPException(status_code=404, detail="Clear not found")
+    return row
+
+
+def _clears_payload(db: Session) -> dict:
+    remaining = clearing.archived_counts(db)
+    names = _people()
+    rows = db.query(UsageClear).order_by(UsageClear.cleared_at.desc()).all()
+    return {"live": clearing.live_counts(db), "clears": [clearing.serialize(c, remaining.get(str(c.id)), names) for c in rows]}
+
+
+@router.get("/clears")
+def list_clears(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
+    """What is in the live log now, and every clear so far -- restorable
+    ones first in line for the Settings tab's "Cleared logs" list."""
+    _require_global_admin(user)
+    return _clears_payload(db)
+
+
+@router.post("/clear")
+def clear_log(body: ClearIn, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Empties the usage log -- every event and screen snapshot moves to
+    the archive, restorable until deleted for good (or aged out by the
+    retention period). 409 when the log is already empty."""
+    _require_global_admin(user)
+    clear = clearing.clear_all(db, user.subject)
+    if clear is None:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="The usage log is already empty.")
+    audit(db, user, "usage.clear", "usage_clear", clear.id, {"events": clear.events, "snapshots": clear.snapshots})
+    db.commit()
+    db.refresh(clear)
+    return {"clear": clearing.serialize(clear, {"events": clear.events, "snapshots": clear.snapshots}, _people()), **_clears_payload(db)}
+
+
+@router.post("/clears/{clear_id}/restore")
+def restore_clear(clear_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Puts a cleared log back; whatever was recorded since stays too."""
+    _require_global_admin(user)
+    clear = _clear_or_404(db, clear_id)
+    try:
+        back = clearing.restore(db, clear, user.subject)
+    except clearing.ClearStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(db, user, "usage.restore", "usage_clear", clear.id, back)
+    db.commit()
+    return {"restored": back, **_clears_payload(db)}
+
+
+@router.delete("/clears/{clear_id}")
+def delete_clear(clear_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Deletes a cleared log's data for good. Cannot be undone."""
+    _require_global_admin(user)
+    clear = _clear_or_404(db, clear_id)
+    try:
+        clearing.delete_for_good(db, clear, user.subject)
+    except clearing.ClearStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit(db, user, "usage.delete_cleared", "usage_clear", clear.id, None)
+    db.commit()
+    return _clears_payload(db)
 
 
 def _card_types(db: Session, entries: list[dict]) -> dict[str, str]:

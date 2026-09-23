@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
-import { updateUsageSettings, UsagePerson, UsageSettings } from "../../api/adminApi";
+import { clearUsageLog, deleteUsageClear, listUsageClears, restoreUsageClear, updateUsageSettings, UsageClear, UsageClears, UsagePerson, UsageSettings } from "../../api/adminApi";
 import { describeApiError } from "../../api/client";
+import Modal from "../../components/Modal";
+import { formatWhen } from "./shared";
 
 const CATEGORIES: { key: keyof UsageSettings; label: string; hint: string }[] = [
   { key: "track_pages", label: "Pages & time", hint: "which screens open, how long they stay open, focus and idle gaps" },
@@ -12,6 +14,7 @@ const CATEGORIES: { key: keyof UsageSettings; label: string; hint: string }[] = 
   { key: "track_keys", label: "Keyboard shortcuts", hint: "key names only, never anything typed into a field" },
   { key: "track_errors", label: "Errors", hint: "JavaScript errors, with the screen they happened on" },
   { key: "track_perf", label: "Request timings", hint: "how long each API call took, summed per endpoint -- which ones people wait on" },
+  { key: "track_screen_images", label: "Case images in screen pictures", hint: "the slices as they were on screen, behind the replay and the heatmap -- off: grey blocks. Much bigger; rides on Clicks" },
 ];
 
 export default function SettingsTab({
@@ -20,6 +23,7 @@ export default function SettingsTab({
   onSaved,
   onSwitch,
   onOpenSessions,
+  onLogChanged,
   onError,
 }: {
   settings: UsageSettings;
@@ -27,12 +31,195 @@ export default function SettingsTab({
   onSaved: (s: UsageSettings) => void;
   onSwitch: (userId: string, change: { enabled?: boolean; counted?: boolean }) => void;
   onOpenSessions: (userId: string, username: string) => void;
+  /** The log was cleared or restored: every figure needs reloading. */
+  onLogChanged: () => void;
   onError: (m: string) => void;
 }) {
   return (
     <div className="space-y-5">
       <RecordingCard settings={settings} onSaved={onSaved} onError={onError} />
       <WhoCountsCard settings={settings} people={people} onSaved={onSaved} onSwitch={onSwitch} onOpenSessions={onOpenSessions} onError={onError} />
+      <ClearLogCard retentionDays={settings.retention_days} onLogChanged={onLogChanged} onError={onError} />
+    </div>
+  );
+}
+
+const STATUS_LABEL: Record<UsageClear["status"], string> = {
+  archived: "restorable",
+  restored: "restored",
+  deleted: "deleted for good",
+  expired: "aged out",
+};
+const STATUS_BADGE: Record<UsageClear["status"], string> = {
+  archived: "badge-blue",
+  restored: "badge-green",
+  deleted: "badge-gray",
+  expired: "badge-gray",
+};
+
+function count(n: number, one: string, many: string): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
+/** Start the usage figures from zero -- without losing anything: a
+ * clear moves the whole log aside, and it can be put back until someone
+ * deletes it for good (or the retention period ages it out). */
+function ClearLogCard({ retentionDays, onLogChanged, onError }: { retentionDays: number; onLogChanged: () => void; onError: (m: string) => void }) {
+  const [data, setData] = useState<UsageClears | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState<UsageClear | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; undo?: string } | null>(null);
+
+  useEffect(() => {
+    listUsageClears()
+      .then(setData)
+      .catch((err) => onError(describeApiError(err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once
+  }, []);
+
+  async function run(what: string, work: () => Promise<void>) {
+    setBusy(what);
+    try {
+      await work();
+    } catch (err) {
+      onError(describeApiError(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const clear = () =>
+    run("clear", async () => {
+      const r = await clearUsageLog();
+      setData(r);
+      setConfirming(false);
+      setNotice({ text: `Cleared ${count(r.clear.events, "event", "events")} and ${count(r.clear.snapshots, "screen picture", "screen pictures")}.`, undo: r.clear.id });
+      onLogChanged();
+    });
+  const restore = (id: string) =>
+    run(`restore-${id}`, async () => {
+      const r = await restoreUsageClear(id);
+      setData(r);
+      setNotice({ text: `Restored ${count(r.restored.events, "event", "events")} and ${count(r.restored.snapshots, "screen picture", "screen pictures")}.` });
+      onLogChanged();
+    });
+  const deleteForGood = (id: string) =>
+    run(`delete-${id}`, async () => {
+      setData(await deleteUsageClear(id));
+      setDeleting(null);
+      setNotice({ text: "Deleted for good." });
+    });
+
+  const live = data?.live ?? null;
+  const empty = live !== null && live.events === 0 && live.snapshots === 0;
+  return (
+    <div className="card" data-testid="usage-clear-log">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="section-title mb-0">Clear the usage log</h2>
+          <p className="hint">
+            Starts every figure, finding, replay and heatmap from zero -- and study analytics&apos; working time, which comes from the same log. Nothing is lost: the cleared log waits below and can be restored (merged with whatever was recorded since) until you delete it for good, or for {retentionDays} days, the retention period. The recording switches stay as they are.
+          </p>
+        </div>
+        <button type="button" className="btn btn-danger" disabled={!live || empty || busy !== null} onClick={() => setConfirming(true)} data-testid="usage-clear-log-button">
+          Clear the log…
+        </button>
+      </div>
+      <p className="text-sm text-gray-600" data-testid="usage-clear-live">
+        {live === null ? "Loading…" : empty ? "The log is empty." : `In the log now: ${count(live.events, "event", "events")}, ${count(live.snapshots, "screen picture", "screen pictures")}.`}
+      </p>
+      {notice && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800" data-testid="usage-clear-notice">
+          <span>{notice.text}</span>
+          {notice.undo && (
+            <button type="button" className="btn btn-secondary btn-sm" disabled={busy !== null} onClick={() => restore(notice.undo as string)} data-testid="usage-clear-undo">
+              Undo
+            </button>
+          )}
+        </div>
+      )}
+      {data && data.clears.length > 0 && (
+        <div className="table-wrap mt-4">
+          <table className="w-full text-sm" data-testid="usage-clears">
+            <thead>
+              <tr>
+                <th>Cleared</th>
+                <th>By</th>
+                <th>What</th>
+                <th>Recorded between</th>
+                <th>State</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.clears.map((c) => (
+                <tr key={c.id} data-testid="usage-clear-row">
+                  <td className="whitespace-nowrap">{c.cleared_at ? formatWhen(c.cleared_at) : "–"}</td>
+                  <td>{c.cleared_by ?? "–"}</td>
+                  <td className="tabular-nums">
+                    {count(c.events, "event", "events")}, {count(c.snapshots, "picture", "pictures")}
+                    {c.status === "archived" && (c.remaining.events < c.events || c.remaining.snapshots < c.snapshots) && (
+                      <span className="block text-xs text-amber-700">{count(c.remaining.events, "event", "events")} left -- the rest aged out</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap text-xs text-gray-500">{c.first_at && c.last_at ? `${formatWhen(c.first_at)} – ${formatWhen(c.last_at)}` : "–"}</td>
+                  <td>
+                    <span className={`badge ${STATUS_BADGE[c.status]}`} data-testid="usage-clear-status">
+                      {STATUS_LABEL[c.status]}
+                    </span>
+                    {c.status === "restored" && c.restored_by && <span className="block text-xs text-gray-400">by {c.restored_by}</span>}
+                    {c.status === "deleted" && c.deleted_by && <span className="block text-xs text-gray-400">by {c.deleted_by}</span>}
+                  </td>
+                  <td className="whitespace-nowrap text-right">
+                    {c.status === "archived" && (
+                      <span className="inline-flex gap-2">
+                        <button type="button" className="btn btn-secondary btn-sm" disabled={busy !== null} onClick={() => restore(c.id)} data-testid="usage-clear-restore">
+                          {busy === `restore-${c.id}` ? "Restoring…" : "Restore"}
+                        </button>
+                        <button type="button" className="btn btn-secondary btn-sm text-red-700" disabled={busy !== null} onClick={() => setDeleting(c)} data-testid="usage-clear-delete">
+                          Delete for good…
+                        </button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {confirming && live && (
+        <Modal title="Clear the usage log?" onClose={() => setConfirming(false)}>
+          <p className="text-sm text-gray-700">
+            {count(live.events, "event", "events")} and {count(live.snapshots, "screen picture", "screen pictures")} leave every figure on the Usage page and the working time in study analytics.
+          </p>
+          <p className="mt-2 text-sm text-gray-700">You can restore them from this card until you delete them for good or they pass the {retentionDays}-day retention period.</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-danger" disabled={busy !== null} onClick={clear} data-testid="usage-clear-confirm">
+              {busy === "clear" ? "Clearing…" : "Clear the log"}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal title="Delete for good?" onClose={() => setDeleting(null)}>
+          <p className="text-sm text-gray-700">
+            The {count(deleting.remaining.events, "event", "events")} and {count(deleting.remaining.snapshots, "screen picture", "screen pictures")} cleared on {deleting.cleared_at ? formatWhen(deleting.cleared_at) : "that day"} are deleted permanently. This cannot be undone.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setDeleting(null)}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-danger" disabled={busy !== null} onClick={() => deleteForGood(deleting.id)} data-testid="usage-clear-delete-confirm">
+              {busy?.startsWith("delete") ? "Deleting…" : "Delete for good"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -58,6 +245,7 @@ function RecordingCard({ settings, onSaved, onError }: { settings: UsageSettings
         track_keys: form.track_keys,
         track_errors: form.track_errors,
         track_perf: form.track_perf,
+        track_screen_images: form.track_screen_images,
         mouse_sample_ms: form.mouse_sample_ms,
         retention_days: form.retention_days,
         rating_every_n: form.rating_every_n,

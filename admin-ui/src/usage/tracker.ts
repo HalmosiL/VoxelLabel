@@ -38,6 +38,10 @@
  * iframe swapped for a same-sized "image" placeholder, scripts removed,
  * no typed values, and no url() in the CSS -- drawn behind the heatmap
  * and the replay in a sandboxed frame. Stylesheets go once per session.
+ * Only when an admin switches on "case images" (track_screen_images)
+ * do canvases and images go along too, as small inline pictures -- and
+ * then the snapshot is refreshed every so often while someone works,
+ * so the replay shows the slice they were on.
  *
  * Every category has a switch a platform admin flips on the Usage page;
  * the effective config is fetched at start and re-polled, so a change
@@ -73,6 +77,8 @@ export interface UsageConfig {
   track_keys: boolean;
   track_errors: boolean;
   track_perf?: boolean;
+  /** Put the case images (canvases, pictures) into screen snapshots. */
+  track_screen_images?: boolean;
   mouse_sample_ms: number;
   /** Ask how demanding a finished case was after every n-th one (0 = never). */
   rating_every_n?: number;
@@ -148,6 +154,7 @@ const OFF: UsageConfig = {
   track_keys: false,
   track_errors: false,
   track_perf: false,
+  track_screen_images: false,
   mouse_sample_ms: 100,
   rating_every_n: 0,
 };
@@ -191,6 +198,8 @@ interface State {
   structureKey: string | null;
   pageSnapshots: number;
   structureTimer: number;
+  /** When the current page's last snapshot went (image refreshes are spaced by it). */
+  lastSnapshotAt: number;
 }
 
 const state: State = {
@@ -221,6 +230,7 @@ const state: State = {
   structureKey: null,
   pageSnapshots: 0,
   structureTimer: 0,
+  lastSnapshotAt: 0,
 };
 
 function now(): number {
@@ -543,7 +553,11 @@ function recordLayout(retried = false): void {
     }
     state.layouts.add(key);
     push("layout", { detail: layout });
-    if (state.options.snapshotUrl) void sendSnapshot();
+    if (state.options.snapshotUrl) {
+      void sendSnapshot();
+      // the slices may still be loading: with case images on, look again
+      if (imagesOn()) state.structureTimer = window.setTimeout(scheduleStructureCheck, IMAGE_REFRESH_MS - STRUCTURE_CHECK_MS);
+    }
   } catch {
     // never let tracking surface as an app error
   }
@@ -573,6 +587,18 @@ const ANCHOR_SELECTOR = "[data-testid], [data-guide], [aria-label], button, a[hr
 const MAX_ANCHORS = 1500;
 const MAX_PAGE_SNAPSHOTS = 6;
 const STRUCTURE_CHECK_MS = 1500;
+/** With case images on: a fresh picture at most this often while
+ * someone works (the slice changes without the structure changing),
+ * up to this many per page view. */
+const IMAGE_REFRESH_MS = 8000;
+const MAX_PAGE_SNAPSHOTS_WITH_IMAGES = 30;
+/** A captured picture's longer side, and the total inline image budget per snapshot. */
+const SHOT_MAX_SIDE = 640;
+const SHOT_BUDGET_CHARS = 2_500_000;
+
+function imagesOn(): boolean {
+  return state.configKnown && state.config.enabled && Boolean(state.config.track_screen_images);
+}
 
 function visibleBox(el: Element): DOMRect | null {
   const r = el.getBoundingClientRect();
@@ -608,36 +634,94 @@ export function structureKey(doc: Document = document): string {
   return textHash(`${Math.round(vw / 200)}|${ids.sort().join(",")}`);
 }
 
-/** After a click or a key, look again (debounced): if the screen's
- * structure changed since its last snapshot, take another one. */
+/** After a click, a key or a wheel turn, look again (debounced): if the
+ * screen's structure changed since its last snapshot, take another one.
+ * With case images on, also when the last one is IMAGE_REFRESH_MS old --
+ * the image on screen has most likely moved on. */
 function scheduleStructureCheck(): void {
   if (typeof window === "undefined" || !state.options?.snapshotUrl) return;
   window.clearTimeout(state.structureTimer);
   state.structureTimer = window.setTimeout(() => {
-    if (state.route === null || state.structureKey === null || state.pageSnapshots >= MAX_PAGE_SNAPSHOTS) return;
+    if (state.route === null || state.structureKey === null) return;
     if (state.configKnown && !allows("click")) return;
+    const images = imagesOn();
+    if (state.pageSnapshots >= (images ? MAX_PAGE_SNAPSHOTS_WITH_IMAGES : MAX_PAGE_SNAPSHOTS)) return;
     try {
-      if (structureKey() !== state.structureKey) void sendSnapshot();
+      if (structureKey() !== state.structureKey || (images && now() - state.lastSnapshotAt >= IMAGE_REFRESH_MS)) void sendSnapshot();
     } catch {
       // never let tracking surface as an app error
     }
   }, STRUCTURE_CHECK_MS);
 }
 
-export function captureSnapshot(doc: Document = document): { html: string; css: string; cssHash: string } {
+/** A canvas or a loaded image as a small inline picture, or null (not
+ * drawn yet, too small, from another origin, or over the budget). WebP
+ * keeps transparency (an overlay canvas stays see-through); a browser
+ * that can't write WebP falls back to PNG on its own. */
+function shotOf(source: Element, budget: { left: number }): string | null {
+  const tag = source.tagName.toLowerCase();
+  let w = 0;
+  let h = 0;
+  if (tag === "canvas") {
+    w = (source as HTMLCanvasElement).width;
+    h = (source as HTMLCanvasElement).height;
+  } else if (tag === "img") {
+    const img = source as HTMLImageElement;
+    if (!img.complete) return null;
+    w = img.naturalWidth;
+    h = img.naturalHeight;
+  } else {
+    return null;
+  }
+  const box = source.getBoundingClientRect();
+  if (w < 8 || h < 8 || box.width < 8 || box.height < 8) return null;
+  try {
+    const scale = Math.min(1, SHOT_MAX_SIDE / Math.max(w, h));
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.round(w * scale));
+    out.height = Math.max(1, Math.round(h * scale));
+    const ctx = out.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(source as CanvasImageSource, 0, 0, out.width, out.height);
+    const url = out.toDataURL("image/webp", 0.7);
+    if (!/^data:image\/(webp|png|jpeg);base64,/.test(url) || url.length > budget.left) return null;
+    budget.left -= url.length;
+    return url;
+  } catch {
+    return null; // a tainted canvas, or no 2D context in this environment
+  }
+}
+
+export function captureSnapshot(doc: Document = document, opts: { images?: boolean } = {}): { html: string; css: string; cssHash: string; images: number } {
   const live = Array.from(doc.querySelectorAll(MEDIA_SELECTOR));
   const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+  const budget = { left: SHOT_BUDGET_CHARS };
+  let images = 0;
   Array.from(clone.querySelectorAll(MEDIA_SELECTOR)).forEach((node, i) => {
     const source = live[i];
     const box = source?.getBoundingClientRect();
     const style = source && typeof window !== "undefined" ? window.getComputedStyle(source) : null;
+    const cls = node.getAttribute("class");
+    const position = style?.position && style.position !== "static" ? `position:${style.position};left:${style.left};top:${style.top};` : "";
+    const size = `width:${Math.round(box?.width ?? 0)}px;height:${Math.round(box?.height ?? 0)}px;`;
+    const shot = opts.images && source ? shotOf(source, budget) : null;
+    if (shot) {
+      // Attribute order matters: the server keeps exactly this shape
+      // (data-vl-shot, class, src, style) and strips any other <img>.
+      const img = doc.createElement("img");
+      img.setAttribute("data-vl-shot", "");
+      if (cls) img.setAttribute("class", cls);
+      img.setAttribute("src", shot);
+      img.setAttribute("style", `${position}${size}object-fit:fill;`);
+      node.replaceWith(img);
+      images += 1;
+      return;
+    }
     const placeholder = doc.createElement("span");
     placeholder.setAttribute("data-vl-image", "");
     placeholder.textContent = "image";
-    const cls = node.getAttribute("class");
     if (cls) placeholder.setAttribute("class", cls);
-    const position = style?.position && style.position !== "static" ? `position:${style.position};left:${style.left};top:${style.top};` : "";
-    placeholder.setAttribute("style", `${position}width:${Math.round(box?.width ?? 0)}px;height:${Math.round(box?.height ?? 0)}px;`);
+    placeholder.setAttribute("style", `${position}${size}`);
     node.replaceWith(placeholder);
   });
   clone.querySelectorAll(DROP_SELECTOR).forEach((node) => node.remove());
@@ -654,7 +738,7 @@ export function captureSnapshot(doc: Document = document): { html: string; css: 
     })
     .join("\n")
     .replace(/url\([^)]*\)/g, "none");
-  return { html, css, cssHash: textHash(css) };
+  return { html, css, cssHash: textHash(css), images };
 }
 
 async function pack(key: string, text: string): Promise<Record<string, string>> {
@@ -674,8 +758,9 @@ async function sendSnapshot(): Promise<void> {
     const key = structureKey();
     state.structureKey = key;
     state.pageSnapshots += 1;
+    state.lastSnapshotAt = now();
     const anchors = captureAnchors();
-    const snap = captureSnapshot();
+    const snap = captureSnapshot(document, { images: imagesOn() });
     const withCss = !state.cssSent.has(snap.cssHash);
     const body = {
       session_id: state.sessionId,
@@ -847,6 +932,8 @@ function onMouseMove(e: MouseEvent): void {
 function onWheel(): void {
   noteInput();
   state.wheelTicks += 1;
+  // scrolling through slices changes the image -- worth a fresh picture
+  if (imagesOn()) scheduleStructureCheck();
 }
 
 function onScroll(): void {
@@ -1010,5 +1097,6 @@ export function _reset(): void {
     structureKey: null,
     pageSnapshots: 0,
     structureTimer: 0,
+    lastSnapshotAt: 0,
   });
 }

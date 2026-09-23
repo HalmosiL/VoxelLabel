@@ -760,26 +760,9 @@ class RegistrationRequest(Base):
     rejection_reason: Mapped[str | None] = mapped_column(Text)
 
 
-class UsageEvent(Base):
-    """One thing a signed-in person did in admin-ui or the viewer -- a
-    page opened/left (with how long it stayed open), a curated action
-    (a viewer tool picked, Mark as Annotated, Submit review...), a click,
-    a sampled mouse trace, scroll depth, a keyboard shortcut, focus/idle
-    and JS errors. Recorded for every user so the Usage page can show
-    how the product is really used; `user_id` is always the caller's
-    own token subject, never something the client sent. Carries internal
-    ids only (study/case/series/job) -- never patient data or typed text.
-    Deliberately separate from `AuditLog`, which is the compliance record
-    of admin *state changes*; this is UX research data with a retention
-    limit (see usage_settings.retention_days)."""
-
-    __tablename__ = "usage_events"
-    __table_args__ = (
-        Index("ix_usage_events_user_occurred", "user_id", "occurred_at"),
-        Index("ix_usage_events_occurred", "occurred_at"),
-        Index("ix_usage_events_session", "session_id"),
-        Index("ix_usage_events_type_occurred", "event_type", "occurred_at"),
-    )
+class UsageEventFields:
+    """The columns of a usage event -- shared by the live table and its
+    archive (UsageEventArchive), so the two can never drift apart."""
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -809,6 +792,28 @@ class UsageEvent(Base):
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class UsageEvent(UsageEventFields, Base):
+    """One thing a signed-in person did in admin-ui or the viewer -- a
+    page opened/left (with how long it stayed open), a curated action
+    (a viewer tool picked, Mark as Annotated, Submit review...), a click,
+    a sampled mouse trace, scroll depth, a keyboard shortcut, focus/idle
+    and JS errors. Recorded for every user so the Usage page can show
+    how the product is really used; `user_id` is always the caller's
+    own token subject, never something the client sent. Carries internal
+    ids only (study/case/series/job) -- never patient data or typed text.
+    Deliberately separate from `AuditLog`, which is the compliance record
+    of admin *state changes*; this is UX research data with a retention
+    limit (see usage_settings.retention_days)."""
+
+    __tablename__ = "usage_events"
+    __table_args__ = (
+        Index("ix_usage_events_user_occurred", "user_id", "occurred_at"),
+        Index("ix_usage_events_occurred", "occurred_at"),
+        Index("ix_usage_events_session", "session_id"),
+        Index("ix_usage_events_type_occurred", "event_type", "occurred_at"),
+    )
+
+
 class UsageSettings(Base):
     """The recording switches for usage tracking (a single row, id=1):
     a master switch, one per data category, the mouse sampling rate,
@@ -830,6 +835,10 @@ class UsageSettings(Base):
     track_errors: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Request timings the browser measured (per API endpoint, aggregated).
     track_perf: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    # Let screen snapshots carry the case images (the CT slices as shown,
+    # small inline pictures) instead of grey blocks. Off by default: it is
+    # image data, and far bigger.
+    track_screen_images: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # Ask "how demanding was that case?" after every n-th finished case
     # (0 = never). One click, skippable -- the only direct measure of
     # cognitive load; every n-th, not every case, to keep the cost low.
@@ -852,20 +861,9 @@ class UsageSettings(Base):
     )
 
 
-class UsageSnapshot(Base):
-    """A picture of one screen as someone saw it -- its HTML with every
-    image, canvas and video swapped for a grey placeholder, scripts and
-    typed values removed (see the tracker's captureSnapshot) -- drawn
-    behind the click heatmap and the session replay in a sandboxed
-    iframe. Stylesheets are stored once per content hash
-    (UsageSnapshotStyle). Kept per screen up to a cap, and purged with
-    the usage events."""
-
-    __tablename__ = "usage_snapshots"
-    __table_args__ = (
-        Index("ix_usage_snapshots_route_occurred", "route", "occurred_at"),
-        Index("ix_usage_snapshots_session", "session_id"),
-    )
+class UsageSnapshotFields:
+    """The columns of a screen snapshot -- shared by the live table and
+    its archive (UsageSnapshotArchive)."""
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -890,6 +888,24 @@ class UsageSnapshot(Base):
     # snapshot is taken whenever that changes.
     study_id: Mapped[str | None] = mapped_column(String(64))
     structure_key: Mapped[str | None] = mapped_column(String(64))
+    # Whether the case images came along (track_screen_images was on).
+    has_images: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
+
+class UsageSnapshot(UsageSnapshotFields, Base):
+    """A picture of one screen as someone saw it -- its HTML with every
+    image, canvas and video swapped for a grey placeholder, scripts and
+    typed values removed (see the tracker's captureSnapshot) -- drawn
+    behind the click heatmap and the session replay in a sandboxed
+    iframe. Stylesheets are stored once per content hash
+    (UsageSnapshotStyle). Kept per screen up to a cap, and purged with
+    the usage events."""
+
+    __tablename__ = "usage_snapshots"
+    __table_args__ = (
+        Index("ix_usage_snapshots_route_occurred", "route", "occurred_at"),
+        Index("ix_usage_snapshots_session", "session_id"),
+    )
 
 
 class UsageSnapshotStyle(Base):
@@ -900,6 +916,57 @@ class UsageSnapshotStyle(Base):
     css_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     css_gz: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class UsageClear(Base):
+    """One "clear the usage log": every usage event and screen snapshot
+    that existed at that moment, moved (not deleted) into the archive
+    tables under this id, so it can be put back with a restore -- or
+    deleted for good. The row itself stays as the record of who cleared,
+    restored or deleted what, and when. Archived rows still fall under
+    usage_settings.retention_days: the trash never keeps data longer
+    than the live log would have."""
+
+    __tablename__ = "usage_clears"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    cleared_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    cleared_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    # What was moved, at the moment of the clear.
+    events: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    snapshots: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The span of the moved events' own times.
+    first_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    last_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    restored_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    restored_by: Mapped[str | None] = mapped_column(String(255))
+    deleted_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    deleted_by: Mapped[str | None] = mapped_column(String(255))
+
+
+class UsageEventArchive(UsageEventFields, Base):
+    """Usage events taken out of the live log by a clear (UsageClear)."""
+
+    __tablename__ = "usage_events_archive"
+    __table_args__ = (
+        Index("ix_usage_events_archive_clear", "clear_id"),
+        Index("ix_usage_events_archive_occurred", "occurred_at"),
+    )
+
+    clear_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("usage_clears.id", ondelete="CASCADE"), nullable=False)
+
+
+class UsageSnapshotArchive(UsageSnapshotFields, Base):
+    """Screen snapshots taken out of the live log by a clear (UsageClear).
+    Their stylesheets stay in usage_snapshot_styles meanwhile."""
+
+    __tablename__ = "usage_snapshots_archive"
+    __table_args__ = (
+        Index("ix_usage_snapshots_archive_clear", "clear_id"),
+        Index("ix_usage_snapshots_archive_occurred", "occurred_at"),
+    )
+
+    clear_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("usage_clears.id", ondelete="CASCADE"), nullable=False)
 
 
 class CaseStageEvent(Base):

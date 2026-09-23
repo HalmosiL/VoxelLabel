@@ -424,6 +424,8 @@ export interface UsageSettings {
   track_keys: boolean;
   track_errors: boolean;
   track_perf: boolean;
+  /** Screen snapshots carry the case images (small inline pictures) instead of grey blocks. */
+  track_screen_images: boolean;
   mouse_sample_ms: number;
   retention_days: number;
   /** Viewer asks "how demanding was that case?" after every n-th finished case; 0 = never. */
@@ -773,6 +775,8 @@ export interface UsageSnapshotMeta {
   mode?: UsageJobMode;
   study_id?: string | null;
   structure_key?: string | null;
+  /** The case images came along (recorded while track_screen_images was on). */
+  has_images?: boolean;
 }
 
 /** The kind of job a click was made in: an Annotation or Review card's case, or neither. */
@@ -802,6 +806,47 @@ export function getUsageSettings(): Promise<UsageSettings> {
 
 export function updateUsageSettings(patch: UsageSettingsPatch): Promise<UsageSettings> {
   return apiFetch(base, "/admin/usage/settings", { method: "PUT", body: JSON.stringify(patch) });
+}
+
+/** One "clear the usage log": what it moved out, and whether it can still be put back. */
+export interface UsageClear {
+  id: string;
+  cleared_at: string | null;
+  cleared_by: string | null;
+  events: number;
+  snapshots: number;
+  first_at: string | null;
+  last_at: string | null;
+  /** What is still in the archive (the retention period may have taken the oldest). */
+  remaining: { events: number; snapshots: number };
+  status: "archived" | "restored" | "deleted" | "expired";
+  restored_at: string | null;
+  restored_by: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
+}
+
+export interface UsageClears {
+  live: { events: number; snapshots: number };
+  clears: UsageClear[];
+}
+
+export function listUsageClears(): Promise<UsageClears> {
+  return apiFetch(base, "/admin/usage/clears");
+}
+
+/** Moves the whole usage log into the archive -- restorable. */
+export function clearUsageLog(): Promise<UsageClears & { clear: UsageClear }> {
+  return apiFetch(base, "/admin/usage/clear", { method: "POST", body: JSON.stringify({ confirm: true }) });
+}
+
+export function restoreUsageClear(id: string): Promise<UsageClears & { restored: { events: number; snapshots: number } }> {
+  return apiFetch(base, `/admin/usage/clears/${id}/restore`, { method: "POST" });
+}
+
+/** Deletes a cleared log's data for good. */
+export function deleteUsageClear(id: string): Promise<UsageClears> {
+  return apiFetch(base, `/admin/usage/clears/${id}`, { method: "DELETE" });
 }
 
 export function setUsageUserSwitch(userId: string, change: { enabled?: boolean; counted?: boolean }): Promise<UsageSettings> {

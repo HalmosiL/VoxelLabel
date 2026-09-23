@@ -195,7 +195,7 @@ def test_summarize_totals():
 def _settings(**overrides):
     base = dict(
         enabled=True, track_pages=True, track_actions=True, track_clicks=True, track_mouse=True,
-        track_scroll=True, track_keys=True, track_errors=True, track_perf=True, mouse_sample_ms=100, rating_every_n=3, disabled_user_ids=[],
+        track_scroll=True, track_keys=True, track_errors=True, track_perf=True, track_screen_images=False, mouse_sample_ms=100, rating_every_n=3, disabled_user_ids=[],
     )
     base.update(overrides)
     return SimpleNamespace(**base)

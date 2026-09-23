@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _reset, anchorOf, captureAnchors, captureLayout, captureSnapshot, structureKey, textHash, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
 
@@ -369,6 +369,34 @@ describe("screen snapshot", () => {
     expect(cssHash).toMatch(/^[0-9a-f]+$/);
     // the live page is untouched
     expect(document.querySelector("canvas")).not.toBeNull();
+  });
+
+  it("with case images on, puts a drawn canvas in as a small inline picture -- nothing else", () => {
+    document.body.innerHTML = `<main><canvas class="pane" width="512" height="512"></canvas><img src="/scan.png" alt="scan"><video></video></main>`;
+    const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    const drawn: number[][] = [];
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+      return { drawImage: (_s: unknown, _x: number, _y: number, w: number, h: number) => drawn.push([w, h]) } as unknown as CanvasRenderingContext2D;
+    } as never);
+    const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/webp;base64,AAAA");
+    try {
+      const off = captureSnapshot(document);
+      expect(off.images).toBe(0);
+      expect(off.html).not.toContain("data-vl-shot");
+      const on = captureSnapshot(document, { images: true });
+      expect(on.images).toBe(1);
+      expect(on.html).toContain('<img data-vl-shot="" class="pane" src="data:image/webp;base64,AAAA" style="width:800px;height:600px;object-fit:fill;">');
+      // scaled down to the longest side cap, never full resolution
+      expect(Math.max(...drawn[0])).toBeLessThanOrEqual(640);
+      // an image that hasn't loaded and a video stay grey blocks
+      expect(on.html).not.toContain("scan.png");
+      expect(on.html).not.toContain("<video");
+      expect((on.html.match(/data-vl-image/g) ?? []).length).toBe(2);
+    } finally {
+      getContext.mockRestore();
+      toDataURL.mockRestore();
+    }
   });
 
   it("hashes text stably and tells different texts apart", () => {

@@ -4,6 +4,7 @@ import { UsageHeatmap, UsageJobMode, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
 import LayoutBackdrop from "./LayoutBackdrop";
+import { fitWidth, FullscreenButton, useFullscreen } from "./fullscreen";
 import ScreenSnapshot from "./ScreenSnapshot";
 import { ACCENT, BarList, CardHeader, DownloadCsvButton, formatDuration, formatShortWhen } from "./shared";
 
@@ -349,6 +350,8 @@ function HeatmapCard({
 }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [showScreen, setShowScreen] = useState(true);
+  const [showImages, setShowImages] = useState(true);
+  const full = useFullscreen<HTMLDivElement>();
   const users = heatmap?.users ?? [];
   const colorOf = new Map<string, string>(summary.users.slice(0, USER_COLORS.length).map((u, i) => [u.user_id, USER_COLORS[i]]));
   const named = users.filter((u) => colorOf.has(u.user_id));
@@ -377,7 +380,7 @@ function HeatmapCard({
   }
 
   return (
-    <div className="card" data-testid="usage-heatmap">
+    <div ref={full.ref} className={`card ${full.active ? "overflow-auto rounded-none" : ""}`} data-testid="usage-heatmap">
       <CardHeader
         title="Click heatmap"
         hint="Every click on one screen, drawn over a miniature of that screen, one colour per person (the same colour on every screen). A hollow mark is a click that got no response -- clusters of those are the thing to fix. In the viewer, circles are clicks in an annotation job and squares in a review job. Click a name to hide or show their clicks."
@@ -422,6 +425,17 @@ function HeatmapCard({
                 show the screen behind
               </label>
             )}
+            {snapshot?.has_images && showScreen && (
+              <label className="flex items-center gap-1.5 text-xs text-gray-600" title="The case images recorded with this screen -- off: grey blocks">
+                <input type="checkbox" checked={showImages} onChange={(e) => setShowImages(e.target.checked)} data-testid="usage-heatmap-images" />
+                case images
+              </label>
+            )}
+            {full.supported && (
+              <span className="ml-auto">
+                <FullscreenButton active={full.active} onClick={full.toggle} testId="usage-heatmap-fullscreen" />
+              </span>
+            )}
           </div>
           {!single && (
             <ul className="mb-2 flex flex-wrap gap-x-3 gap-y-1" data-testid="usage-heatmap-legend">
@@ -435,8 +449,9 @@ function HeatmapCard({
               ))}
             </ul>
           )}
+          <div style={full.active ? { width: fitWidth(snapshot && showScreen ? snapshot.viewport : [160, 90], 230), marginInline: "auto" } : undefined}>
           {snapshot && showScreen ? (
-            <ScreenSnapshot snapshot={snapshot}>
+            <ScreenSnapshot snapshot={snapshot} images={showImages}>
               <svg viewBox={`0 0 160 ${(160 * snapshot.viewport[1]) / snapshot.viewport[0]}`} className="h-full w-full" role="img" aria-label={`${heatmap.points.length} clicks on ${heatmap.route} by ${users.length} ${users.length === 1 ? "person" : "people"}`} data-testid="usage-heatmap-svg">
                 {marks((160 * snapshot.viewport[1]) / snapshot.viewport[0])}
               </svg>
@@ -447,6 +462,7 @@ function HeatmapCard({
               {marks(90)}
             </svg>
           )}
+          </div>
           {snapshot && heatmap.placement.total > 0 && (
             <p className="mt-2 text-xs text-gray-600" data-testid="usage-heatmap-placement">
               Each click is put on the element it was made on, wherever that element sits on this picture: {heatmap.placement.exact} on the same element

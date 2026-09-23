@@ -129,6 +129,8 @@ export default function UsagePage() {
   const [sessionsFor, setSessionsFor] = useState<{ user_id: string; username: string } | null>(null);
   const [sessions, setSessions] = useState<UsageSession[] | null>(null);
   const [session, setSession] = useState<UsageSessionDetail | null>(null);
+  // Bumped when the log is cleared or restored: everything drawn from it reloads.
+  const [logVersion, setLogVersion] = useState(0);
   const summary = overview?.summary ?? null;
   useRegisterGuide("usage", USAGE_STEPS, summary !== null && tab === "overview", false);
   const rangeKey = JSON.stringify(range);
@@ -159,7 +161,7 @@ export default function UsagePage() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  useEffect(refreshOverview, [rangeKey, userFilter, studyFilter]);
+  useEffect(refreshOverview, [rangeKey, userFilter, studyFilter, logVersion]);
   useEffect(() => {
     getUsageSettings()
       .then(setSettings)
@@ -187,7 +189,7 @@ export default function UsagePage() {
       .then((h) => seq === heatmapSeq.current && setHeatmap(h))
       .catch((err) => seq === heatmapSeq.current && setError(describeApiError(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  }, [heatRoute, rangeKey, userFilter, heatMode, studyFilter]);
+  }, [heatRoute, rangeKey, userFilter, heatMode, studyFilter, logVersion]);
 
   function loadSessions(who: { user_id: string; username: string }, replayLatest: boolean) {
     const seq = ++sessionsSeq.current;
@@ -209,7 +211,7 @@ export default function UsagePage() {
   useEffect(() => {
     if (sessionsFor) loadSessions(sessionsFor, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the window changes
-  }, [rangeKey, studyFilter]);
+  }, [rangeKey, studyFilter, logVersion]);
 
   function openUserSessions(user_id: string, username: string, replayLatest = false) {
     setTab("people");
@@ -249,6 +251,12 @@ export default function UsagePage() {
       setPeople(before);
       setError(describeApiError(err));
     }
+  }
+
+  function logChanged() {
+    setSession(null);
+    setLogVersion((v) => v + 1);
+    refreshPeople();
   }
 
   function settingsSaved(next: UsageSettings) {
@@ -394,7 +402,7 @@ export default function UsagePage() {
           }}
         />
       )}
-      {tab === "settings" && settings && <SettingsTab settings={settings} people={people} onSaved={settingsSaved} onSwitch={switchPerson} onOpenSessions={(id, name) => openUserSessions(id, name)} onError={setError} />}
+      {tab === "settings" && settings && <SettingsTab settings={settings} people={people} onSaved={settingsSaved} onSwitch={switchPerson} onOpenSessions={(id, name) => openUserSessions(id, name)} onLogChanged={logChanged} onError={setError} />}
       {!summary && tab !== "settings" && <p className="hint">Loading…</p>}
     </div>
   );
