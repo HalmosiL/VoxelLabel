@@ -145,6 +145,13 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     // new instance via header button
     await page.locator('[data-testid="new-instance-button"]').click();
     check("new instance via header", (await page.locator('[data-testid^="object-"]').count()) >= 2);
+    // Many nodules scroll inside a fixed-height list instead of stretching
+    // the sidebar -- the screen keeps one layout whatever the case holds.
+    const listBox = await page.locator('[data-testid="objects-scroll"]').evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { overflowY: cs.overflowY, maxHeight: cs.maxHeight };
+    });
+    check("the object list has a fixed height and scrolls", listBox.overflowY === "auto" && /^\d+(\.\d+)?px$/.test(listBox.maxHeight), listBox);
     // comment via right-click on the painted voxel (view tool)
     await page.locator('[data-testid="tool-cursor"]').click();
     await page.locator('[data-testid^="object-"]').first().click();

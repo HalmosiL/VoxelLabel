@@ -3711,7 +3711,7 @@ export default function ViewerPage() {
                 {annotations.length === 0 ? "None yet." : "No annotations match the filters."}
               </p>
             ) : (
-              <ul className="flex flex-col gap-1">
+              <ul data-testid="saved-versions-scroll" className="flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain">
                 {filteredAnnotations.map((a) => (
                   <li key={a.id} className="flex items-center justify-between text-[11px] text-gray-400">
                     <span>
@@ -3789,7 +3789,9 @@ function ReviewObjectsList({
   return (
     <Section title="Objects" guide="review-objects" help="Every object of this annotation. Grey dot = not decided, green = accepted, red = rejected. Click one to jump to it.">
       {orderedObjects.length === 0 && <p className="text-[11px] text-gray-500">No objects to review yet.</p>}
-      <ul className="flex flex-col">
+      {/* Fixed height: many nodules scroll here instead of pushing the
+          rest of the sidebar down, so the screen keeps one layout. */}
+      <ul data-testid="review-objects-scroll" className={`flex flex-col overflow-y-auto overscroll-contain ${LIST_MAX_H}`}>
         {orderedObjects.map((obj) => {
           const label = labelsById.get(obj.label_id);
           return (
@@ -3901,7 +3903,7 @@ function ObjectsPanel({
 
       {labels.length === 0 && <p className="text-[11px] text-gray-500">No labels yet -- add one above.</p>}
 
-      <div className="flex flex-col gap-2">
+      <div data-testid="objects-scroll" className={`flex flex-col gap-2 overflow-y-auto overscroll-contain ${LIST_MAX_H}`}>
         {labels.map((label) => {
           const labelObjects = objects.filter((o) => o.label_id === label.id);
           return (
@@ -4152,6 +4154,11 @@ function IconButton({
 /** A titled block of the side panel. `help` adds a small "?" after the
  * title whose hover explains the whole section; `guide` names it as a
  * stop of the guided tour. */
+/** Height of the sidebar's growing lists (objects, review objects): a
+ * fixed box that scrolls, so a case with many nodules has the same
+ * sidebar layout as a case with one. */
+const LIST_MAX_H = "max-h-72";
+
 function Section({ title, help, guide, children }: { title: string; help?: string; guide?: string; children: ReactNode }) {
   return (
     <div className="border-b border-[#333] pb-3" data-guide={guide}>
