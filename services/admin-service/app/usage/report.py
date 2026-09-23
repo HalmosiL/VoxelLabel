@@ -124,6 +124,55 @@ def render_markdown(since, until, usage: dict, pipeline: dict | None, findings: 
         )
     )
 
+    releases = usage.get("releases") or []
+    if releases:
+        parts.append("## Releases\n")
+        parts.append(
+            _table(
+                ["App", "Build", "First seen", "People", "Cases", "Hands-on / case", "Wait before first action", "No response", "Friction"],
+                [
+                    [
+                        r["app"],
+                        r["version"],
+                        _date(r["first_seen"]) if r.get("first_seen") else "–",
+                        r["people"],
+                        r["cases"],
+                        _duration(r.get("active_median_ms")),
+                        _duration(r.get("first_input_median_ms")),
+                        f"{round(r['no_response_rate'] * 100)}%" if r.get("no_response_rate") is not None else "–",
+                        r["friction_score"] if r.get("friction_score") is not None else "–",
+                    ]
+                    for r in releases
+                ],
+            )
+        )
+
+    complexity = usage.get("complexity") or {}
+    if complexity.get("cases"):
+        parts.append("## What makes a case expensive\n")
+        drivers = complexity.get("drivers") or []
+        parts.append(
+            f"{complexity['cases']} cases worked; median hands-on time per object {_duration(complexity.get('per_object_median_ms'))}."
+            + (" Moves with hands-on time: " + ", ".join(f"{d['label']} (r = {d['r']})" for d in drivers) + "." if drivers else "")
+            + "\n"
+        )
+    ratings = usage.get("ratings") or {}
+    if ratings.get("count"):
+        parts.append(f"Felt difficulty: {ratings['mean']} of 5 from {ratings['count']} answers.\n")
+    reasons = usage.get("reject_reasons") or {}
+    if reasons.get("total"):
+        parts.append("## Why objects were sent back\n")
+        parts.append(_table(["Reason", "Rejections", "Share"], [[r["reason"], r["count"], f"{round(r['share'] * 100)}%"] for r in reasons["reasons"]]))
+    perf = usage.get("performance") or []
+    if perf:
+        parts.append("## Slowest requests\n")
+        parts.append(
+            _table(
+                ["Endpoint", "Calls", "Mean", "Worst", "Slow (>1 s)", "Failed"],
+                [[r["endpoint"], r["calls"], _duration(r["mean_ms"]), _duration(r["max_ms"]), f"{round(r['slow_share'] * 100)}%", f"{round(r['failure_rate'] * 100)}%"] for r in perf[:8]],
+            )
+        )
+
     parts.append("## People\n")
     parts.append(
         _table(

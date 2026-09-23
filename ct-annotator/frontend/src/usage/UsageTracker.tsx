@@ -3,13 +3,14 @@ import { useLocation } from "react-router-dom";
 
 import { API } from "../config";
 import keycloak from "../keycloak";
+import RatingPrompt from "./RatingPrompt";
 import { init, trackPageView } from "./tracker";
 
 /** Mounted once inside the router: starts the usage tracker (through
  * this app's own backend, which proxies to admin-service -- see
  * backend/app/main.py's /usage routes) and reports every route change
  * as a page view carrying the viewer's job/case/series ids. Renders
- * nothing. */
+ * only the occasional "how demanding was that case?" prompt. */
 export default function UsageTracker() {
   const location = useLocation();
   useEffect(() => {
@@ -18,6 +19,7 @@ export default function UsageTracker() {
       configUrl: `${API.annotator}/usage/config`,
       eventsUrl: `${API.annotator}/usage/events`,
       getToken: () => keycloak.token,
+      version: __APP_VERSION__,
     });
   }, []);
   useEffect(() => {
@@ -29,5 +31,5 @@ export default function UsageTracker() {
       series_id: params.get("seriesId") ?? undefined,
     });
   }, [location.pathname, location.search]);
-  return null;
+  return <RatingPrompt />;
 }

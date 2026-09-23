@@ -22,6 +22,7 @@ import PageHeader from "../../components/PageHeader";
 import { USAGE_STEPS } from "../../guide/adminSteps";
 import { useRegisterGuide } from "../../guide/GuideContext";
 import BehaviourTab from "./BehaviourTab";
+import CasesTab from "./CasesTab";
 import FrictionTab from "./FrictionTab";
 import OverviewTab from "./OverviewTab";
 import PeopleTab from "./PeopleTab";
@@ -36,6 +37,7 @@ const TABS: { key: UsageTab; label: string; question: string }[] = [
   { key: "overview", label: "Overview", question: "Is it getting better or worse, and where should I look first?" },
   { key: "behaviour", label: "Behaviour", question: "How do people actually work?" },
   { key: "friction", label: "Friction", question: "Where do they struggle?" },
+  { key: "cases", label: "Cases", question: "Which cases are hard, and why?" },
   { key: "people", label: "People", question: "Who, specifically?" },
   { key: "settings", label: "Settings", question: "What gets recorded, and whose activity counts in the figures?" },
 ];
@@ -345,6 +347,7 @@ export default function UsagePage() {
       )}
       {summary && tab === "behaviour" && <BehaviourTab summary={summary} heatRoute={heatRoute} onHeatRoute={setHeatRoute} heatmap={heatmap} />}
       {overview && summary && tab === "friction" && <FrictionTab summary={summary} pipelineHealth={overview.pipeline} personName={chosen?.username ?? null} />}
+      {summary && tab === "cases" && <CasesTab summary={summary} />}
       {overview && summary && tab === "people" && (
         <PeopleTab
           summary={summary}

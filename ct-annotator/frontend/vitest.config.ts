@@ -6,6 +6,7 @@ import { defineConfig } from "vitest/config";
 // specs (tutorial-*, viewer-*) driving a real browser.
 export default defineConfig({
   plugins: [react()],
+  define: { __APP_VERSION__: JSON.stringify("test") },
   test: {
     environment: "jsdom",
     globals: true,

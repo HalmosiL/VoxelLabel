@@ -22,6 +22,10 @@ ENV VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL \
     VITE_ADMIN_UI_URL=$VITE_ADMIN_UI_URL \
     VITE_ANNOTATOR_API=$VITE_ANNOTATOR_API \
     VITE_BASE_PATH=$VITE_BASE_PATH
+# The build stamped on every usage event (vite.config.ts); empty falls
+# back to package version + build time. CI passes the commit.
+ARG APP_VERSION=
+ENV APP_VERSION=$APP_VERSION
 RUN npm run build
 
 FROM nginx:alpine

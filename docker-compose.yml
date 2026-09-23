@@ -335,6 +335,7 @@ services:
         VITE_ANNOTATION_API: ${PUBLIC_ANNOTATION_API:-http://localhost:8003}
         VITE_ADMIN_API: ${PUBLIC_ADMIN_API:-http://localhost:8004}
         VITE_ANNOTATOR_UI_URL: ${PUBLIC_ANNOTATOR_UI_URL:-http://localhost:5174}
+        APP_VERSION: ${APP_VERSION:-}
     ports:
       - "5173:80"
 

@@ -14,7 +14,7 @@ import {
 import { describeApiError } from "../../api/client";
 import EmptyState from "../../components/EmptyState";
 import { downloadJson, downloadText, exportFilename } from "./export";
-import { Better, CardHeader, DeltaChip, DownloadCsvButton, formatDuration } from "./shared";
+import { BarList, Better, CardHeader, DeltaChip, DownloadCsvButton, formatDuration, formatShortWhen } from "./shared";
 
 const SEVERITY: Record<UsageFinding["severity"], { chip: string; label: string; row: string }> = {
   critical: { chip: "badge-red", label: "Act now", row: "border-red-200 bg-red-50/60" },
@@ -23,7 +23,7 @@ const SEVERITY: Record<UsageFinding["severity"], { chip: string; label: string; 
   good: { chip: "badge-green", label: "Good", row: "border-emerald-200 bg-emerald-50/40" },
 };
 
-const TAB_LABEL: Record<UsageTab, string> = { overview: "Overview", behaviour: "Behaviour", friction: "Friction", people: "People", settings: "Settings" };
+const TAB_LABEL: Record<UsageTab, string> = { overview: "Overview", behaviour: "Behaviour", friction: "Friction", cases: "Cases", people: "People", settings: "Settings" };
 
 export default function OverviewTab({
   summary,
@@ -55,6 +55,10 @@ export default function OverviewTab({
       <FindingsCard findings={findings} onGoTo={onGoTo} />
       <StatTiles summary={summary} previous={previous} pipeline={pipelineHealth} pipelinePrevious={pipelineHealthPrevious} />
       {pipelineHealth && <CycleTimeCard summary={pipelineHealth} previous={pipelineHealthPrevious} personName={personName} />}
+      <div className="grid items-start gap-6 2xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <ReleasesCard summary={summary} />
+        <ReasonsCard summary={summary} />
+      </div>
       <ExportCard summary={summary} previous={previous} findings={findings} pipelineHealth={pipelineHealth} pipelineHealthPrevious={pipelineHealthPrevious} learningCurve={learningCurve} range={range} userFilter={userFilter} onError={onError} />
       <HowToRead />
     </div>
@@ -332,6 +336,119 @@ function CycleTimeCard({ summary, previous, personName }: { summary: PipelineHea
               ))}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- releases
+
+/** Better/worse against the build before it (same app), for one measure. */
+function versus(now: number | null, before: number | null | undefined, lowerIsBetter = true): string {
+  if (now === null || before === null || before === undefined || before === 0) return "";
+  const change = (now - before) / before;
+  if (Math.abs(change) < 0.1) return "text-gray-900";
+  return (change < 0) === lowerIsBetter ? "text-green-700" : "text-red-700";
+}
+
+function ReleasesCard({ summary }: { summary: UsageSummary }) {
+  const rows = summary.releases;
+  return (
+    <div className="card" data-guide="usage-releases" data-testid="usage-releases">
+      <CardHeader
+        title="Release by release"
+        hint="The same measures for every build of each app, oldest first -- green where a build did better than the one before it, red where worse. Builds are stamped automatically; &quot;unknown&quot; is activity from before that. Compare builds with a similar number of cases."
+        actions={
+          <DownloadCsvButton
+            filename={exportFilename("releases", summary.since, summary.until, "csv")}
+            rows={rows}
+            columns={[
+              { header: "App", value: (r) => r.app },
+              { header: "Build", value: (r) => r.version },
+              { header: "First seen", value: (r) => r.first_seen },
+              { header: "Last seen", value: (r) => r.last_seen },
+              { header: "People", value: (r) => r.people },
+              { header: "Sessions", value: (r) => r.sessions },
+              { header: "Cases", value: (r) => r.cases },
+              { header: "Hands-on per case (ms)", value: (r) => r.active_median_ms },
+              { header: "Wait before first action (ms)", value: (r) => r.first_input_median_ms },
+              { header: "No-response rate", value: (r) => r.no_response_rate },
+              { header: "Friction score", value: (r) => r.friction_score },
+              { header: "Errors", value: (r) => r.errors },
+            ]}
+            testId="usage-export-releases"
+          />
+        }
+      />
+      {rows.length === 0 ? (
+        <EmptyState message="Nothing recorded in this period." />
+      ) : (
+        <div className="table-wrap">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th>App · build</th>
+                <th>First seen</th>
+                <th className="text-right">Cases</th>
+                <th className="text-right" title="Median hands-on time per case">
+                  Hands-on
+                </th>
+                <th className="text-right" title="Median wait from opening a case to the first action">
+                  First action
+                </th>
+                <th className="text-right" title="Clicks on something clickable-looking that got no response">
+                  No response
+                </th>
+                <th className="text-right">Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const before = rows[i - 1]?.app === r.app ? rows[i - 1] : undefined;
+                return (
+                  <tr key={`${r.app}-${r.version}`} data-testid="usage-release-row">
+                    <td className="whitespace-nowrap">
+                      <span className="text-xs text-gray-500">{r.app}</span> <span className="font-mono text-xs">{r.version}</span>
+                    </td>
+                    <td className="whitespace-nowrap text-xs text-gray-500">{formatShortWhen(r.first_seen)}</td>
+                    <td className="text-right tabular-nums">{r.cases}</td>
+                    <td className={`text-right tabular-nums ${versus(r.active_median_ms, before?.active_median_ms)}`}>{formatDuration(r.active_median_ms)}</td>
+                    <td className={`text-right tabular-nums ${versus(r.first_input_median_ms, before?.first_input_median_ms)}`}>{formatDuration(r.first_input_median_ms)}</td>
+                    <td className={`text-right tabular-nums ${versus(r.no_response_rate, before?.no_response_rate)}`}>{r.no_response_rate === null ? "–" : `${Math.round(r.no_response_rate * 100)}%`}</td>
+                    <td className={`text-right tabular-nums ${r.errors ? "font-semibold text-red-700" : ""}`}>{r.errors}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const REASON_LABEL: Record<string, string> = {
+  boundary: "Boundary off",
+  missed: "Missed finding",
+  wrong_label: "Wrong label",
+  not_a_finding: "Not a finding",
+  form: "Form answers",
+  other: "Other",
+};
+
+function ReasonsCard({ summary }: { summary: UsageSummary }) {
+  const r = summary.reject_reasons;
+  return (
+    <div className="card" data-guide="usage-reasons" data-testid="usage-reasons">
+      <CardHeader title="Why objects are sent back" hint="The reason reviewers tag with one tap after Reject. One reason dominating points at a guideline or a tool, not at people." />
+      {r.total === 0 ? (
+        <EmptyState message="No tagged rejections in this period yet." />
+      ) : (
+        <BarList
+          testId="usage-reasons-list"
+          max={r.reasons[0]?.count ?? 0}
+          rows={r.reasons.map((x) => ({ key: x.reason, label: REASON_LABEL[x.reason] ?? x.reason, value: x.count, display: String(x.count), note: `${Math.round(x.share * 100)}%` }))}
+        />
       )}
     </div>
   );

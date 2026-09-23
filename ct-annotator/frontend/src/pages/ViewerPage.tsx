@@ -25,6 +25,7 @@ import {
   SurfaceConfig,
 } from "../api/annotatorApi";
 import { ApiError } from "../api/client";
+import { askRatingIfDue } from "../usage/RatingPrompt";
 import { trackAction } from "../usage/tracker";
 import DocumentPanel, { DocumentSource } from "../components/DocumentPanel";
 import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnswers } from "../components/ObjectForm";
@@ -81,6 +82,18 @@ const ALL_PANE_VISIBILITY_KEYS: VisiblePaneKey[] = ["sagittal", "coronal", "axia
 
 type DrawTool = "cursor" | "paint" | "erase" | "fill" | "polygon" | "auto" | "histogram";
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"];
+
+/** Why a reviewer rejects an object -- one tap after Reject, optional.
+ * Fixed categories so the Usage page can count them; the free-text
+ * comment still says the specifics. */
+const REJECT_REASONS: { key: string; label: string }[] = [
+  { key: "boundary", label: "Boundary off" },
+  { key: "missed", label: "Missed finding" },
+  { key: "wrong_label", label: "Wrong label" },
+  { key: "not_a_finding", label: "Not a finding" },
+  { key: "form", label: "Form answers" },
+  { key: "other", label: "Other" },
+];
 
 // Same 3-value set the admin-ui workflow board's Annotation/Review
 // TaskFields Status dropdown uses (see WorkflowPropertiesPanel.tsx) --
@@ -1124,6 +1137,11 @@ export default function ViewerPage() {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, comment } : o)));
   }
 
+  function setObjectRejectReason(id: number, reason: string) {
+    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, reject_reason: reason } : o)));
+    trackAction("review.reject_reason", { reason, case_id: caseId ?? undefined, job_id: jobId ?? undefined });
+  }
+
   function setObjectReviewStatus(id: number, review_status: "pending" | "accepted" | "rejected") {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, review_status } : o)));
   }
@@ -2137,7 +2155,7 @@ export default function ViewerPage() {
       // marks a reviewer left on the previous round are cleared, so the
       // reviewer starts from "pending" instead of seeing stale verdicts.
       const objectsToSave =
-        status === "submitted" ? objects.map((o) => ({ ...o, review_status: undefined })) : objects;
+        status === "submitted" ? objects.map((o) => ({ ...o, review_status: undefined, reject_reason: undefined })) : objects;
       if (status === "submitted") setObjects(objectsToSave);
       await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status);
       trackAction(status === "submitted" ? "mark_annotated" : "save");
@@ -2153,7 +2171,10 @@ export default function ViewerPage() {
       }
 
       showSavedMessage(status === "submitted" ? "✓ Marked as annotated" : "✓ Saved");
-      if (status === "submitted") advanceToNextOpenCase();
+      if (status === "submitted") {
+        if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "annotate" });
+        advanceToNextOpenCase();
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -2194,12 +2215,13 @@ export default function ViewerPage() {
       // The object's form answers (see components/ObjectForm.tsx) go in
       // the same line: "Nodule 1 [Type: solid · Calcified]: boundary too generous".
       const comment = reviewOrderedObjects
-        .filter((o) => (o.comment && o.comment.trim()) || formatAnswers(o.attributes))
+        .filter((o) => (o.comment && o.comment.trim()) || formatAnswers(o.attributes) || (o.review_status === "rejected" && o.reject_reason))
         .map((o) => {
           const name = `${labels.find((l) => l.id === o.label_id)?.name ?? "Object"} ${o.instance_number}`;
           const answers = formatAnswers(o.attributes);
           const text = (o.comment ?? "").trim();
-          return `${name}${answers ? ` [${answers}]` : ""}${text ? `: ${text}` : ""}`;
+          const reason = o.review_status === "rejected" ? REJECT_REASONS.find((r) => r.key === o.reject_reason)?.label : undefined;
+          return `${name}${reason ? ` (${reason.toLowerCase()})` : ""}${answers ? ` [${answers}]` : ""}${text ? `: ${text}` : ""}`;
         })
         .join("; ");
       await submitAnnotationReview(saved.id, decision, comment || undefined);
@@ -2207,6 +2229,7 @@ export default function ViewerPage() {
       refreshAnnotations();
       advanceJobStatusAfterRun();
       showSavedMessage(decision === "approve" ? "✓ Review approved" : "✕ Review rejected");
+      if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "review" });
       advanceToNextOpenCase();
     } catch (err) {
       setError(String(err));
@@ -2575,6 +2598,10 @@ export default function ViewerPage() {
     [labels, objects]
   );
   const [reviewIndex, setReviewIndex] = useState(0);
+  // The object just rejected: its reason chips stay on the card after
+  // the review has moved on to the next object, so tagging a reason
+  // never costs a step back.
+  const [lastRejectedId, setLastRejectedId] = useState<number | null>(null);
   const clampedReviewIndex = Math.max(0, Math.min(reviewIndex, reviewOrderedObjects.length - 1));
   const currentReviewObject = reviewOrderedObjects[clampedReviewIndex] ?? null;
   const reviewPendingCount = reviewOrderedObjects.filter((o) => (o.review_status ?? "pending") === "pending").length;
@@ -2603,6 +2630,7 @@ export default function ViewerPage() {
   function decideCurrentReviewObject(status: "accepted" | "rejected") {
     if (!currentReviewObject) return;
     setObjectReviewStatus(currentReviewObject.id, status);
+    setLastRejectedId(status === "rejected" ? currentReviewObject.id : null);
     goToNextReviewObject();
   }
 
@@ -2701,6 +2729,34 @@ export default function ViewerPage() {
               </button>
             </span>
           </Tip>
+        </div>
+        {renderRejectReasons()}
+      </div>
+    );
+  }
+
+  /** "Why?" chips for the object just rejected (one tap, optional). */
+  function renderRejectReasons() {
+    const rejected = objects.find((o) => o.id === lastRejectedId && o.review_status === "rejected");
+    if (!rejected) return null;
+    const label = labels.find((l) => l.id === rejected.label_id);
+    return (
+      <div className="mt-2 rounded border border-red-900/60 bg-red-950/30 p-1.5" data-testid="reject-reasons">
+        <p className="mb-1 text-[10px] text-red-200/80">
+          Why was {label ? `${label.name} ${rejected.instance_number}` : "it"} rejected? <span className="text-gray-500">(optional)</span>
+        </p>
+        <div className="flex flex-wrap gap-1">
+          {REJECT_REASONS.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              onClick={() => setObjectRejectReason(rejected.id, r.key)}
+              className={`rounded border px-1.5 py-0.5 text-[10px] ${rejected.reject_reason === r.key ? "border-red-400 bg-red-600/30 text-red-100" : "border-[#444] bg-[#2a2a3e] text-gray-300 hover:bg-[#333]"}`}
+              data-testid={`reject-reason-${r.key}`}
+            >
+              {r.label}
+            </button>
+          ))}
         </div>
       </div>
     );

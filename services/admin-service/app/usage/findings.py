@@ -30,6 +30,17 @@ FIRST_INPUT_MIN_VISITS = 5
 # Per-screen findings of one kind are reported as one line naming the
 # worst few screens -- one finding per problem, not per page.
 SCREENS_NAMED = 3
+RATING_DEMANDING = 3.5
+RATING_MIN_ANSWERS = 5
+REASON_DOMINANT_SHARE = 0.40
+REASON_MIN_REJECTIONS = 5
+SLOW_ENDPOINT_MS = 1500
+FAILING_ENDPOINT_RATE = 0.05
+ENDPOINT_MIN_CALLS = 10
+GUIDE_MIN_OPENS = 5
+GUIDE_FINISH_WARN = 0.50
+DRIVER_STRONG_R = 0.60
+DRIVER_MIN_CASES = 8
 ERRORS_CRITICAL = 10
 IDLE_SHARE_INFO = 0.40
 LOAD_IMBALANCE_SHARE = 0.70
@@ -390,6 +401,105 @@ def _effort_findings(usage: dict, usage_previous: dict | None) -> list[dict]:
     return out
 
 
+def _release_findings(usage: dict) -> list[dict]:
+    """The newest build of each app against the one before it."""
+    out = []
+    by_app: dict[str, list[dict]] = {}
+    for row in usage.get("releases") or []:
+        by_app.setdefault(row["app"], []).append(row)
+    for app, rows in by_app.items():
+        if len(rows) < 2:
+            continue
+        before, now = rows[-2], rows[-1]
+        if min(before.get("cases") or 0, now.get("cases") or 0) < TREND_MIN_CASES or not before.get("active_median_ms") or not now.get("active_median_ms"):
+            continue
+        change = (now["active_median_ms"] - before["active_median_ms"]) / before["active_median_ms"]
+        if abs(change) < CYCLE_TREND_CHANGE:
+            continue
+        out.append(
+            _finding(
+                f"release.{app}",
+                "good" if change < 0 else "warn",
+                f"Since {app} {now['version']}, hands-on time per case {'fell' if change < 0 else 'rose'} {_pct(abs(change))}",
+                f"Median {_duration(now['active_median_ms'])} over {now['cases']} cases, vs {_duration(before['active_median_ms'])} over {before['cases']} with {before['version']}. Other things changed too -- check the cases were comparable (Cases tab).",
+                "overview",
+                {"app": app, "now": now["version"], "before": before["version"], "change": round(change, 3)},
+            )
+        )
+    return out
+
+
+def _case_findings(usage: dict) -> list[dict]:
+    out = []
+    r = usage.get("ratings") or {}
+    if r.get("count", 0) >= RATING_MIN_ANSWERS and (r.get("mean") or 0) >= RATING_DEMANDING:
+        out.append(
+            _finding(
+                "cases.demanding",
+                "info",
+                f"People rate their cases {r['mean']} of 5 on how demanding they were",
+                f"From {r['count']} answers (1 easy, 5 very demanding). The Cases tab shows which cases, and whether objects, slices or rework drive it.",
+                "cases",
+                r,
+            )
+        )
+    for d in (usage.get("complexity") or {}).get("drivers", []):
+        if abs(d["r"]) >= DRIVER_STRONG_R and d["n"] >= DRIVER_MIN_CASES:
+            out.append(
+                _finding(
+                    f"cases.driver.{d['factor']}",
+                    "info",
+                    f"Hands-on time goes {'up' if d['r'] > 0 else 'down'} with {d['label']}",
+                    f"Correlation r = {d['r']} over {d['n']} cases. A description, not a cause -- but it says where making each case cheaper pays off.",
+                    "cases",
+                    d,
+                )
+            )
+    reasons = usage.get("reject_reasons") or {}
+    if reasons.get("total", 0) >= REASON_MIN_REJECTIONS and reasons["reasons"] and reasons["reasons"][0]["share"] >= REASON_DOMINANT_SHARE:
+        top = reasons["reasons"][0]
+        out.append(
+            _finding(
+                "review.reason",
+                "info",
+                f"Most rejected objects are for one reason: {top['reason']} ({_pct(top['share'])})",
+                f"{top['count']} of {reasons['total']} tagged rejections. One recurring reason is a guideline or tool problem, not a people problem.",
+                "overview",
+                reasons,
+            )
+        )
+    return out
+
+
+def _performance_findings(usage: dict) -> list[dict]:
+    rows = [r for r in usage.get("performance") or [] if r["calls"] >= ENDPOINT_MIN_CALLS]
+    out = []
+    slow = [r for r in rows if r["mean_ms"] >= SLOW_ENDPOINT_MS]
+    if slow:
+        named = ", ".join(f"{r['endpoint']} {_duration(r['mean_ms'])} avg over {r['calls']} calls" for r in slow[:SCREENS_NAMED])
+        out.append(_finding("perf.slow", "warn", f"{len(slow)} request{'s are' if len(slow) != 1 else ' is'} slow enough to wait on", f"{named}. Every one of these is waiting that looks like work in the cycle time.", "friction", {"endpoints": slow}))
+    failing = [r for r in rows if r["failure_rate"] >= FAILING_ENDPOINT_RATE]
+    if failing:
+        named = ", ".join(f"{r['endpoint']} {_pct(r['failure_rate'])} of {r['calls']}" for r in failing[:SCREENS_NAMED])
+        out.append(_finding("perf.failing", "warn", f"{len(failing)} request{'s' if len(failing) != 1 else ''} often fail", f"{named}.", "friction", {"endpoints": failing}))
+    return out
+
+
+def _guide_findings(usage: dict) -> list[dict]:
+    tours = [t for t in (usage.get("guides") or {}).get("tours", []) if t["opened"] >= GUIDE_MIN_OPENS and (t["finish_rate"] or 0) < GUIDE_FINISH_WARN]
+    return [
+        _finding(
+            f"guide.{t['app']}.{t['route']}",
+            "info",
+            f"Most people leave the {t['route']} tutorial before the end",
+            f"{_pct(t['finish_rate'])} of {t['opened']} finished it" + (f"; the typical exit is step {t['skipped_at_median'] + 1}" if t.get("skipped_at_median") is not None else "") + ". That step is where it loses them.",
+            "people",
+            t,
+        )
+        for t in tours
+    ]
+
+
 def findings(usage: dict, usage_previous: dict | None, pipeline: dict | None, pipeline_previous: dict | None, learning_curve: list[dict] | None) -> list[dict]:
     if not usage.get("totals", {}).get("events"):
         return [_finding("no_data", "info", "Nothing recorded in this period yet", "Findings appear once people have used the platform with recording on.", "settings")]
@@ -398,6 +508,10 @@ def findings(usage: dict, usage_previous: dict | None, pipeline: dict | None, pi
     out += _cycle_findings(pipeline, pipeline_previous)
     out += _quality_findings(pipeline, pipeline_previous)
     out += _effort_findings(usage, usage_previous)
+    out += _release_findings(usage)
+    out += _case_findings(usage)
+    out += _performance_findings(usage)
+    out += _guide_findings(usage)
     out += _screen_findings(usage)
     out += _error_findings(usage, usage_previous)
     out += _idle_findings(usage)

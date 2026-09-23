@@ -23,6 +23,13 @@ RAGE_RADIUS_PX = 30
 VIEWER_ROUTE_PREFIX = "/viewer"
 TASK_ACTIONS = {"annotate": "mark_annotated", "review": "submit_review"}
 UNDO_ACTIONS = {"undo"}
+TOOL_PREFIX = "tool."
+RATING_ACTION = "case.rating"
+REJECT_REASON_ACTION = "review.reject_reason"
+GUIDE_OPEN, GUIDE_FINISH, GUIDE_SKIP = "guide.open", "guide.finish", "guide.skip"
+UNKNOWN_VERSION = "unknown"
+# A request slower than this counts as "slow" (the tracker counts them).
+SLOW_REQUEST_MS = 1000
 # Before the tracker marked clicks inside the tutorial overlay
 # (detail.guide), these were its buttons -- the tour's own clicks are
 # not work on the page underneath.
@@ -248,7 +255,7 @@ def case_effort(events: list[dict]) -> list[dict]:
                     current = (str(d["job_id"]), str(d["case_id"]))
                     entry = per.setdefault(
                         current,
-                        {"job_id": current[0], "case_id": current[1], "user_ids": set(), "sessions": set(), "active_ms": 0, "undos": 0, "first_input_ms": []},
+                        {"job_id": current[0], "case_id": current[1], "user_ids": set(), "sessions": set(), "active_ms": 0, "undos": 0, "first_input_ms": [], "device": d.get("device")},
                     )
                     entry["sessions"].add(session_id)
                     entry["user_ids"].add(e["user_id"])
@@ -278,6 +285,7 @@ def case_effort(events: list[dict]) -> list[dict]:
             "active_ms": v["active_ms"],
             "undos": v["undos"],
             "first_input_ms": v["first_input_ms"],
+            "device": v["device"],
         }
         for v in per.values()
     ]
@@ -296,6 +304,220 @@ def effort_summary(entries: list[dict]) -> dict:
         "first_input_median_ms": int(median(first_input)) if first_input else None,
         "first_input_count": len(first_input),
     }
+
+
+def tool_usage(events: list[dict]) -> dict:
+    """How long each viewer tool stays selected while a case is open (the
+    tool.* actions mark each selection; idle stretches don't count), how
+    often it is picked, and how many tool switches one case visit takes.
+    A tool that holds the time is where ergonomics pay off most; many
+    switches per case mean the tools the work needs are split apart."""
+    time: Counter = Counter()
+    selections: Counter = Counter()
+    switches_per_visit: list[int] = []
+    for rows in _by_session(events).values():
+        in_case = False
+        tool: str | None = None
+        since = 0
+        switches = 0
+
+        def close(at: int) -> None:
+            if tool is not None:
+                time[tool] += max(at - since, 0)
+
+        for e in rows:
+            kind, at = e["event_type"], _ms(e["occurred_at"])
+            if kind == "page_view":
+                if in_case:
+                    close(at)
+                    switches_per_visit.append(switches)
+                d = e.get("detail") or {}
+                in_case = e["route"].startswith(VIEWER_ROUTE_PREFIX) and bool(d.get("case_id"))
+                tool, switches = None, 0
+            elif not in_case:
+                continue
+            elif kind == "action" and (e.get("name") or "").startswith(TOOL_PREFIX):
+                name = e["name"][len(TOOL_PREFIX) :]
+                close(at)
+                if tool is not None and name != tool:
+                    switches += 1
+                tool, since = name, at
+                selections[name] += 1
+            elif kind == "idle" and tool is not None:
+                time[tool] -= int(e.get("duration_ms") or 0)
+            elif kind == "page_leave":
+                close(at)
+                switches_per_visit.append(switches)
+                in_case, tool = False, None
+    total = sum(max(v, 0) for v in time.values())
+    tools = [
+        {"tool": name, "time_ms": max(ms, 0), "share": round(max(ms, 0) / total, 3) if total else 0.0, "selections": selections[name]}
+        for name, ms in time.items()
+    ]
+    tools.sort(key=lambda r: (-r["time_ms"], r["tool"]))
+    return {
+        "tools": tools,
+        "case_visits": len(switches_per_visit),
+        "switches_per_case_median": median(switches_per_visit) if switches_per_visit else None,
+    }
+
+
+def ratings(events: list[dict]) -> list[dict]:
+    """Every "how demanding was that case?" answer (1 easy .. 5 very
+    demanding), with the case/job it was about."""
+    out = []
+    for e in events:
+        d = e.get("detail") or {}
+        if e["event_type"] == "action" and e.get("name") == RATING_ACTION and isinstance(d.get("rating"), (int, float)):
+            out.append({"user_id": e["user_id"], "case_id": d.get("case_id"), "job_id": d.get("job_id"), "task": d.get("task"), "rating": int(d["rating"])})
+    return out
+
+
+def rating_summary(rows: list[dict]) -> dict:
+    values = [r["rating"] for r in rows if 1 <= r["rating"] <= 5]
+    return {
+        "count": len(values),
+        "mean": round(mean(values), 2) if values else None,
+        "distribution": {str(n): values.count(n) for n in range(1, 6)},
+    }
+
+
+def reject_reasons(events: list[dict]) -> dict:
+    """Why reviewers rejected objects, as the reviewer tagged it."""
+    counts = Counter(
+        (e.get("detail") or {}).get("reason")
+        for e in events
+        if e["event_type"] == "action" and e.get("name") == REJECT_REASON_ACTION and (e.get("detail") or {}).get("reason")
+    )
+    total = sum(counts.values())
+    return {
+        "total": total,
+        "reasons": [{"reason": r, "count": n, "share": round(n / total, 3)} for r, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
+    }
+
+
+def request_performance(events: list[dict]) -> list[dict]:
+    """Browser-measured API timings per endpoint (the tracker aggregates
+    each endpoint over a flush interval into one perf event): calls,
+    mean and worst duration, share slower than SLOW_REQUEST_MS, share
+    that failed. Ordered by total time spent waiting -- where a speed-up
+    saves the most."""
+    agg: dict[tuple[str, str], dict] = {}
+    for e in events:
+        if e["event_type"] != "perf":
+            continue
+        d = e.get("detail") or {}
+        endpoint = d.get("endpoint")
+        count = int(d.get("count") or 0)
+        if not endpoint or count <= 0:
+            continue
+        row = agg.setdefault((e["app"], endpoint), {"app": e["app"], "endpoint": endpoint, "calls": 0, "total_ms": 0, "max_ms": 0, "slow": 0, "failures": 0})
+        row["calls"] += count
+        row["total_ms"] += int(d.get("ms") or 0)
+        row["max_ms"] = max(row["max_ms"], int(d.get("max") or 0))
+        row["slow"] += int(d.get("slow") or 0)
+        row["failures"] += int(d.get("failures") or 0)
+    rows = []
+    for row in agg.values():
+        row["mean_ms"] = int(row["total_ms"] / row["calls"])
+        row["slow_share"] = round(row["slow"] / row["calls"], 3)
+        row["failure_rate"] = round(row["failures"] / row["calls"], 3)
+        rows.append(row)
+    rows.sort(key=lambda r: (-r["total_ms"], r["endpoint"]))
+    return rows[:25]
+
+
+def guide_funnel(events: list[dict]) -> dict:
+    """Each tutorial (one per app and screen): how often it was opened,
+    finished and skipped, and at which step people skipped. Plus who has
+    finished at least one -- to compare their learning curves."""
+    tours: dict[tuple[str, str], dict] = {}
+    finished_by: set[str] = set()
+    for e in events:
+        name = e.get("name") if e["event_type"] == "action" else None
+        if name not in (GUIDE_OPEN, GUIDE_FINISH, GUIDE_SKIP):
+            continue
+        key = (e["app"], e["route"])
+        tour = tours.setdefault(key, {"app": e["app"], "route": e["route"], "opened": 0, "finished": 0, "skipped": 0, "skipped_at": []})
+        if name == GUIDE_OPEN:
+            tour["opened"] += 1
+        elif name == GUIDE_FINISH:
+            tour["finished"] += 1
+            finished_by.add(e["user_id"])
+        else:
+            tour["skipped"] += 1
+            d = e.get("detail") or {}
+            if isinstance(d.get("step"), (int, float)):
+                tour["skipped_at"].append(int(d["step"]))
+    rows = []
+    for tour in tours.values():
+        skipped_at = tour.pop("skipped_at")
+        tour["finish_rate"] = round(tour["finished"] / tour["opened"], 3) if tour["opened"] else None
+        tour["skipped_at_median"] = median(skipped_at) if skipped_at else None
+        rows.append(tour)
+    rows.sort(key=lambda r: (-r["opened"], r["app"], r["route"]))
+    return {"tours": rows, "finished_user_ids": sorted(finished_by)}
+
+
+def _view_weighted_score(by_screen: list[dict]) -> int | None:
+    weighted = [(sc["score"], sc["views"]) for sc in by_screen if sc["views"] > 0]
+    total = sum(v for _, v in weighted)
+    return round(sum(s * v for s, v in weighted) / total) if total else None
+
+
+def releases(events: list[dict]) -> list[dict]:
+    """The headline measures per build of each app (the app_version the
+    tracker stamps), oldest first -- read down a column to see whether a
+    release made things better. Events from before version stamping
+    are grouped as "unknown"."""
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for e in events:
+        groups[(e["app"], e.get("app_version") or UNKNOWN_VERSION)].append(e)
+    out = []
+    for (app, version), rows in groups.items():
+        effort = effort_summary(case_effort(rows))
+        by_screen = friction(rows)["by_screen"]
+        measured = sum(sc.get("measured_clicks", 0) for sc in by_screen)
+        dead = sum(sc["dead_clicks"] for sc in by_screen)
+        times = [_ms(e["occurred_at"]) for e in rows]
+        out.append(
+            {
+                "app": app,
+                "version": version,
+                "first_seen": min(e["occurred_at"] for e in rows),
+                "last_seen": max(e["occurred_at"] for e in rows),
+                "people": len({e["user_id"] for e in rows}),
+                "sessions": len({e["session_id"] for e in rows}),
+                "cases": effort["cases"],
+                "active_median_ms": effort["active_median_ms"],
+                "first_input_median_ms": effort["first_input_median_ms"],
+                "no_response_rate": round(dead / measured, 3) if measured else None,
+                "friction_score": _view_weighted_score(by_screen),
+                "errors": sum(1 for e in rows if e["event_type"] == "error"),
+                "_first_ms": min(times),
+            }
+        )
+    # per app, pre-stamping events first, then builds in the order they appeared
+    out.sort(key=lambda r: (r["app"], 0 if r["version"] == UNKNOWN_VERSION else 1, r["_first_ms"]))
+    for r in out:
+        del r["_first_ms"]
+    return out
+
+
+def correlation(xs: list[float], ys: list[float], min_n: int = 5) -> float | None:
+    """Pearson's r over paired values, None below min_n pairs or with no
+    spread -- how strongly one thing (objects, slices, felt difficulty)
+    moves with hands-on time. A description, not a cause."""
+    pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+    if len(pairs) < min_n:
+        return None
+    mx = mean(p[0] for p in pairs)
+    my = mean(p[1] for p in pairs)
+    sxx = sum((p[0] - mx) ** 2 for p in pairs)
+    syy = sum((p[1] - my) ** 2 for p in pairs)
+    if not sxx or not syy:
+        return None
+    return round(sum((p[0] - mx) * (p[1] - my) for p in pairs) / (sxx * syy) ** 0.5, 2)
 
 
 def _rage_clicks(clicks: list[dict]) -> int:
@@ -545,5 +767,13 @@ def summarize(events: list[dict]) -> dict:
         "actions": action_counts(events),
         "friction": friction(events),
         "users": per_user(events, effort),
+        "tools": tool_usage(events),
+        "ratings": rating_summary(ratings(events)),
+        "reject_reasons": reject_reasons(events),
+        "performance": request_performance(events),
+        "guides": guide_funnel(events),
+        "effort_by_device": {device: effort_summary([e for e in effort if (e["device"] or "unknown") == device]) for device in sorted({e["device"] or "unknown" for e in effort})},
+        "releases": releases(events),
         "_effort": effort,
+        "_ratings": ratings(events),
     }

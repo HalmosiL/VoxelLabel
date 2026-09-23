@@ -20,6 +20,12 @@
  * navigation). The click is therefore queued a second late, stamped
  * with the moment it happened.
  *
+ * Every event carries the app's build (`app_version`), so figures can be
+ * compared release against release. Page views say whether the pointer
+ * is a finger or a mouse (`device`). API request timings the browser
+ * measured are summed per endpoint and sent once per flush as `perf`
+ * events -- which calls people wait on, and which fail.
+ *
  * Every category has a switch a platform admin flips on the Usage page;
  * the effective config is fetched at start and re-polled, so a change
  * reaches every open tab. Nothing here may ever break the app: every
@@ -40,7 +46,8 @@ export type UsageEventType =
   | "key"
   | "focus"
   | "idle"
-  | "error";
+  | "error"
+  | "perf";
 
 export interface UsageConfig {
   enabled: boolean;
@@ -51,7 +58,10 @@ export interface UsageConfig {
   track_scroll: boolean;
   track_keys: boolean;
   track_errors: boolean;
+  track_perf?: boolean;
   mouse_sample_ms: number;
+  /** Ask how demanding a finished case was after every n-th one (0 = never). */
+  rating_every_n?: number;
 }
 
 export type UsageDetail = Record<string, string | number | boolean | number[] | number[][] | null | undefined>;
@@ -65,6 +75,7 @@ export interface UsageEvent {
   detail?: UsageDetail;
   duration_ms?: number;
   occurred_at: string;
+  app_version?: string;
 }
 
 export interface TrackerOptions {
@@ -72,6 +83,8 @@ export interface TrackerOptions {
   configUrl: string;
   eventsUrl: string;
   getToken: () => string | undefined;
+  /** This build's version, stamped on every event. */
+  version?: string;
   /** Test seams -- default to the real fetch and Date.now. */
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -103,6 +116,7 @@ const CATEGORY: Record<UsageEventType, keyof UsageConfig> = {
   scroll: "track_scroll",
   key: "track_keys",
   error: "track_errors",
+  perf: "track_perf",
 };
 
 const OFF: UsageConfig = {
@@ -114,7 +128,9 @@ const OFF: UsageConfig = {
   track_scroll: false,
   track_keys: false,
   track_errors: false,
+  track_perf: false,
   mouse_sample_ms: 100,
+  rating_every_n: 0,
 };
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -144,6 +160,9 @@ interface State {
   /** Clicks waiting RESPONSE_MS to learn whether anything happened. */
   pendingClicks: { event: UsageEvent; at: number; measure: boolean; timer: number }[];
   observer: MutationObserver | null;
+  /** API timings since the last flush, per normalised endpoint. */
+  perf: Map<string, { count: number; ms: number; max: number; slow: number; failures: number }>;
+  perfObserver: PerformanceObserver | null;
 }
 
 const state: State = {
@@ -166,6 +185,8 @@ const state: State = {
   lastResponseAt: 0,
   pendingClicks: [],
   observer: null,
+  perf: new Map(),
+  perfObserver: null,
 };
 
 function now(): number {
@@ -253,6 +274,7 @@ function push(type: UsageEventType, fields: Partial<UsageEvent> = {}): void {
     event_type: type,
     route: fields.route ?? state.route ?? "/",
     occurred_at: new Date(now()).toISOString(),
+    ...(state.options.version ? { app_version: state.options.version } : {}),
     ...fields,
   });
   if (state.queue.length > QUEUE_CAP) state.queue.splice(0, state.queue.length - QUEUE_CAP);
@@ -377,12 +399,69 @@ export function trackPageView(pathname: string, detail?: UsageDetail): void {
   state.maxScroll = 0;
   state.wheelTicks = 0;
   state.trace = null;
-  push("page_view", { detail: { ...detail, viewport: viewport() } });
+  push("page_view", { detail: { ...detail, viewport: viewport(), device: inputDevice() } });
 }
 
 export function trackAction(name: string, detail?: UsageDetail): void {
   noteResponse();
   push("action", { name, detail: detail ?? state.pageDetail });
+}
+
+/** "touch" when the main pointer is a finger (tablet), else "mouse". */
+function inputDevice(): string {
+  try {
+    return typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches ? "touch" : "mouse";
+  } catch {
+    return "mouse";
+  }
+}
+
+const SLOW_MS = 1000;
+const STATIC_RE = /\.(js|mjs|css|png|jpe?g|svg|gif|webp|ico|woff2?|ttf|map)$/i;
+
+/** One API request the browser finished: summed into its endpoint's
+ * bucket (ids replaced, so every study's /studies/:id counts together).
+ * The tracker's own calls and static files are left out. */
+export function notePerf(url: string, durationMs: number, status: number): void {
+  if (!state.options) return;
+  let path: string;
+  try {
+    path = new URL(url, typeof location !== "undefined" ? location.href : "http://x").pathname;
+  } catch {
+    return;
+  }
+  if (STATIC_RE.test(path) || path.includes("/usage/")) return;
+  const endpoint = normalizeRoute(path).replace(ID_LIKE, "#");
+  const bucket = state.perf.get(endpoint) ?? { count: 0, ms: 0, max: 0, slow: 0, failures: 0 };
+  const ms = Math.max(0, Math.round(durationMs));
+  bucket.count += 1;
+  bucket.ms += ms;
+  bucket.max = Math.max(bucket.max, ms);
+  if (ms >= SLOW_MS) bucket.slow += 1;
+  if (status >= 400) bucket.failures += 1;
+  state.perf.set(endpoint, bucket);
+}
+
+/** Queues one perf event per endpoint seen since the last call. */
+function emitPerf(): void {
+  if (state.perf.size === 0) return;
+  for (const [endpoint, b] of state.perf) push("perf", { detail: { endpoint, count: b.count, ms: b.ms, max: b.max, slow: b.slow, failures: b.failures } });
+  state.perf.clear();
+}
+
+/** True when this finished case is one to ask "how demanding was it?"
+ * about: every rating_every_n-th finished case in this browser session. */
+export function ratingDue(): boolean {
+  const every = state.config.enabled ? state.config.rating_every_n ?? 0 : 0;
+  if (!every) return false;
+  let n = 0;
+  try {
+    n = Number(sessionStorage.getItem("vl.usage.finished") ?? "0") + 1;
+    sessionStorage.setItem("vl.usage.finished", String(n));
+  } catch {
+    n += 1;
+  }
+  return n % every === 0;
 }
 
 function noteResponse(): void {
@@ -492,6 +571,7 @@ function onRejection(e: PromiseRejectionEvent): void {
 function onVisibility(): void {
   if (document.visibilityState === "hidden") {
     settleClicks();
+    emitPerf();
     emitTrace();
     flush(true);
   }
@@ -499,6 +579,7 @@ function onVisibility(): void {
 
 function onPageHide(): void {
   settleClicks();
+  emitPerf();
   leavePage();
   flush(true);
 }
@@ -523,6 +604,19 @@ function listen(): void {
   window.addEventListener("unhandledrejection", onRejection);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
+  if (typeof PerformanceObserver !== "undefined") {
+    try {
+      state.perfObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as PerformanceResourceTiming[]) {
+          if (entry.initiatorType !== "fetch" && entry.initiatorType !== "xmlhttprequest") continue;
+          notePerf(entry.name, entry.duration, (entry as PerformanceResourceTiming & { responseStatus?: number }).responseStatus ?? 0);
+        }
+      });
+      state.perfObserver.observe({ type: "resource", buffered: false });
+    } catch {
+      state.perfObserver = null;
+    }
+  }
   if (typeof MutationObserver !== "undefined") {
     state.observer = new MutationObserver(noteResponse);
     state.observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -530,6 +624,7 @@ function listen(): void {
   state.timers.push(
     window.setInterval(() => {
       emitTrace();
+      emitPerf();
       flush();
     }, FLUSH_INTERVAL_MS)
   );
@@ -569,6 +664,7 @@ export function _reset(): void {
     state.timers.forEach((t) => window.clearInterval(t));
     state.pendingClicks.forEach((p) => window.clearTimeout(p.timer));
     state.observer?.disconnect();
+    state.perfObserver?.disconnect();
   }
   Object.assign(state, {
     options: null,
@@ -590,5 +686,7 @@ export function _reset(): void {
     lastResponseAt: 0,
     pendingClicks: [],
     observer: null,
+    perf: new Map(),
+    perfObserver: null,
   });
 }

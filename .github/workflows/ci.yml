@@ -191,6 +191,8 @@ jobs:
           script: |
             cd ${{ vars.STAGING_PATH }}
             git pull
+            # every usage event carries the build it came from (admin-ui/vite.config.ts)
+            export APP_VERSION=$(git rev-parse --short HEAD)
             docker compose build
             scripts/migrate.sh
             docker compose up -d

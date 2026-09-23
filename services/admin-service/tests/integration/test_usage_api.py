@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from app.usage.settings import get_settings, purge_expired
 from shared_models.models import UsageEvent
 
-from .conftest import ADMIN_SUBJECT, ANNOTATOR_SUBJECT, REVIEWER_SUBJECT
+from .conftest import ADMIN_SUBJECT, ANNOTATOR_SUBJECT, REVIEWER_SUBJECT, make_annotation, make_case, make_series, make_study
 
 NOW = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
 
@@ -296,3 +296,49 @@ def test_csv_cells_that_look_like_formulas_are_escaped(client):
     post(client, [ev("action", "/x", name="=HYPERLINK(1)")])
     client.as_admin()
     assert ",'=HYPERLINK(1)," in client.get("/admin/usage/export/events.csv").text
+
+
+def test_the_case_table_joins_viewer_work_with_what_made_the_case_hard(client, db):
+    """Hands-on time from the viewer events, next to the case's slices,
+    objects, rework and felt difficulty -- and the build that sent it."""
+    import uuid as _uuid
+
+    from shared_models.models import Annotation, Instance
+
+    client.as_admin()
+    sid = make_study(client)
+    case = make_case(client, sid, external="p-hard")
+    series_id = make_series(db, case["id"])
+    for i in range(3):
+        db.add(Instance(series_id=series_id, sop_instance_uid=f"1.4.{_uuid.uuid4().int % 10**12}", instance_number=i, object_storage_key=f"k{i}"))
+    db.commit()
+    make_annotation(db, sid, series_id, ANNOTATOR_SUBJECT, "rejected")
+    latest = make_annotation(db, sid, series_id, ANNOTATOR_SUBJECT, "draft")
+    db.query(Annotation).filter_by(id=latest).update({"payload": {"mask_volume_key": "k", "labels": [], "objects": [{"id": 1}, {"id": 2}]}})
+    db.commit()
+    card = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "annotation", "title": "Annotate", "position_x": 0, "position_y": 0, "config": {}}).json()
+
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    ids = {"job_id": card["id"], "case_id": case["id"]}
+    events = [
+        ev("page_view", "/viewer/:id", app="viewer", at_s=0, detail={**ids, "device": "touch"}),
+        ev("key", "/viewer/:id", app="viewer", at_s=3, name="p"),
+        ev("action", "/viewer/:id", app="viewer", at_s=5, name="tool.paint"),
+        ev("page_leave", "/viewer/:id", app="viewer", at_s=60, duration_ms=60000),
+        ev("action", "/viewer/:id", app="viewer", at_s=61, name="case.rating", detail={**ids, "rating": 4, "task": "annotate"}),
+        ev("perf", "/viewer/:id", app="viewer", at_s=62, detail={"endpoint": "/data/series/0a1b2c3d4e5f/volume", "count": 3, "ms": 900, "max": 500, "slow": 0, "failures": 0}),
+    ]
+    post(client, [{**e, "app_version": "0.1.0+test"} for e in events])
+    assert {r.app_version for r in db.query(UsageEvent).all()} == {"0.1.0+test"}
+
+    client.as_admin()
+    summary = client.get("/admin/usage/summary").json()
+    [row] = summary["cases"]
+    assert (row["job_type"], row["slices"], row["objects"], row["active_ms"], row["per_object_ms"], row["rating"], row["sent_back"]) == ("annotation", 3, 2, 60000, 30000, 4.0, 1)
+    assert row["people"] == ["dr-test"] and row["first_input_ms"] == 3000
+    assert summary["effort"]["annotation"]["cases"] == 1 and set(summary["effort_by_device"]) == {"touch"}
+    assert summary["ratings"]["count"] == 1 and summary["performance"][0]["endpoint"] == "/data/series/#/volume"
+    assert [r["version"] for r in summary["releases"]] == ["0.1.0+test"]
+    assert summary["tools"]["tools"][0]["tool"] == "paint"
+    assert client.get("/admin/usage/config").json()["rating_every_n"] == 3
+    assert "0.1.0+test" in client.get("/admin/usage/export/events.csv").text

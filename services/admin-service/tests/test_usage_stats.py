@@ -195,7 +195,7 @@ def test_summarize_totals():
 def _settings(**overrides):
     base = dict(
         enabled=True, track_pages=True, track_actions=True, track_clicks=True, track_mouse=True,
-        track_scroll=True, track_keys=True, track_errors=True, mouse_sample_ms=100, disabled_user_ids=[],
+        track_scroll=True, track_keys=True, track_errors=True, track_perf=True, mouse_sample_ms=100, rating_every_n=3, disabled_user_ids=[],
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -293,7 +293,7 @@ def test_case_effort_sums_active_time_across_sittings():
         ev("s2", "page_leave", "/viewer/:id", at_s=3620, app="viewer", duration_ms=20000),
     ]
     [entry] = stats.case_effort(events)
-    assert entry == {"job_id": "job-1", "case_id": "case-1", "user_ids": [ALICE], "sittings": 2, "active_ms": 30000 + 20000, "undos": 1, "first_input_ms": [4000, 2000]}
+    assert entry == {"job_id": "job-1", "case_id": "case-1", "user_ids": [ALICE], "sittings": 2, "active_ms": 30000 + 20000, "undos": 1, "first_input_ms": [4000, 2000], "device": None}
     assert stats.effort_summary([entry]) == {"cases": 1, "active_median_ms": 50000, "sittings_median": 2, "undos_per_case": 1.0, "first_input_median_ms": 3000, "first_input_count": 2}
 
 
@@ -304,3 +304,79 @@ def test_friction_stays_linear_on_a_long_sitting():
     started = time.perf_counter()
     stats.summarize(events)
     assert time.perf_counter() - started < 2.0  # the old scan took ~4 s for 8 000 events
+
+
+def test_rating_follows_the_master_switch():
+    assert effective_config(_settings(), ALICE)["rating_every_n"] == 3
+    assert effective_config(_settings(enabled=False), ALICE)["rating_every_n"] == 0
+    assert allows(effective_config(_settings(), ALICE), "perf") and not allows(effective_config(_settings(track_perf=False), ALICE), "perf")
+
+
+def _case_page(session, at_s, **detail):
+    return ev(session, "page_view", "/viewer/:id", at_s=at_s, app="viewer", detail={"job_id": "j", "case_id": "c", **detail})
+
+
+def test_tool_usage_times_each_selected_tool_and_counts_switches():
+    events = [
+        _case_page("s", 0),
+        ev("s", "action", "/viewer/:id", at_s=1, app="viewer", name="tool.paint"),
+        ev("s", "idle", "/viewer/:id", at_s=20, app="viewer", duration_ms=5000),
+        ev("s", "action", "/viewer/:id", at_s=31, app="viewer", name="tool.erase"),
+        ev("s", "action", "/viewer/:id", at_s=41, app="viewer", name="tool.paint"),
+        ev("s", "page_leave", "/viewer/:id", at_s=51, app="viewer", duration_ms=51000),
+    ]
+    usage = stats.tool_usage(events)
+    tools = {t["tool"]: t for t in usage["tools"]}
+    assert tools["paint"]["time_ms"] == 30000 - 5000 + 10000 and tools["paint"]["selections"] == 2
+    assert tools["erase"]["time_ms"] == 10000
+    assert usage["case_visits"] == 1 and usage["switches_per_case_median"] == 2
+    assert usage["tools"][0]["tool"] == "paint"
+
+
+def test_ratings_reasons_performance_and_the_tutorial_funnel():
+    events = [
+        ev("s", "action", "/viewer/:id", app="viewer", name="case.rating", detail={"case_id": "c", "job_id": "j", "rating": 4, "task": "annotate"}),
+        ev("s", "action", "/viewer/:id", app="viewer", name="case.rating", detail={"case_id": "d", "job_id": "j", "rating": 2}),
+        ev("s", "action", "/viewer/:id", app="viewer", name="review.reject_reason", detail={"reason": "boundary"}),
+        ev("s", "action", "/viewer/:id", app="viewer", name="review.reject_reason", detail={"reason": "boundary"}),
+        ev("s", "action", "/viewer/:id", app="viewer", name="review.reject_reason", detail={"reason": "missed"}),
+        ev("s", "perf", "/viewer/:id", app="viewer", detail={"endpoint": "/data/series/:id/volume", "count": 2, "ms": 3000, "max": 2500, "slow": 1, "failures": 0}),
+        ev("s", "perf", "/viewer/:id", app="viewer", detail={"endpoint": "/data/series/:id/volume", "count": 2, "ms": 1000, "max": 600, "slow": 0, "failures": 1}),
+        ev("s", "action", "/studies", name="guide.open"),
+        ev("s", "action", "/studies", name="guide.skip", detail={"step": 2, "steps": 6}),
+        ev("t", "action", "/studies", user=BOB, name="guide.open"),
+        ev("t", "action", "/studies", user=BOB, name="guide.finish"),
+    ]
+    assert stats.rating_summary(stats.ratings(events)) == {"count": 2, "mean": 3.0, "distribution": {"1": 0, "2": 1, "3": 0, "4": 1, "5": 0}}
+    assert stats.reject_reasons(events)["reasons"][0] == {"reason": "boundary", "count": 2, "share": round(2 / 3, 3)}
+    [perf] = stats.request_performance(events)
+    assert (perf["calls"], perf["mean_ms"], perf["max_ms"], perf["slow_share"], perf["failure_rate"]) == (4, 1000, 2500, 0.25, 0.25)
+    guides = stats.guide_funnel(events)
+    assert guides["tours"] == [{"app": "admin-ui", "route": "/studies", "opened": 2, "finished": 1, "skipped": 1, "finish_rate": 0.5, "skipped_at_median": 2}]
+    assert guides["finished_user_ids"] == [BOB]
+
+
+def test_releases_compare_builds_in_the_order_they_appeared():
+    def versioned(version, session, start):
+        rows = [
+            _case_page(session, start),
+            ev(session, "key", "/viewer/:id", at_s=start + 2, app="viewer", name="p"),
+            ev(session, "page_leave", "/viewer/:id", at_s=start + 60, app="viewer", duration_ms=60000),
+        ]
+        for r in rows:
+            r["app_version"] = version
+        return rows
+
+    old = versioned(None, "a", 0)
+    for r in old:
+        del r["app_version"]
+    events = old + versioned("1.0+2", "b", 1000) + versioned("1.0+1", "c", 500)
+    rows = stats.releases(events)
+    assert [r["version"] for r in rows] == ["unknown", "1.0+1", "1.0+2"]
+    assert rows[1]["cases"] == 1 and rows[1]["active_median_ms"] == 60000 and rows[1]["first_input_median_ms"] == 2000
+
+
+def test_correlation_needs_enough_pairs_and_spread():
+    assert stats.correlation([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]) == 1.0
+    assert stats.correlation([1, 2, 3, 4], [1, 2, 3, 4]) is None  # too few
+    assert stats.correlation([1, 1, 1, 1, 1], [1, 2, 3, 4, 5]) is None  # no spread

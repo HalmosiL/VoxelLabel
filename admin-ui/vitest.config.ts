@@ -6,6 +6,7 @@ import { defineConfig } from "vitest/config";
 // that are mostly data plumbing are covered end to end by e2e/ instead.
 export default defineConfig({
   plugins: [react()],
+  define: { __APP_VERSION__: JSON.stringify("test") },
   test: {
     environment: "jsdom",
     globals: true,

@@ -30,7 +30,8 @@ export default function PeopleTab({
       <PeopleCard summary={summary} onOpen={onOpenUser} />
       {sessionsFor && <SessionsCard who={sessionsFor} sessions={sessions} selected={session?.session_id ?? null} since={summary.since} until={summary.until} onOpen={onOpenSession} onClose={onCloseSessions} />}
       {session && <ReplayCard session={session} />}
-      {learningCurve && <LearningCurveCard rows={learningCurve} since={summary.since} until={summary.until} />}
+      {learningCurve && <LearningCurveCard rows={learningCurve} since={summary.since} until={summary.until} tutorialDone={new Set(summary.guides.finished_user_ids)} />}
+      <TutorialCard summary={summary} />
     </div>
   );
 }
@@ -450,12 +451,12 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
 
 // ---------------------------------------------------------------- learning curve
 
-function LearningCurveCard({ rows, since, until }: { rows: LearningCurvePoint[]; since: string; until: string }) {
+function LearningCurveCard({ rows, since, until, tutorialDone }: { rows: LearningCurvePoint[]; since: string; until: string; tutorialDone: Set<string> }) {
   const byPerson = useMemo(() => {
-    const grouped = new Map<string, { username: string; card_type: string; points: LearningCurvePoint[] }>();
+    const grouped = new Map<string, { actor_id: string; username: string; card_type: string; points: LearningCurvePoint[] }>();
     for (const row of rows) {
       const key = `${row.actor_id}:${row.card_type}`;
-      const entry = grouped.get(key) ?? { username: row.username ?? row.actor_id, card_type: row.card_type, points: [] };
+      const entry = grouped.get(key) ?? { actor_id: row.actor_id, username: row.username ?? row.actor_id, card_type: row.card_type, points: [] };
       entry.points.push(row);
       grouped.set(key, entry);
     }
@@ -506,7 +507,14 @@ function LearningCurveCard({ rows, since, until }: { rows: LearningCurvePoint[];
             return (
               <div key={`${entry.username}-${entry.card_type}`} className="rounded border border-gray-200 p-3" data-testid="usage-learning-curve-figure">
                 <div className="mb-1 flex items-center justify-between text-sm">
-                  <span className="font-medium text-gray-800">{entry.username}</span>
+                  <span className="font-medium text-gray-800">
+                    {entry.username}
+                    {tutorialDone.has(entry.actor_id) && (
+                      <span className="ml-1.5 text-xs font-normal text-gray-400" title="Finished at least one tutorial in this period">
+                        · did a tutorial
+                      </span>
+                    )}
+                  </span>
                   <span className="badge badge-gray capitalize">{entry.card_type}</span>
                 </div>
                 <svg viewBox={`0 0 ${w} ${h}`} className="w-full" role="img" aria-label={`${entry.username}'s ${entry.card_type} time per case by week of tenure`}>
@@ -527,6 +535,70 @@ function LearningCurveCard({ rows, since, until }: { rows: LearningCurvePoint[];
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- tutorials
+
+function TutorialCard({ summary }: { summary: UsageSummary }) {
+  const tours = summary.guides.tours;
+  return (
+    <div className="card" data-guide="usage-tutorials" data-testid="usage-tutorials">
+      <CardHeader
+        title="Tutorials"
+        hint="Each screen's guided tour: how often it was opened, finished, or left early -- and at which step people typically leave. That step is where the tour loses them. The learning curves above mark who finished one."
+        actions={
+          <DownloadCsvButton
+            filename={exportFilename("tutorials", summary.since, summary.until, "csv")}
+            rows={tours}
+            columns={[
+              { header: "App", value: (t) => t.app },
+              { header: "Screen", value: (t) => t.route },
+              { header: "Opened", value: (t) => t.opened },
+              { header: "Finished", value: (t) => t.finished },
+              { header: "Left early", value: (t) => t.skipped },
+              { header: "Finish rate", value: (t) => t.finish_rate },
+              { header: "Typical exit step", value: (t) => (t.skipped_at_median === null ? null : t.skipped_at_median + 1) },
+            ]}
+            testId="usage-export-tutorials"
+          />
+        }
+      />
+      {tours.length === 0 ? (
+        <EmptyState message="No tutorial was opened in this period." />
+      ) : (
+        <div className="table-wrap">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th>Screen</th>
+                <th>App</th>
+                <th className="text-right">Opened</th>
+                <th className="text-right">Finished</th>
+                <th className="text-right">Left early</th>
+                <th className="text-right" title="The step people most often leave at">
+                  Typical exit
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {tours.map((t) => (
+                <tr key={`${t.app}-${t.route}`} data-testid="usage-tutorial-row">
+                  <td className="font-mono text-xs">{t.route}</td>
+                  <td className="text-xs text-gray-500">{t.app}</td>
+                  <td className="text-right tabular-nums">{t.opened}</td>
+                  <td className="text-right tabular-nums">
+                    {t.finished} <span className="text-xs text-gray-400">({t.finish_rate === null ? "–" : `${Math.round(t.finish_rate * 100)}%`})</span>
+                  </td>
+                  <td className="text-right tabular-nums">{t.skipped}</td>
+                  <td className="text-right tabular-nums">{t.skipped_at_median === null ? "–" : `step ${t.skipped_at_median + 1}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

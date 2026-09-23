@@ -14,8 +14,9 @@ export default function BehaviourTab({ summary, heatRoute, onHeatRoute, heatmap 
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <RoutesCard summary={summary} />
-        <ActionsCard summary={summary} />
+        <ToolTimeCard summary={summary} />
       </div>
+      <ActionsCard summary={summary} />
       <HeatmapCard summary={summary} route={heatRoute} onRoute={onHeatRoute} heatmap={heatmap} />
     </div>
   );
@@ -47,6 +48,41 @@ function RoutesCard({ summary }: { summary: UsageSummary }) {
         testId="usage-routes-list"
         max={max}
         rows={rows.map((r) => ({ key: r.route, label: r.route, value: r.total_ms, display: formatDuration(r.total_ms), note: `${r.views} views · avg ${formatDuration(r.avg_ms)}` }))}
+      />
+    </div>
+  );
+}
+
+function ToolTimeCard({ summary }: { summary: UsageSummary }) {
+  const t = summary.tools;
+  return (
+    <div className="card" data-guide="usage-tools" data-testid="usage-tools">
+      <CardHeader
+        title="Time with each viewer tool"
+        hint="How long each tool stays selected while a case is open (idle stretches left out), and how often it is picked. The tool that holds the time is where ergonomics pay off most; many switches per case mean the tools one task needs are split apart."
+        actions={
+          <DownloadCsvButton
+            filename={exportFilename("tools", summary.since, summary.until, "csv")}
+            rows={t.tools}
+            columns={[
+              { header: "Tool", value: (r) => r.tool },
+              { header: "Time selected (ms)", value: (r) => r.time_ms },
+              { header: "Share", value: (r) => r.share },
+              { header: "Times picked", value: (r) => r.selections },
+            ]}
+            testId="usage-export-tools"
+          />
+        }
+      />
+      {t.case_visits > 0 && (
+        <p className="mb-3 text-sm text-gray-600" data-testid="usage-tool-switches">
+          Median <strong className="tabular-nums">{t.switches_per_case_median ?? 0}</strong> tool switches per case, over {t.case_visits} case openings.
+        </p>
+      )}
+      <BarList
+        testId="usage-tools-list"
+        max={t.tools[0]?.time_ms ?? 0}
+        rows={t.tools.map((x) => ({ key: x.tool, label: x.tool, value: x.time_ms, display: formatDuration(x.time_ms), note: `${Math.round(x.share * 100)}% · picked ${x.selections}×` }))}
       />
     </div>
   );

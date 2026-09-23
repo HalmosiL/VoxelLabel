@@ -1,6 +1,8 @@
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { trackAction } from "../usage/tracker";
+
 /** One stop of a guided tour. `target` names a `data-guide="..."`
  * attribute on the page; the tour spotlights that element and docks the
  * assistant's card next to it. A step without a target is shown centred;
@@ -102,16 +104,28 @@ export default function GuideTour({
     };
   }, [open, measure]);
 
+  // Tutorial funnel for the Usage page: opened, finished, or left at
+  // which step. The tracker drops these while recording is off.
+  useEffect(() => {
+    if (open) trackAction("guide.open", { steps: visibleSteps.length });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per opening
+  }, [open]);
+  const skip = useCallback(() => {
+    trackAction("guide.skip", { step: index, steps: visibleSteps.length });
+    onClose();
+  }, [index, visibleSteps.length, onClose]);
   const next = useCallback(() => {
-    if (isLast) onClose();
-    else setIndex((i) => i + 1);
-  }, [isLast, onClose]);
+    if (isLast) {
+      trackAction("guide.finish", { steps: visibleSteps.length });
+      onClose();
+    } else setIndex((i) => i + 1);
+  }, [isLast, onClose, visibleSteps.length]);
   const back = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
 
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") skip();
       else if (e.key === "ArrowRight" || e.key === "Enter") next();
       else if (e.key === "ArrowLeft") back();
       else return;
@@ -120,7 +134,7 @@ export default function GuideTour({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, next, back, onClose]);
+  }, [open, next, back, skip]);
 
   if (!open || !step) return null;
 
@@ -160,7 +174,7 @@ export default function GuideTour({
               Step {index + 1} of {visibleSteps.length}
             </p>
           </div>
-          <button onClick={onClose} className="rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="Close the tour (Esc)">
+          <button onClick={skip} className="rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="Close the tour (Esc)">
             Skip tour
           </button>
         </div>

@@ -64,6 +64,9 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const all = posted.flatMap((b) => b.events);
     const types = new Set(all.map((e) => e.event_type));
     check("viewer shipped page_view, click, mouse_trace and key events", ["page_view", "click", "mouse_trace", "key"].every((t) => types.has(t)), [...types]);
+    check("every viewer event carries its build", all.length > 0 && all.every((e) => typeof e.app_version === "string" && e.app_version.length > 0), [...new Set(all.map((e) => e.app_version))]);
+    check("viewer page views say mouse or touch", all.some((e) => e.event_type === "page_view" && ["mouse", "touch"].includes(e.detail && e.detail.device)));
+    check("viewer sent request timings per endpoint", all.some((e) => e.event_type === "perf" && e.detail && e.detail.endpoint && e.detail.count >= 1), all.filter((e) => e.event_type === "perf").slice(0, 3));
     check("viewer page view carries the job/case ids, route normalised", all.some((e) => e.event_type === "page_view" && e.route === "/viewer/:id" && e.detail && e.detail.case_id === kase.id && e.detail.job_id === F.ANNOT_CARD), all.filter((e) => e.event_type === "page_view").map((e) => [e.route, e.detail]));
     check("viewer: no page errors", errors.length === 0, errors);
     await ctx.close();
@@ -95,7 +98,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.waitForTimeout(800);
 
     // ---- Overview: findings, tiles, cycle time, export ----
-    check("five tabs, Overview selected", (await page.locator('[data-testid="usage-tabs"] [role="tab"]').count()) === 5 && (await page.locator('[data-testid="usage-tab-overview"]').getAttribute("aria-selected")) === "true");
+    check("six tabs, Overview selected", (await page.locator('[data-testid="usage-tabs"] [role="tab"]').count()) === 6 && (await page.locator('[data-testid="usage-tab-overview"]').getAttribute("aria-selected")) === "true");
     check("tiles render (incl. friction score)", (await page.locator('[data-testid="usage-tiles"] .stat-card').count()) === 6);
     check("every judged tile says which direction is better", (await page.locator('[data-testid="usage-tiles"] .stat-card', { hasText: /is better/ }).count()) === 6);
     check("the header says what the figures are built from and who is left out", /\d+ sessions, [\d,]+ events/.test(await page.locator('[data-testid="usage-basis"]').innerText()) && /not counted/.test(await page.locator('[data-testid="usage-basis"]').innerText()));
@@ -115,6 +118,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
       check(`a finding's jump link opens the ${label} tab`, (await page.locator(`[data-testid="usage-tab-${label}"]`).getAttribute("aria-selected")) === "true");
       await tab("overview");
     }
+    check("release by release lists a stamped viewer build", (await page.locator('[data-testid="usage-release-row"]', { hasText: "viewer" }).filter({ hasNotText: "unknown" }).count()) >= 1);
     check("cycle-time tiles render", (await page.locator('[data-testid="usage-cycle-tiles"] .stat-card').count()) === 5);
     check("cycle-time bar draws at least one segment", (await page.locator('[data-testid="usage-cycle-bar"] > div').count()) >= 1);
 
@@ -123,7 +127,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const events = await downloaded("usage-export-events");
     // (.trim() would eat the BOM -- it counts as whitespace -- so test it on the raw text.)
     const eventLines = events.text.trim().split(/\r?\n/);
-    check("raw event CSV streams with the BOM and the documented header", events.text.startsWith("﻿") && eventLines[0] === "occurred_at,user_id,username,session_id,app,event_type,route,name,duration_ms,detail", eventLines[0]);
+    check("raw event CSV streams with the BOM and the documented header", events.text.startsWith("﻿") && eventLines[0] === "occurred_at,user_id,username,session_id,app,event_type,route,name,duration_ms,detail,app_version", eventLines[0]);
     check("raw event CSV has rows and no mouse traces by default", eventLines.length > 10 && !events.text.includes(",mouse_trace,"), eventLines.length);
     await page.locator('[data-testid="usage-export-include-mouse"]').check();
     const withMouse = await downloaded("usage-export-events");
@@ -165,6 +169,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
 
     // ---- Friction ----
     await tab("friction");
+    check("requests people wait on lists endpoints", (await page.locator('[data-testid="usage-perf-row"]').count()) >= 1);
     const frictionRows = page.locator('[data-testid="usage-friction-row"]');
     check("screens-by-friction table lists every screen with a score chip", (await frictionRows.count()) >= 1 && (await frictionRows.first().locator("td").nth(1).locator("span").count()) === 1);
     const scores = await frictionRows.evaluateAll((rows) => rows.map((r) => Number(r.querySelectorAll("td")[1].innerText)));
@@ -213,6 +218,13 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.waitForTimeout(800);
     await page.screenshot({ path: "usage-page.png", fullPage: true });
 
+    // ---- Cases ----
+    await tab("cases");
+    check("the cases tab lists the case dr-test just opened, with its slices", (await page.locator('[data-testid="usage-case-row"]').count()) >= 1 && /\b8\b/.test(await page.locator('[data-testid="usage-case-row"]').first().innerText()));
+    check("the cases tab explains what drives effort and how demanding cases feel", (await page.locator('[data-testid="usage-case-drivers"]').count()) === 1 && (await page.locator('[data-testid="usage-felt"]').count()) === 1);
+    const casesCsv = await downloaded("usage-export-cases");
+    check("cases CSV has the case properties", /^\uFEFFCase,Case id,Job,Job id,People,Sittings,Hands-on \(ms\),Slices,Objects/.test(casesCsv.text));
+
     // ---- People: table, sessions, replay, learning curve ----
     await tab("people");
     check("people table lists dr-test", (await page.locator('[data-testid="usage-user-dr-test"]').count()) === 1);
@@ -250,6 +262,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
 
     // ---- Settings: who counts; flip the mouse switch off, save, and see it land in the annotator's config ----
     await tab("settings");
+    check("settings shows the rating cadence and the request-timing switch", (await page.locator('[data-testid="usage-rating-every"]').inputValue()) === "3" && (await page.locator('[data-testid="usage-switch-track_perf"]').isChecked()));
     check("settings lists every account with its recorded/counted switches", (await page.locator('[data-testid^="usage-person-"]').count()) >= 3 && (await page.locator('[data-testid="usage-exclude-admins"]').isChecked()));
     check("an admin account shows as left out by the admin rule", /admin account/.test(await page.locator('[data-testid="usage-person-platform-admin"]').innerText()));
     await page.locator('[data-testid="usage-count-dr-review"]').uncheck();

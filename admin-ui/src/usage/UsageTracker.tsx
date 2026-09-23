@@ -15,6 +15,7 @@ export default function UsageTracker() {
       configUrl: `${API.admin}/admin/usage/config`,
       eventsUrl: `${API.admin}/admin/usage/events`,
       getToken: () => keycloak.token,
+      version: __APP_VERSION__,
     });
   }, []);
   useEffect(() => {

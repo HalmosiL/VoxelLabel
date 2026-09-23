@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { _reset, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, pendingEvents, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
+import { _reset, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
 
 const ON: UsageConfig = {
   enabled: true,
@@ -277,5 +277,41 @@ describe("clicks, mouse, keys", () => {
     document.body.removeChild(input);
     expect(describeKey(new KeyboardEvent("keydown", { key: " " }))).toBe("Space");
     expect(describeKey(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true }))).toBe("Alt+ArrowUp");
+  });
+});
+
+describe("versions, devices, request timings, rating cadence", () => {
+  it("stamps the build on every event and the input device on page views", () => {
+    _reset();
+    init({ app: "viewer", configUrl: "c", eventsUrl: "e", getToken: () => undefined, fetchImpl: fakeFetch as typeof fetch, now: () => clock, version: "0.1.0+test" });
+    setConfig(ON);
+    trackPageView("/viewer/x");
+    trackAction("tool.paint");
+    const [view, action] = pendingEvents();
+    expect(view.app_version).toBe("0.1.0+test");
+    expect(action.app_version).toBe("0.1.0+test");
+    expect(["mouse", "touch"]).toContain(view.detail?.device);
+  });
+
+  it("sums request timings per endpoint and sends them on the next flush, skipping its own calls", () => {
+    setConfig({ ...ON, track_perf: true });
+    trackPageView("/viewer/x");
+    notePerf("http://api:8002/data/series/4c6bfb9a-e10c-4000-9695-9952b28d891b/volume", 1500, 200);
+    notePerf("http://api:8002/data/series/aff78f3e-5371-4d8d-b660-426eec9a2b9e/volume", 500, 500);
+    notePerf("http://api:8004/admin/usage/events", 50, 200);
+    notePerf("http://ui/assets/index-abc.js", 50, 200);
+    window.dispatchEvent(new Event("pagehide"));
+    const sent = posted.flatMap((p) => (JSON.parse(String(p.init.body)) as { events: { event_type: string; detail: Record<string, unknown> }[] }).events);
+    const perf = sent.filter((e) => e.event_type === "perf");
+    expect(perf).toHaveLength(1);
+    expect(perf[0].detail).toEqual({ endpoint: "/data/series/:id/volume", count: 2, ms: 2000, max: 1500, slow: 1, failures: 1 });
+  });
+
+  it("asks for a rating on every n-th finished case, and never when it is off", () => {
+    sessionStorage.clear();
+    setConfig({ ...ON, rating_every_n: 2 });
+    expect([ratingDue(), ratingDue(), ratingDue(), ratingDue()]).toEqual([false, true, false, true]);
+    setConfig({ ...ON, rating_every_n: 0 });
+    expect(ratingDue()).toBe(false);
   });
 });

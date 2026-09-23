@@ -17,6 +17,20 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${h}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
+/** Request-scale durations: "240 ms", "1.4 s", then as formatDuration. */
+export function formatMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return "–";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return formatDuration(ms);
+}
+
+/** Compact date + time for narrow table columns: "23 Sep, 14:58". */
+export function formatShortWhen(iso: string | null | undefined): string {
+  if (!iso) return "–";
+  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 export function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "–";
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });

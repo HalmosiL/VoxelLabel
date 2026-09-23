@@ -66,3 +66,19 @@ def test_report_renders_without_pipeline_or_learning_data():
     assert "## Findings\n\n_none_" in md
     assert "## Screens by friction\n\n_none_" in md
     assert "| Friction score (0–100) | – |" in md
+
+
+def test_report_carries_releases_cases_reasons_and_performance():
+    extra = {
+        **USAGE,
+        "releases": [{"app": "viewer", "version": "0.1.0+a", "first_seen": "2026-09-02T10:00:00+00:00", "people": 2, "cases": 5, "active_median_ms": 90_000, "first_input_median_ms": 4_000, "no_response_rate": 0.1, "friction_score": 12}],
+        "complexity": {"cases": 5, "per_object_median_ms": 30_000, "drivers": [{"factor": "objects", "label": "objects drawn", "r": 0.8, "n": 5}]},
+        "ratings": {"count": 4, "mean": 3.2, "distribution": {}},
+        "reject_reasons": {"total": 3, "reasons": [{"reason": "boundary", "count": 3, "share": 1.0}]},
+        "performance": [{"endpoint": "/volume", "calls": 10, "mean_ms": 1200, "max_ms": 3000, "slow_share": 0.3, "failure_rate": 0.0}],
+    }
+    md = render_markdown(SINCE, UNTIL, extra, PIPELINE, FINDINGS, LEARNING)
+    assert "| viewer | 0.1.0+a | 2026-09-02 10:00 | 2 | 5 | 1m 30s | 4s | 10% | 12 |" in md
+    assert "median hands-on time per object 30s. Moves with hands-on time: objects drawn (r = 0.8)." in md
+    assert "Felt difficulty: 3.2 of 5 from 4 answers." in md
+    assert "| boundary | 3 | 100% |" in md and "| /volume | 10 | 1s | 3s | 30% | 0% |" in md

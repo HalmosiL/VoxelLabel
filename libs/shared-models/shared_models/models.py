@@ -789,6 +789,9 @@ class UsageEvent(Base):
     # page_view | page_leave | action | click | mouse_trace | scroll |
     # key | focus | idle | error
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Build of the app that sent it (package version + build stamp, or
+    # the CI commit) -- what makes "did this release help?" answerable.
+    app_version: Mapped[str | None] = mapped_column(String(40))
     # Normalised path -- UUID segments replaced by ":id", no query string.
     route: Mapped[str] = mapped_column(String(255), nullable=False)
     # Action/tool/key name ("tool.paint", "mark_annotated", "Ctrl+z").
@@ -824,6 +827,12 @@ class UsageSettings(Base):
     track_scroll: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     track_keys: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     track_errors: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Request timings the browser measured (per API endpoint, aggregated).
+    track_perf: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    # Ask "how demanding was that case?" after every n-th finished case
+    # (0 = never). One click, skippable -- the only direct measure of
+    # cognitive load; every n-th, not every case, to keep the cost low.
+    rating_every_n: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default="3")
     # How often a moving mouse is sampled into a trace, in milliseconds.
     mouse_sample_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     # Events older than this are purged (mouse traces are bulky).

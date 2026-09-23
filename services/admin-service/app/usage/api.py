@@ -8,8 +8,9 @@ import io
 import json
 import re
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from statistics import mean, median
 from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,7 +18,8 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import UsageEvent, WorkflowCard
+from shared_models.models import Annotation, AnnotationStatus, Case, ImagingStudy, Instance, Series, UsageEvent, WorkflowCard
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.keycloak_admin import list_realm_users
@@ -42,6 +44,11 @@ ALLOWED_DETAIL_KEYS = {
     "study_id", "case_id", "job_id", "series_id", "x", "y", "target", "points", "depth", "viewport", "message", "button",
     # click response signals (see stats._click_signal) and the tutorial-overlay flag
     "responded", "interactive", "pointer", "guide",
+    # page_view: input device; actions: review decision, rejection reason,
+    # a finished case's difficulty rating, tutorial step
+    "device", "decision", "reason", "rating", "task", "step", "steps",
+    # perf: one API endpoint's timings aggregated over a flush interval
+    "endpoint", "count", "ms", "max", "slow", "failures",
 }  # fmt: skip
 # Id-like runs inside a control's label ("Patient 09a1d4c3…", "Case 20931")
 # become "#": they'd split one control into one row per record, and an
@@ -50,7 +57,7 @@ _ID_LIKE = re.compile(r"[0-9A-Fa-f]{6,}|[0-9]{4,}")
 # A clock skewed this far ahead is still accepted, stamped "now".
 MAX_CLOCK_SKEW = timedelta(minutes=5)
 
-EventType = Literal["page_view", "page_leave", "action", "click", "mouse_trace", "scroll", "key", "focus", "idle", "error"]
+EventType = Literal["page_view", "page_leave", "action", "click", "mouse_trace", "scroll", "key", "focus", "idle", "error", "perf"]
 
 
 class EventIn(BaseModel):
@@ -62,6 +69,7 @@ class EventIn(BaseModel):
     detail: dict | None = None
     duration_ms: int | None = Field(default=None, ge=0, le=7 * 24 * 3600 * 1000)
     occurred_at: datetime
+    app_version: str | None = Field(default=None, max_length=40)
 
 
 class EventsBody(BaseModel):
@@ -80,6 +88,8 @@ class SettingsPatch(BaseModel):
     mouse_sample_ms: int | None = Field(default=None, ge=20, le=2000)
     retention_days: int | None = Field(default=None, ge=1, le=3650)
     exclude_admins: bool | None = None
+    track_perf: bool | None = None
+    rating_every_n: int | None = Field(default=None, ge=0, le=50)
 
 
 class UserSwitch(BaseModel):
@@ -113,7 +123,7 @@ def _clean_detail(detail: dict | None) -> dict | None:
         elif key == "viewport":
             if isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
                 cleaned[key] = [int(value[0]), int(value[1])]
-        elif key == "target" and isinstance(value, str):
+        elif key in ("target", "endpoint") and isinstance(value, str):
             cleaned[key] = _ID_LIKE.sub("#", value)[:MAX_TEXT]
         elif isinstance(value, str):
             cleaned[key] = value[:MAX_TEXT]
@@ -128,6 +138,7 @@ def _serialize_settings(row) -> dict:
         **{flag: getattr(row, flag) for flag in CATEGORY_FLAGS},
         "mouse_sample_ms": row.mouse_sample_ms,
         "retention_days": row.retention_days,
+        "rating_every_n": row.rating_every_n,
         "disabled_user_ids": list(row.disabled_user_ids or []),
         "excluded_user_ids": list(row.excluded_user_ids or []),
         "exclude_admins": bool(row.exclude_admins),
@@ -147,6 +158,7 @@ def _serialize_event(e: UsageEvent) -> dict:
         "detail": e.detail,
         "duration_ms": e.duration_ms,
         "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+        "app_version": e.app_version,
     }
 
 
@@ -162,6 +174,7 @@ def _rows_as_dicts(rows: list[UsageEvent]) -> list[dict]:
             "detail": e.detail,
             "duration_ms": e.duration_ms,
             "occurred_at": e.occurred_at,
+            "app_version": e.app_version,
         }
         for e in rows
     ]
@@ -261,6 +274,7 @@ def ingest_events(body: EventsBody, db: Session = Depends(get_db), user: Current
                     detail=_clean_detail(item.detail),
                     duration_ms=item.duration_ms,
                     occurred_at=occurred_at,
+                    app_version=item.app_version,
                 )
             )
             accepted += 1
@@ -313,23 +327,113 @@ def set_user_switch(
     return _serialize_settings(row)
 
 
-def _effort_by_type(db: Session, entries: list[dict]) -> dict:
-    """case_effort() entries split by the kind of job they were for --
-    annotating or reviewing -- via the workflow card the viewer page was
-    opened from."""
+def _card_types(db: Session, entries: list[dict]) -> dict[str, str]:
+    """job_id -> "annotation" / "review", for the jobs the viewer was opened from."""
     job_ids = set()
     for e in entries:
         try:
             job_ids.add(uuid.UUID(e["job_id"]))
         except ValueError:
             continue
-    types = {str(c.id): c.type.value for c in db.query(WorkflowCard.id, WorkflowCard.type).filter(WorkflowCard.id.in_(job_ids)).all()} if job_ids else {}
+    if not job_ids:
+        return {}
+    return {str(c.id): c.type.value for c in db.query(WorkflowCard.id, WorkflowCard.type).filter(WorkflowCard.id.in_(job_ids)).all()}
+
+
+def _effort_by_type(entries: list[dict], card_types: dict[str, str]) -> dict:
+    """case_effort() entries split by the kind of job they were for --
+    annotating or reviewing."""
     split: dict[str, list[dict]] = {"annotation": [], "review": []}
     for e in entries:
-        kind = types.get(e["job_id"])
+        kind = card_types.get(e["job_id"])
         if kind in split:
             split[kind].append(e)
     return {kind: stats.effort_summary(rows) for kind, rows in split.items()} | {"all": stats.effort_summary(entries)}
+
+
+MAX_CASE_ROWS = 300
+
+
+def _case_table(db: Session, entries: list[dict], rating_rows: list[dict], card_types: dict[str, str], people: dict[str, dict]) -> tuple[list[dict], dict]:
+    """One row per case worked in the viewer in the window, with what
+    made it hard: slices in its largest series, objects in its latest
+    annotation, times it was sent back, and the felt difficulty people
+    reported -- next to the hands-on time it took. Plus a summary of how
+    strongly each of those moves with hands-on time."""
+    case_ids: set[uuid.UUID] = set()
+    for e in entries:
+        try:
+            case_ids.add(uuid.UUID(e["case_id"]))
+        except ValueError:
+            continue
+    if not case_ids:
+        return [], {"cases": 0, "per_object_median_ms": None, "drivers": []}
+    titles = {str(c.id): c.title for c in db.query(Case.id, Case.title).filter(Case.id.in_(case_ids)).all()}
+    series_rows = (
+        db.query(ImagingStudy.case_id, Series.id, func.count(Instance.id))
+        .join(Series, Series.imaging_study_id == ImagingStudy.id)
+        .outerjoin(Instance, Instance.series_id == Series.id)
+        .filter(ImagingStudy.case_id.in_(case_ids))
+        .group_by(ImagingStudy.case_id, Series.id)
+        .all()
+    )
+    slices: dict[str, int] = {}
+    case_of_series: dict[uuid.UUID, str] = {}
+    for case_id, series_id, n in series_rows:
+        slices[str(case_id)] = max(slices.get(str(case_id), 0), int(n))
+        case_of_series[series_id] = str(case_id)
+    objects: dict[str, int] = {}
+    rejections: Counter = Counter()
+    if case_of_series:
+        for target_id, payload, status in (
+            db.query(Annotation.target_id, Annotation.payload, Annotation.status)
+            .filter(Annotation.target_type == "series", Annotation.target_id.in_(case_of_series.keys()))
+            .order_by(Annotation.created_at)
+            .all()
+        ):
+            cid = case_of_series.get(target_id)
+            if cid is None:
+                continue
+            objects[cid] = len((payload or {}).get("objects") or [])  # the latest version wins
+            if status == AnnotationStatus.REJECTED:
+                rejections[cid] += 1
+    felt: dict[tuple, list[int]] = defaultdict(list)
+    for r in rating_rows:
+        felt[(str(r.get("job_id")), str(r.get("case_id")))].append(r["rating"])
+
+    rows = []
+    for e in entries:
+        n_objects = objects.get(e["case_id"])
+        ratings_here = felt.get((e["job_id"], e["case_id"]), [])
+        rows.append(
+            {
+                "case_id": e["case_id"],
+                "case_title": titles.get(e["case_id"]),
+                "job_id": e["job_id"],
+                "job_type": card_types.get(e["job_id"]),
+                "people": [people.get(uid, {}).get("username", uid) for uid in e["user_ids"]],
+                "sittings": e["sittings"],
+                "active_ms": e["active_ms"],
+                "slices": slices.get(e["case_id"]),
+                "objects": n_objects,
+                "per_object_ms": int(e["active_ms"] / n_objects) if n_objects and e["active_ms"] else None,
+                "undos": e["undos"],
+                "first_input_ms": int(median(e["first_input_ms"])) if e["first_input_ms"] else None,
+                "rating": round(mean(ratings_here), 1) if ratings_here else None,
+                "sent_back": rejections.get(e["case_id"], 0),
+            }
+        )
+    rows.sort(key=lambda r: (-r["active_ms"], r["case_id"]))
+    worked = [r for r in rows if r["active_ms"] > 0]
+    active = [r["active_ms"] for r in worked]
+    drivers = []
+    for factor, label in (("objects", "objects drawn"), ("slices", "slices in the series"), ("rating", "felt difficulty"), ("sent_back", "times sent back"), ("undos", "undos")):
+        r = stats.correlation([row[factor] for row in worked], active)
+        if r is not None:
+            drivers.append({"factor": factor, "label": label, "r": r, "n": sum(1 for row in worked if row[factor] is not None)})
+    drivers.sort(key=lambda d: -abs(d["r"]))
+    per_object = [r["per_object_ms"] for r in worked if r["per_object_ms"]]
+    return rows[:MAX_CASE_ROWS], {"cases": len(worked), "per_object_median_ms": int(median(per_object)) if per_object else None, "drivers": drivers}
 
 
 def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None, people: dict | None = None) -> dict:
@@ -342,7 +446,12 @@ def build_usage_summary(db: Session, window_since: datetime, window_until: datet
     not_counted = _not_counted(settings, people)
     events = _load(db, window_since, window_until, user_id, not_counted)
     summary = stats.summarize(events)
-    summary["effort"] = _effort_by_type(db, summary.pop("_effort"))
+    entries, rating_rows = summary.pop("_effort"), summary.pop("_ratings")
+    card_types = _card_types(db, entries)
+    summary["effort"] = _effort_by_type(entries, card_types)
+    summary["cases"], summary["complexity"] = _case_table(db, entries, rating_rows, card_types, people)
+    for row in summary["releases"]:
+        row["first_seen"], row["last_seen"] = _iso(row["first_seen"]), _iso(row["last_seen"])
     for row in summary["users"]:
         row.update({k: v for k, v in people.get(row["user_id"], {"username": row["user_id"], "email": None}).items() if k in ("username", "email")})
         row["last_seen_at"] = _iso(row["last_seen_at"])
@@ -494,7 +603,7 @@ def read_report(
     return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
 
-EXPORT_COLUMNS = ["occurred_at", "user_id", "username", "session_id", "app", "event_type", "route", "name", "duration_ms", "detail"]
+EXPORT_COLUMNS = ["occurred_at", "user_id", "username", "session_id", "app", "event_type", "route", "name", "duration_ms", "detail", "app_version"]
 
 
 def _safe_cell(value):
@@ -538,6 +647,7 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
                 e.name or "",
                 e.duration_ms if e.duration_ms is not None else "",
                 json.dumps(e.detail, separators=(",", ":")) if e.detail else "",
+                e.app_version or "",
             ]]
         )
         yield buffer.getvalue()

@@ -201,3 +201,25 @@ def test_friction_score_is_view_weighted():
     u = usage(friction={"by_screen": [screen("/a", views=30) | {"score": 10}, screen("/b", views=10) | {"score": 50}]})
     assert f.friction_score(u) == 20  # (10*30 + 50*10) / 40
     assert f.friction_score(usage()) is None
+
+
+def test_release_case_performance_and_guide_rules():
+    releases = [
+        {"app": "viewer", "version": "0.1.0+a", "cases": 6, "active_median_ms": 100_000},
+        {"app": "viewer", "version": "0.1.0+b", "cases": 6, "active_median_ms": 70_000},
+    ]
+    u = usage(
+        releases=releases,
+        ratings={"count": 6, "mean": 3.8, "distribution": {}},
+        complexity={"cases": 10, "per_object_median_ms": 1000, "drivers": [{"factor": "objects", "label": "objects drawn", "r": 0.82, "n": 10}, {"factor": "slices", "label": "slices", "r": 0.2, "n": 10}]},
+        reject_reasons={"total": 6, "reasons": [{"reason": "boundary", "count": 4, "share": 0.667}]},
+        performance=[{"endpoint": "/volume", "calls": 12, "mean_ms": 2400, "failure_rate": 0.1}, {"endpoint": "/fast", "calls": 50, "mean_ms": 100, "failure_rate": 0.0}],
+        guides={"tours": [{"app": "admin-ui", "route": "/studies", "opened": 6, "finished": 1, "skipped": 5, "finish_rate": 0.167, "skipped_at_median": 1}], "finished_user_ids": []},
+    )
+    result = {x["id"]: x for x in f.findings(u, None, pipeline(), None, None)}
+    assert result["release.viewer"]["severity"] == "good" and "fell 30%" in result["release.viewer"]["title"]
+    assert result["cases.demanding"]["tab"] == "cases"
+    assert "cases.driver.objects" in result and "cases.driver.slices" not in result
+    assert "boundary (67%)" in result["review.reason"]["title"]
+    assert result["perf.slow"]["title"] == "1 request is slow enough to wait on" and "perf.failing" in result
+    assert "typical exit is step 2" in result["guide.admin-ui./studies"]["detail"]

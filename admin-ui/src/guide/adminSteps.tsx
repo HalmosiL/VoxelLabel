@@ -463,6 +463,12 @@ export const USAGE_STEPS: GuideStep[] = [
     placement: "bottom",
   },
   {
+    target: "usage-tab-cases",
+    title: "Cases",
+    body: "Which cases are hard, and why: every case worked with its slices, objects, rework and how demanding people said it felt -- and which of those hands-on time actually follows.",
+    placement: "bottom",
+  },
+  {
     target: "usage-tab-people",
     title: "People",
     body: "Who, specifically: one row per person, and Replay to watch a sitting play back as it happened -- the pointer, every click, every key -- plus each person's own learning curve week by week, never compared to anyone else's pace.",

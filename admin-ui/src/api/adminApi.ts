@@ -423,8 +423,11 @@ export interface UsageSettings {
   track_scroll: boolean;
   track_keys: boolean;
   track_errors: boolean;
+  track_perf: boolean;
   mouse_sample_ms: number;
   retention_days: number;
+  /** Viewer asks "how demanding was that case?" after every n-th finished case; 0 = never. */
+  rating_every_n: number;
   disabled_user_ids: string[];
   /** Recorded, but left out of every figure (test/demo accounts). */
   excluded_user_ids: string[];
@@ -447,6 +450,71 @@ export interface UsagePerson {
   counted: boolean;
   /** Their own "count in analysis" switch, whatever the admin rule says. */
   counted_switch: boolean;
+}
+
+/** The headline measures for one build of one app (see stats.releases). */
+export interface UsageRelease {
+  app: "admin-ui" | "viewer";
+  version: string;
+  first_seen: string;
+  last_seen: string;
+  people: number;
+  sessions: number;
+  cases: number;
+  active_median_ms: number | null;
+  first_input_median_ms: number | null;
+  no_response_rate: number | null;
+  friction_score: number | null;
+  errors: number;
+}
+
+/** One case worked in the viewer, with what made it hard. */
+export interface UsageCaseRow {
+  case_id: string;
+  case_title: string | null;
+  job_id: string;
+  job_type: "annotation" | "review" | null;
+  people: string[];
+  sittings: number;
+  active_ms: number;
+  slices: number | null;
+  objects: number | null;
+  per_object_ms: number | null;
+  undos: number;
+  first_input_ms: number | null;
+  rating: number | null;
+  sent_back: number;
+}
+
+export interface UsageDriver {
+  factor: "objects" | "slices" | "rating" | "sent_back" | "undos";
+  label: string;
+  r: number;
+  n: number;
+}
+
+export interface UsagePerfRow {
+  app: "admin-ui" | "viewer";
+  endpoint: string;
+  calls: number;
+  total_ms: number;
+  mean_ms: number;
+  max_ms: number;
+  slow: number;
+  slow_share: number;
+  failures: number;
+  failure_rate: number;
+}
+
+export interface UsageTour {
+  app: "admin-ui" | "viewer";
+  route: string;
+  opened: number;
+  finished: number;
+  skipped: number;
+  finish_rate: number | null;
+  /** 0-based step where people typically left. */
+  skipped_at_median: number | null;
 }
 
 /** What one case costs in the viewer, medians over the cases worked in the window. */
@@ -598,11 +666,20 @@ export interface UsageSummary {
   users: UsageUser[];
   recording: { enabled: boolean; disabled_user_ids: string[] };
   effort: { annotation: UsageEffort; review: UsageEffort; all: UsageEffort };
+  effort_by_device: Record<string, UsageEffort>;
+  cases: UsageCaseRow[];
+  complexity: { cases: number; per_object_median_ms: number | null; drivers: UsageDriver[] };
+  ratings: { count: number; mean: number | null; distribution: Record<string, number> };
+  reject_reasons: { total: number; reasons: { reason: string; count: number; share: number }[] };
+  tools: { tools: { tool: string; time_ms: number; share: number; selections: number }[]; case_visits: number; switches_per_case_median: number | null };
+  performance: UsagePerfRow[];
+  guides: { tours: UsageTour[]; finished_user_ids: string[] };
+  releases: UsageRelease[];
   /** What the figures are built from, and who is left out. */
   basis: { events: number; people: number; sessions: number; not_counted: number; admins_left_out: boolean };
 }
 
-export type UsageTab = "overview" | "behaviour" | "friction" | "people" | "settings";
+export type UsageTab = "overview" | "behaviour" | "friction" | "cases" | "people" | "settings";
 export type UsageFindingSeverity = "critical" | "warn" | "info" | "good";
 
 /** A plain-language conclusion the backend drew from the data -- see

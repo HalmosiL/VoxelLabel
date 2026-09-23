@@ -46,6 +46,7 @@ services:
         VITE_ADMIN_UI_URL: ${PUBLIC_ADMIN_UI_URL:-http://localhost:5173}
         VITE_ANNOTATOR_API: ${PUBLIC_ANNOTATOR_API:-http://localhost:8010}
         VITE_BASE_PATH: ${PUBLIC_ANNOTATOR_BASE_PATH:-/}
+        APP_VERSION: ${APP_VERSION:-}
     restart: unless-stopped
     ports:
       - "5174:80"

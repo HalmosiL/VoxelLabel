@@ -19,8 +19,9 @@ CATEGORY_OF_EVENT = {
     "scroll": "track_scroll",
     "key": "track_keys",
     "error": "track_errors",
+    "perf": "track_perf",
 }
-CATEGORY_FLAGS = ("track_pages", "track_actions", "track_clicks", "track_mouse", "track_scroll", "track_keys", "track_errors")
+CATEGORY_FLAGS = ("track_pages", "track_actions", "track_clicks", "track_mouse", "track_scroll", "track_keys", "track_errors", "track_perf")
 
 PURGE_INTERVAL_SECONDS = 3600
 _last_purge_at = 0.0
@@ -47,6 +48,8 @@ def effective_config(settings: UsageSettings, user_id: str) -> dict:
         "enabled": recording,
         **{flag: recording and bool(getattr(settings, flag)) for flag in CATEGORY_FLAGS},
         "mouse_sample_ms": settings.mouse_sample_ms,
+        # 0 while not recording: nobody is asked anything then either.
+        "rating_every_n": settings.rating_every_n if recording else 0,
     }
 
 

@@ -334,6 +334,9 @@ export interface SegObject {
   // absent/undefined is treated the same as "pending" -- an object an
   // annotator created is never implicitly accepted or rejected.
   review_status?: "pending" | "accepted" | "rejected";
+  // Why the reviewer rejected it, picked from REJECT_REASONS (ViewerPage)
+  // -- the categories the Usage page counts.
+  reject_reason?: string;
   // The label's form filled for this object (field name -> true for a
   // tick, the chosen option, or the scale's number) -- see
   // components/ObjectForm.tsx.

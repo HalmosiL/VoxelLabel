@@ -11,6 +11,7 @@ const CATEGORIES: { key: keyof UsageSettings; label: string; hint: string }[] = 
   { key: "track_scroll", label: "Scrolling", hint: "how far down a page people get; wheel use in the viewer" },
   { key: "track_keys", label: "Keyboard shortcuts", hint: "key names only, never anything typed into a field" },
   { key: "track_errors", label: "Errors", hint: "JavaScript errors, with the screen they happened on" },
+  { key: "track_perf", label: "Request timings", hint: "how long each API call took, summed per endpoint -- which ones people wait on" },
 ];
 
 export default function SettingsTab({
@@ -56,8 +57,10 @@ function RecordingCard({ settings, onSaved, onError }: { settings: UsageSettings
         track_scroll: form.track_scroll,
         track_keys: form.track_keys,
         track_errors: form.track_errors,
+        track_perf: form.track_perf,
         mouse_sample_ms: form.mouse_sample_ms,
         retention_days: form.retention_days,
+        rating_every_n: form.rating_every_n,
       });
       onSaved(next);
       setSaved(true);
@@ -112,6 +115,21 @@ function RecordingCard({ settings, onSaved, onError }: { settings: UsageSettings
             Mouse sample every (ms)
           </label>
           <input id="usage-sample" type="number" className="input w-32" min={20} max={2000} value={form.mouse_sample_ms} onChange={(e) => setForm({ ...form, mouse_sample_ms: Number(e.target.value) })} />
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="usage-rating" title="After finishing a case the viewer asks, in one optional click, how demanding it was. 0 = never.">
+            Ask &quot;how demanding?&quot; every n-th case
+          </label>
+          <input
+            id="usage-rating"
+            type="number"
+            className="input w-32"
+            min={0}
+            max={50}
+            value={form.rating_every_n}
+            onChange={(e) => setForm({ ...form, rating_every_n: Number(e.target.value) })}
+            data-testid="usage-rating-every"
+          />
         </div>
         <div className="field">
           <label className="label" htmlFor="usage-retention">

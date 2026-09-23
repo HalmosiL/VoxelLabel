@@ -1,12 +1,13 @@
 import { PipelineHealthSummary, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
-import { CardHeader, DownloadCsvButton, formatDuration, formatWhen } from "./shared";
+import { CardHeader, DownloadCsvButton, formatDuration, formatMs, formatWhen } from "./shared";
 
 export default function FrictionTab({ summary, pipelineHealth, personName }: { summary: UsageSummary; pipelineHealth: PipelineHealthSummary | null; personName: string | null }) {
   return (
     <div className="space-y-5">
       <ScreensByFrictionCard summary={summary} />
+      <PerformanceCard summary={summary} />
       {pipelineHealth && <BottlenecksCard summary={pipelineHealth} personName={personName} />}
     </div>
   );
@@ -108,6 +109,76 @@ function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
                   <td className={`text-right tabular-nums ${r.errors ? "font-semibold text-red-700" : ""}`}>{r.errors}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PerformanceCard({ summary }: { summary: UsageSummary }) {
+  const rows = summary.performance;
+  return (
+    <div className="card" data-guide="usage-performance" data-testid="usage-performance">
+      <CardHeader
+        title="Requests people wait on"
+        hint="API calls as the browser timed them, per endpoint, the most total waiting first. Red: a mean over 1.5 s, or more than 5% failing. Waiting on the system looks like work in the cycle time -- this separates the two."
+        actions={
+          <DownloadCsvButton
+            filename={exportFilename("requests", summary.since, summary.until, "csv")}
+            rows={rows}
+            columns={[
+              { header: "App", value: (r) => r.app },
+              { header: "Endpoint", value: (r) => r.endpoint },
+              { header: "Calls", value: (r) => r.calls },
+              { header: "Total wait (ms)", value: (r) => r.total_ms },
+              { header: "Mean (ms)", value: (r) => r.mean_ms },
+              { header: "Worst (ms)", value: (r) => r.max_ms },
+              { header: "Slower than 1 s", value: (r) => r.slow_share },
+              { header: "Failed", value: (r) => r.failure_rate },
+            ]}
+            testId="usage-export-requests"
+          />
+        }
+      />
+      {rows.length === 0 ? (
+        <EmptyState message="No request timings in this period yet (switch: Settings → Request timings)." />
+      ) : (
+        <div className="table-wrap">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th>Endpoint</th>
+                <th>App</th>
+                <th className="text-right">Calls</th>
+                <th className="text-right" title="All the time spent waiting on it, together">
+                  Total wait
+                </th>
+                <th className="text-right">Mean</th>
+                <th className="text-right">Worst</th>
+                <th className="text-right">Over 1 s</th>
+                <th className="text-right">Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const bad = r.mean_ms >= 1500 || r.failure_rate >= 0.05;
+                return (
+                  <tr key={`${r.app}-${r.endpoint}`} className={bad ? "bg-red-50" : ""} data-testid="usage-perf-row">
+                    <td className="max-w-[22rem] truncate font-mono text-xs" title={r.endpoint}>
+                      {r.endpoint}
+                    </td>
+                    <td className="text-xs text-gray-500">{r.app}</td>
+                    <td className="text-right tabular-nums">{r.calls}</td>
+                    <td className="text-right tabular-nums">{formatMs(r.total_ms)}</td>
+                    <td className={`text-right tabular-nums ${r.mean_ms >= 1500 ? "font-semibold text-red-700" : ""}`}>{formatMs(r.mean_ms)}</td>
+                    <td className="text-right tabular-nums">{formatMs(r.max_ms)}</td>
+                    <td className="text-right tabular-nums">{pct(r.slow_share)}</td>
+                    <td className={`text-right tabular-nums ${r.failure_rate >= 0.05 ? "font-semibold text-red-700" : ""}`}>{pct(r.failure_rate)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
