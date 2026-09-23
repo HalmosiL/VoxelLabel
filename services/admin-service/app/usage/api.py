@@ -18,7 +18,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import Annotation, AnnotationStatus, Case, ImagingStudy, Instance, Series, UsageEvent, WorkflowCard
+from shared_models.models import Annotation, AnnotationStatus, Case, ImagingStudy, Instance, Series, UsageEvent, UsageSnapshot, WorkflowCard
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,7 @@ from app.keycloak_admin import list_realm_users
 from app.pipeline_health.api import build_learning_curve
 from app.pipeline_health.api import build_summary as build_pipeline_summary
 
-from . import stats
+from . import snapshots, stats
 from .findings import findings as compute_findings
 from .findings import friction_score
 from .report import render_markdown
@@ -75,6 +75,25 @@ class EventIn(BaseModel):
     duration_ms: int | None = Field(default=None, ge=0, le=7 * 24 * 3600 * 1000)
     occurred_at: datetime
     app_version: str | None = Field(default=None, max_length=40)
+
+
+class SnapshotIn(BaseModel):
+    """One screen snapshot from the tracker (captureSnapshot): its HTML
+    (plain or gzip+base64) and, the first time a build's stylesheets are
+    seen in a session, those too -- keyed by css_hash either way."""
+
+    session_id: str = Field(max_length=64)
+    app: Literal["admin-ui", "viewer"]
+    app_version: str | None = Field(default=None, max_length=40)
+    route: str = Field(max_length=255)
+    job_id: str | None = Field(default=None, max_length=64)
+    viewport: list[int] = Field(min_length=2, max_length=2)
+    occurred_at: datetime
+    html: str | None = None
+    html_gz: str | None = Field(default=None, max_length=4_000_000)
+    css_hash: str | None = Field(default=None, max_length=64)
+    css: str | None = None
+    css_gz: str | None = Field(default=None, max_length=3_000_000)
 
 
 class EventsBody(BaseModel):
@@ -325,7 +344,60 @@ def ingest_events(body: EventsBody, db: Session = Depends(get_db), user: Current
     return {"accepted": accepted}
 
 
+@router.post("/snapshots")
+def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Stores one screen snapshot under the caller's own subject -- only
+    while their clicks are being recorded (the snapshot is the picture
+    behind those clicks). Cleaned again here; see snapshots.py."""
+    settings = get_settings(db)
+    if not allows(effective_config(settings, user.subject), "click"):
+        return {"stored": False}
+    try:
+        html = snapshots.decode(body.html, body.html_gz, snapshots.MAX_HTML_BYTES)
+        css = snapshots.decode(body.css, body.css_gz, snapshots.MAX_CSS_BYTES)
+    except snapshots.SnapshotTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if not html:
+        raise HTTPException(status_code=422, detail="html is required")
+    if css and body.css_hash:
+        snapshots.store_style(db, body.css_hash, css)
+    occurred_at = body.occurred_at if body.occurred_at.tzinfo else body.occurred_at.replace(tzinfo=timezone.utc)
+    db.add(
+        UsageSnapshot(
+            id=uuid.uuid4(),
+            user_id=user.subject,
+            session_id=body.session_id,
+            app=body.app,
+            app_version=body.app_version,
+            route=body.route,
+            job_id=body.job_id,
+            viewport_w=max(1, min(body.viewport[0], 20_000)),
+            viewport_h=max(1, min(body.viewport[1], 20_000)),
+            html_gz=snapshots.gz(snapshots.clean_html(html)),
+            css_hash=body.css_hash,
+            occurred_at=min(occurred_at, datetime.now(timezone.utc) + MAX_CLOCK_SKEW),
+        )
+    )
+    db.flush()
+    snapshots.trim(db, body.app, body.route)
+    db.commit()
+    return {"stored": True}
+
+
 # ---------------------------------------------------------------- admin only
+
+
+@router.get("/snapshots/{snapshot_id}")
+def read_snapshot(snapshot_id: uuid.UUID, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
+    """One snapshot as a self-contained HTML document, for a sandboxed
+    iframe (scripts never run in it)."""
+    _require_global_admin(user)
+    snap = db.get(UsageSnapshot, snapshot_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return {**snapshots.meta(snap), "document": snapshots.as_document(db, snap)}
 
 
 @router.get("/settings")
@@ -758,12 +830,14 @@ def read_session(session_id: str, db: Session = Depends(get_db), user: CurrentUs
         job_id = (e["detail"] or {}).get("job_id") if e["event_type"] == "page_view" else None
         if job_id in job_types:
             e["detail"] = {**e["detail"], "job_type": job_types[job_id]}
+    snaps = db.query(UsageSnapshot).filter(UsageSnapshot.session_id == session_id).order_by(UsageSnapshot.occurred_at).all()
     return {
         "session_id": session_id,
         "user_id": rows[0].user_id,
         "username": names.get(rows[0].user_id, {}).get("username", rows[0].user_id),
         "app": rows[0].app,
         "events": events,
+        "snapshots": [snapshots.meta(snap) for snap in snaps],
     }
 
 
@@ -812,7 +886,8 @@ def read_heatmap(
     events = _rows_as_dicts(query.order_by(UsageEvent.occurred_at).all())
     points = stats.click_points(events, route)
     layouts = stats.screen_layouts(events, route)
-    job_types = _job_types(db, {p["job_id"] for p in points} | {lay["job_id"] for lay in layouts})
+    snaps = db.query(UsageSnapshot).filter(UsageSnapshot.route == route).order_by(UsageSnapshot.occurred_at.desc()).limit(snapshots.KEEP_PER_SCREEN).all()
+    job_types = _job_types(db, {p["job_id"] for p in points} | {lay["job_id"] for lay in layouts} | {snap.job_id for snap in snaps})
     for p in points:
         p["mode"] = job_types.get(p.pop("job_id"), "other")
     for lay in layouts:
@@ -821,6 +896,7 @@ def read_heatmap(
     if mode:
         points = [p for p in points if p["mode"] == mode]
     layout = next((lay for lay in layouts if not mode or lay["mode"] == mode), None)
+    snapshot = next((snap for snap in snaps if not mode or job_types.get(snap.job_id, "other") == mode), None)
     if layout:
         layout = {**layout, "occurred_at": _iso(layout["occurred_at"])}
     # Who clicked, most clicks first -- the heatmap's legend and colour key.
@@ -836,4 +912,5 @@ def read_heatmap(
         "users": users,
         "modes": {m: modes.get(m, 0) for m in ("annotation", "review", "other")},
         "layout": layout,
+        "snapshot": {**snapshots.meta(snapshot), "mode": job_types.get(snapshot.job_id, "other")} if snapshot else None,
     }

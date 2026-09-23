@@ -718,6 +718,18 @@ async def usage_events(body: UsageEventsBody, user: CurrentUser = Depends(get_cu
     return resp.json()
 
 
+@app.post("/usage/snapshots")
+async def usage_snapshot(body: dict, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Forwards one screen snapshot (see the tracker's captureSnapshot)
+    verbatim; admin-service cleans it, stamps the caller and applies the
+    switches. A snapshot can be a few hundred KB, hence the timeout."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(f"{ADMIN_SERVICE_URL}/admin/usage/snapshots", json=body, headers=_auth_headers(user))
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
 class SubmitAnnotationReviewBody(BaseModel):
     decision: str
     comment: str | None = None

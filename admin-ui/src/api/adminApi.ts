@@ -734,6 +734,21 @@ export interface UsageSessionDetail {
   username: string;
   app: "admin-ui" | "viewer";
   events: UsageEventRow[];
+  /** Screen snapshots taken during the sitting, oldest first. */
+  snapshots: UsageSnapshotMeta[];
+}
+
+const snapshotDocuments = new Map<string, Promise<string>>();
+
+/** One snapshot as a self-contained HTML document for a sandboxed iframe (cached per id). */
+export function getUsageSnapshotDocument(snapshotId: string): Promise<string> {
+  let pending = snapshotDocuments.get(snapshotId);
+  if (!pending) {
+    pending = apiFetch<{ document: string }>(base, `/admin/usage/snapshots/${snapshotId}`).then((r) => r.document);
+    pending.catch(() => snapshotDocuments.delete(snapshotId));
+    snapshotDocuments.set(snapshotId, pending);
+  }
+  return pending;
 }
 
 /** A screen as recorded boxes: [x, y, w, h, kind, label?, background?] in viewport px. */
@@ -743,6 +758,18 @@ export interface UsageLayout {
   bg?: string;
   occurred_at?: string;
   app_version?: string | null;
+  mode?: UsageJobMode;
+}
+
+/** A recorded picture of a screen (its HTML without images), see admin-service usage/snapshots.py. */
+export interface UsageSnapshotMeta {
+  id: string;
+  route: string;
+  app: "admin-ui" | "viewer";
+  app_version: string | null;
+  job_id: string | null;
+  viewport: [number, number];
+  occurred_at: string | null;
   mode?: UsageJobMode;
 }
 
@@ -757,6 +784,8 @@ export interface UsageHeatmap {
   modes: Record<UsageJobMode, number>;
   /** The screen's most recent recorded layout (in the chosen kind of job), to draw behind the clicks. */
   layout: UsageLayout | null;
+  /** The screen's most recent snapshot (in the chosen kind of job) -- preferred over the layout. */
+  snapshot: UsageSnapshotMeta | null;
   /** Who clicked, most clicks first -- the legend's order and colour key. */
   users: { user_id: string; username: string; clicks: number }[];
 }

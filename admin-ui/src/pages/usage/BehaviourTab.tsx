@@ -4,6 +4,7 @@ import { UsageHeatmap, UsageJobMode, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
 import LayoutBackdrop from "./LayoutBackdrop";
+import ScreenSnapshot from "./ScreenSnapshot";
 import { ACCENT, BarList, CardHeader, DownloadCsvButton, formatDuration, formatShortWhen } from "./shared";
 
 export default function BehaviourTab({
@@ -302,9 +303,9 @@ const MODE_LABEL: Record<UsageJobMode, string> = { annotation: "Annotation job",
 
 /** One click mark: a circle in an annotation job, a square in a review
  * job, a small circle elsewhere; hollow when it got no response. */
-function ClickMark({ p, color, title }: { p: UsageHeatmap["points"][number]; color: string; title: string }) {
+function ClickMark({ p, color, title, height = 90 }: { p: UsageHeatmap["points"][number]; color: string; title: string; height?: number }) {
   const cx = p.x * 160;
-  const cy = p.y * 90;
+  const cy = p.y * height;
   const common = { fill: p.dead ? "none" : color, fillOpacity: 0.55, stroke: p.dead ? color : "#ffffff", strokeWidth: p.dead ? 0.6 : 0.25, "data-testid": "usage-heatmap-dot", "data-dead": p.dead ? "" : undefined, "data-mode": p.mode } as const;
   if (p.mode === "review") {
     const r = p.dead ? 2 : 1.7;
@@ -349,6 +350,12 @@ function HeatmapCard({
   const modes = heatmap?.modes ?? { annotation: 0, review: 0, other: 0 };
   const inJobs = modes.annotation + modes.review > 0;
   const layout = heatmap?.layout ?? null;
+  const snapshot = heatmap?.snapshot ?? null;
+  const marks = (h: number) =>
+    points.map((p, i) => {
+      const color = single ? ACCENT : (colorOf.get(p.user_id) ?? OTHERS_COLOR);
+      return <ClickMark key={i} p={p} height={h} color={color} title={`${nameOf.get(p.user_id) ?? p.user_id} · ${MODE_LABEL[p.mode]}: ${p.target ?? "click"}${p.dead ? " -- no response" : ""}`} />;
+    });
 
   function toggle(key: string) {
     setHidden((h) => {
@@ -399,7 +406,7 @@ function HeatmapCard({
                 })}
               </div>
             )}
-            {layout && (
+            {(layout || snapshot) && (
               <label className="flex items-center gap-1.5 text-xs text-gray-600">
                 <input type="checkbox" checked={showScreen} onChange={(e) => setShowScreen(e.target.checked)} data-testid="usage-heatmap-show-screen" />
                 show the screen behind
@@ -418,22 +425,27 @@ function HeatmapCard({
               ))}
             </ul>
           )}
-          <svg viewBox="0 0 160 90" className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`${heatmap.points.length} clicks on ${heatmap.route} by ${users.length} ${users.length === 1 ? "person" : "people"}`} data-testid="usage-heatmap-svg">
-            {layout && showScreen && <LayoutBackdrop layout={layout} />}
-            {points.map((p, i) => {
-              const color = single ? ACCENT : (colorOf.get(p.user_id) ?? OTHERS_COLOR);
-              return <ClickMark key={i} p={p} color={color} title={`${nameOf.get(p.user_id) ?? p.user_id} · ${MODE_LABEL[p.mode]}: ${p.target ?? "click"}${p.dead ? " -- no response" : ""}`} />;
-            })}
-          </svg>
+          {snapshot && showScreen ? (
+            <ScreenSnapshot snapshot={snapshot}>
+              <svg viewBox={`0 0 160 ${(160 * snapshot.viewport[1]) / snapshot.viewport[0]}`} className="h-full w-full" role="img" aria-label={`${heatmap.points.length} clicks on ${heatmap.route} by ${users.length} ${users.length === 1 ? "person" : "people"}`} data-testid="usage-heatmap-svg">
+                {marks((160 * snapshot.viewport[1]) / snapshot.viewport[0])}
+              </svg>
+            </ScreenSnapshot>
+          ) : (
+            <svg viewBox="0 0 160 90" className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`${heatmap.points.length} clicks on ${heatmap.route} by ${users.length} ${users.length === 1 ? "person" : "people"}`} data-testid="usage-heatmap-svg">
+              {layout && showScreen && <LayoutBackdrop layout={layout} />}
+              {marks(90)}
+            </svg>
+          )}
           <p className="hint mt-2">
             {heatmap.points.length} clicks{mode ? ` in ${MODE_LABEL[mode].toLowerCase()}s` : ""} in this period{single && users[0] ? `, all by ${users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.
-            {!layout && " No picture of this screen yet -- it appears once someone opens it with the current version."}
-            {layout && (
+            {!layout && !snapshot && " No picture of this screen yet -- it appears once someone opens it with the current version."}
+            {(snapshot ?? layout) && (
               <span data-testid="usage-heatmap-layout-note">
                 {" "}
-                Screen recorded {formatShortWhen(layout.occurred_at)}
-                {layout.app_version ? ` (build ${layout.app_version})` : ""}
-                {layout.mode && layout.mode !== "other" ? `, in a ${MODE_LABEL[layout.mode].toLowerCase()}` : ""} -- images show as grey blocks; their content is never recorded.
+                {snapshot ? "Screen as recorded" : "Screen outline recorded"} {formatShortWhen((snapshot ?? layout)?.occurred_at)}
+                {(snapshot ?? layout)?.app_version ? ` (build ${(snapshot ?? layout)?.app_version})` : ""}
+                {(snapshot ?? layout)?.mode && (snapshot ?? layout)?.mode !== "other" ? `, in a ${MODE_LABEL[(snapshot ?? layout)?.mode as UsageJobMode].toLowerCase()}` : ""} -- images show as grey blocks; their content is never recorded.
               </span>
             )}
           </p>

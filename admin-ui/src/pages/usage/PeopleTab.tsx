@@ -4,6 +4,7 @@ import { LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, Us
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
 import LayoutBackdrop from "./LayoutBackdrop";
+import ScreenSnapshot from "./ScreenSnapshot";
 import { advance, buildTimeline, GAP_MS, markIndexAt, pageAt } from "./replay";
 import { ACCENT, CardHeader, DownloadCsvButton, formatDuration, formatWhen } from "./shared";
 
@@ -309,8 +310,20 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   }, [markIndex, playing]);
 
   const vp = page?.viewport ?? [1600, 900];
+  // The screen as it was on this page: its snapshot taken during this
+  // page view (else any of this screen in the sitting) -- drawn at its
+  // own aspect; without one, the layout outline at 16:9.
+  const sessionStart = Date.parse(session.events[0].occurred_at);
+  const nextPage = page ? timeline.pages[page.index + 1] : undefined;
+  const pageSnapshot = page
+    ? (session.snapshots ?? []).find((sn) => {
+        const t = Date.parse(sn.occurred_at ?? "") - sessionStart;
+        return sn.route === page.route && t >= page.at && (!nextPage || t < nextPage.at);
+      }) ?? (session.snapshots ?? []).find((sn) => sn.route === page.route)
+    : undefined;
+  const stageH = pageSnapshot ? (STAGE_W * pageSnapshot.viewport[1]) / pageSnapshot.viewport[0] : STAGE_H;
   const sx = (x: number) => (x / vp[0]) * STAGE_W;
-  const sy = (y: number) => (y / vp[1]) * STAGE_H;
+  const sy = (y: number) => (y / vp[1]) * stageH;
   const shownPoints = page ? timeline.points.filter((p) => p.page === page.index && p.t <= head) : [];
   const shownClicks = page ? timeline.clicks.filter((c) => c.page === page.index && c.t <= head) : [];
   const cursor = shownPoints[shownPoints.length - 1] ?? null;
@@ -326,7 +339,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
     <div className="card" data-testid="usage-timeline">
       <CardHeader
         title={`Replay · ${session.username} · ${session.app}`}
-        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them a miniature of the screen as it was (images as grey blocks), scaled to 16:9.`}
+        hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them the screen as it was -- its images as grey blocks.`}
         actions={
           <DownloadCsvButton
             filename={`usage-session-${session.session_id.slice(0, 8)}.csv`}
@@ -407,8 +420,9 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
           {timeline.pages.length === 0 ? (
             <EmptyState message="No page views in this session." />
           ) : (
-            <svg viewBox={`0 0 ${STAGE_W} ${STAGE_H}`} className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`Replay of ${page?.route ?? "the session"}`} data-testid="usage-replay-svg">
-              {page?.layout && <LayoutBackdrop layout={page.layout} width={STAGE_W} height={STAGE_H} opacity={0.5} />}
+            pageSnapshot ? (
+              <ScreenSnapshot snapshot={pageSnapshot}>
+                <svg viewBox={`0 0 ${STAGE_W} ${stageH}`} className="h-full w-full" role="img" aria-label={`Replay of ${page?.route ?? "the session"}`} data-testid="usage-replay-svg">
               {shownPoints.length > 1 && <polyline points={path} fill="none" stroke={ACCENT} strokeWidth={0.5} strokeOpacity={0.7} strokeLinejoin="round" />}
               {shownClicks.map((c, i) => {
                 const fresh = head - c.t <= CLICK_FLASH_MS;
@@ -425,14 +439,43 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
                 </g>
               )}
               {toast && (
-                <g transform={`translate(${STAGE_W / 2} ${STAGE_H - 6})`}>
+                <g transform={`translate(${STAGE_W / 2} ${stageH - 6})`}>
                   <rect x={-40} y={-4} width={80} height={7} rx={1.5} fill="#111827" fillOpacity={0.85} />
                   <text textAnchor="middle" y={1} fontSize={3.6} fill="#ffffff">
                     {describeEvent(toast)}
                   </text>
                 </g>
               )}
-            </svg>
+                </svg>
+              </ScreenSnapshot>
+            ) : (
+              <svg viewBox={`0 0 ${STAGE_W} ${STAGE_H}`} className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`Replay of ${page?.route ?? "the session"}`} data-testid="usage-replay-svg">
+                {page?.layout && <LayoutBackdrop layout={page.layout} width={STAGE_W} height={STAGE_H} opacity={0.5} />}
+              {shownPoints.length > 1 && <polyline points={path} fill="none" stroke={ACCENT} strokeWidth={0.5} strokeOpacity={0.7} strokeLinejoin="round" />}
+              {shownClicks.map((c, i) => {
+                const fresh = head - c.t <= CLICK_FLASH_MS;
+                return (
+                  <circle key={i} cx={sx(c.x)} cy={sy(c.y)} r={fresh ? 3.5 : 2} fill={fresh ? "#dc2626" : "none"} fillOpacity={fresh ? 0.35 : 0} stroke="#dc2626" strokeWidth={fresh ? 0.8 : 0.5}>
+                    <title>{c.target ?? "click"}</title>
+                  </circle>
+                );
+              })}
+              {cursor && (
+                <g transform={`translate(${sx(cursor.x).toFixed(1)} ${sy(cursor.y).toFixed(1)})`}>
+                  <circle r={2.4} fill="#ffffff" stroke={ACCENT} strokeWidth={0.6} />
+                  <circle r={1.1} fill={ACCENT} />
+                </g>
+              )}
+              {toast && (
+                <g transform={`translate(${STAGE_W / 2} ${stageH - 6})`}>
+                  <rect x={-40} y={-4} width={80} height={7} rx={1.5} fill="#111827" fillOpacity={0.85} />
+                  <text textAnchor="middle" y={1} fontSize={3.6} fill="#ffffff">
+                    {describeEvent(toast)}
+                  </text>
+                </g>
+              )}
+              </svg>
+            )
           )}
         </div>
         <div className="max-h-[28rem] overflow-y-auto">

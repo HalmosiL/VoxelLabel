@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { _reset, captureLayout, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
+import { _reset, captureLayout, captureSnapshot, textHash, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, notePerf, pendingEvents, ratingDue, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
 
 const ON: UsageConfig = {
   enabled: true,
@@ -344,5 +344,35 @@ describe("screen layout", () => {
     expect(elements.find((e) => e[4] === "input")).toEqual([10, 50, 200, 24, "input"]);
     expect(JSON.stringify(elements)).not.toContain("secret");
     expect(elements.find((e) => e[4] === "media")).toEqual([300, 0, 800, 600, "media"]);
+  });
+});
+
+describe("screen snapshot", () => {
+  it("keeps the page's HTML but no pictures, scripts, typed values or tour", () => {
+    document.body.innerHTML = `
+      <main><h1>Viewer</h1>
+        <canvas class="pane" width="512" height="512"></canvas>
+        <img src="/scan.png" alt="scan">
+        <button>Mark as annotated</button>
+        <input value="typed secret"><textarea>more secret</textarea>
+        <script>window.x = 1</script>
+        <div data-guide-overlay><button>Next</button></div>
+      </main>`;
+    const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    const { html, cssHash } = captureSnapshot();
+    expect(html.startsWith("<!doctype html>")).toBe(true);
+    expect(html).toContain("<h1>Viewer</h1>");
+    expect(html).toContain("Mark as annotated");
+    for (const gone of ["<canvas", "<img", "scan.png", "<script", "window.x", "typed secret", "more secret", "data-guide-overlay"]) expect(html).not.toContain(gone);
+    expect(html).toContain('<span data-vl-image="" class="pane" style="width:800px;height:600px;">image</span>');
+    expect(cssHash).toMatch(/^[0-9a-f]+$/);
+    // the live page is untouched
+    expect(document.querySelector("canvas")).not.toBeNull();
+  });
+
+  it("hashes text stably and tells different texts apart", () => {
+    expect(textHash(".a{color:red}")).toBe(textHash(".a{color:red}"));
+    expect(textHash(".a{color:red}")).not.toBe(textHash(".a{color:blue}"));
   });
 });

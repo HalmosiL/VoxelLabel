@@ -3,7 +3,7 @@ one particular caller, and the retention purge."""
 import time
 from datetime import datetime, timedelta, timezone
 
-from shared_models.models import UsageEvent, UsageSettings
+from shared_models.models import UsageEvent, UsageSettings, UsageSnapshot, UsageSnapshotStyle
 from sqlalchemy.orm import Session
 
 # Which switch governs which event type. focus/idle ride along with page
@@ -71,5 +71,8 @@ def purge_expired(db: Session, settings: UsageSettings, *, force: bool = False) 
     _last_purge_at = now
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.retention_days)
     deleted = db.query(UsageEvent).filter(UsageEvent.occurred_at < cutoff).delete(synchronize_session=False)
+    db.query(UsageSnapshot).filter(UsageSnapshot.occurred_at < cutoff).delete(synchronize_session=False)
+    used = db.query(UsageSnapshot.css_hash).filter(UsageSnapshot.css_hash.isnot(None)).distinct()
+    db.query(UsageSnapshotStyle).filter(UsageSnapshotStyle.css_hash.notin_(used)).delete(synchronize_session=False)
     db.commit()
     return deleted

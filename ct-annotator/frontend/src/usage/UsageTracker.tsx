@@ -20,6 +20,7 @@ export default function UsageTracker() {
       eventsUrl: `${API.annotator}/usage/events`,
       getToken: () => keycloak.token,
       version: __APP_VERSION__,
+      snapshotUrl: `${API.annotator}/usage/snapshots`,
     });
   }, []);
   useEffect(() => {

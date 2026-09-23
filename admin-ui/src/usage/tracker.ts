@@ -33,6 +33,12 @@
  * replay. Never pixels: an image, canvas or video (the CT slices) is
  * only a grey "image" block, and no field's value is ever read.
  *
+ * With a snapshotUrl, the same moment also sends a *snapshot*: the
+ * screen's HTML and stylesheets, with every image, canvas, video and
+ * iframe swapped for a same-sized "image" placeholder, scripts removed,
+ * no typed values, and no url() in the CSS -- drawn behind the heatmap
+ * and the replay in a sandboxed frame. Stylesheets go once per session.
+ *
  * Every category has a switch a platform admin flips on the Usage page;
  * the effective config is fetched at start and re-polled, so a change
  * reaches every open tab. Nothing here may ever break the app: every
@@ -94,6 +100,8 @@ export interface TrackerOptions {
   getToken: () => string | undefined;
   /** This build's version, stamped on every event. */
   version?: string;
+  /** Where screen snapshots go (admin-service /admin/usage/snapshots, or a proxy). */
+  snapshotUrl?: string;
   /** Test seams -- default to the real fetch and Date.now. */
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -177,6 +185,8 @@ interface State {
   /** Screens whose layout was already recorded this session. */
   layouts: Set<string>;
   layoutTimer: number;
+  /** Stylesheet hashes already sent with a snapshot this session. */
+  cssSent: Set<string>;
 }
 
 const state: State = {
@@ -203,6 +213,7 @@ const state: State = {
   perfObserver: null,
   layouts: new Set(),
   layoutTimer: 0,
+  cssSent: new Set(),
 };
 
 function now(): number {
@@ -513,6 +524,99 @@ function recordLayout(retried = false): void {
     }
     state.layouts.add(key);
     push("layout", { detail: layout });
+    if (state.options.snapshotUrl) void sendSnapshot();
+  } catch {
+    // never let tracking surface as an app error
+  }
+}
+
+const MEDIA_SELECTOR = "img, canvas, video, iframe, picture, object, embed";
+const DROP_SELECTOR = "script, noscript, template, link, style, base, [data-guide-overlay]";
+
+/** 64-bit-ish content hash (two FNV-1a passes) -- crypto.subtle only
+ * exists on https, and a test server is often plain http. */
+export function textHash(text: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995);
+  }
+  return `${(a >>> 0).toString(16).padStart(8, "0")}${(b >>> 0).toString(16).padStart(8, "0")}${text.length.toString(16)}`;
+}
+
+/** The screen as HTML without its pictures: every image, canvas, video
+ * and iframe replaced by a same-sized "image" placeholder; scripts,
+ * stylesheets (sent separately), the tutorial overlay and every typed
+ * value removed. Plus the page's CSS with its url()s taken out. */
+export function captureSnapshot(doc: Document = document): { html: string; css: string; cssHash: string } {
+  const live = Array.from(doc.querySelectorAll(MEDIA_SELECTOR));
+  const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+  Array.from(clone.querySelectorAll(MEDIA_SELECTOR)).forEach((node, i) => {
+    const source = live[i];
+    const box = source?.getBoundingClientRect();
+    const style = source && typeof window !== "undefined" ? window.getComputedStyle(source) : null;
+    const placeholder = doc.createElement("span");
+    placeholder.setAttribute("data-vl-image", "");
+    placeholder.textContent = "image";
+    const cls = node.getAttribute("class");
+    if (cls) placeholder.setAttribute("class", cls);
+    const position = style?.position && style.position !== "static" ? `position:${style.position};left:${style.left};top:${style.top};` : "";
+    placeholder.setAttribute("style", `${position}width:${Math.round(box?.width ?? 0)}px;height:${Math.round(box?.height ?? 0)}px;`);
+    node.replaceWith(placeholder);
+  });
+  clone.querySelectorAll(DROP_SELECTOR).forEach((node) => node.remove());
+  clone.querySelectorAll("input").forEach((input) => input.removeAttribute("value"));
+  clone.querySelectorAll("textarea").forEach((area) => (area.textContent = ""));
+  const html = `<!doctype html>${clone.outerHTML}`;
+  const css = Array.from(doc.styleSheets)
+    .map((sheet) => {
+      try {
+        return Array.from(sheet.cssRules, (rule) => rule.cssText).join("\n");
+      } catch {
+        return "";
+      }
+    })
+    .join("\n")
+    .replace(/url\([^)]*\)/g, "none");
+  return { html, css, cssHash: textHash(css) };
+}
+
+async function pack(key: string, text: string): Promise<Record<string, string>> {
+  if (typeof CompressionStream === "undefined" || typeof Blob === "undefined") return { [key]: text };
+  const buffer = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return { [`${key}_gz`]: btoa(binary) };
+}
+
+async function sendSnapshot(): Promise<void> {
+  const options = state.options;
+  const token = options?.getToken();
+  if (!options?.snapshotUrl || !token || state.route === null) return;
+  try {
+    const snap = captureSnapshot();
+    const withCss = !state.cssSent.has(snap.cssHash);
+    const body = {
+      session_id: state.sessionId,
+      app: options.app,
+      app_version: options.version,
+      route: state.route,
+      job_id: typeof state.pageDetail?.job_id === "string" ? state.pageDetail.job_id : undefined,
+      viewport: viewport(),
+      occurred_at: new Date(now()).toISOString(),
+      css_hash: snap.cssHash,
+      ...(await pack("html", snap.html)),
+      ...(withCss ? await pack("css", snap.css) : {}),
+    };
+    const response = await (options.fetchImpl ?? fetch)(options.snapshotUrl, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.ok && withCss) state.cssSent.add(snap.cssHash);
   } catch {
     // never let tracking surface as an app error
   }
@@ -807,5 +911,6 @@ export function _reset(): void {
     perfObserver: null,
     layouts: new Set(),
     layoutTimer: 0,
+    cssSent: new Set(),
   });
 }

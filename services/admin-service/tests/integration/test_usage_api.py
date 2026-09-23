@@ -10,6 +10,9 @@ from shared_models.models import UsageEvent
 from .conftest import ADMIN_SUBJECT, ANNOTATOR_SUBJECT, REVIEWER_SUBJECT, make_annotation, make_case, make_series, make_study
 
 NOW = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
+# One base for every event of a run: taking "now" per event let a few
+# milliseconds slip in between them and made exact durations flaky.
+BASE = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
 
 
 def ev(kind, route, *, session="s1", app="admin-ui", at_s=0, name=None, detail=None, duration_ms=None):
@@ -21,7 +24,7 @@ def ev(kind, route, *, session="s1", app="admin-ui", at_s=0, name=None, detail=N
         "name": name,
         "detail": detail,
         "duration_ms": duration_ms,
-        "occurred_at": (datetime.now(timezone.utc) - timedelta(minutes=5) + timedelta(seconds=at_s)).isoformat(),
+        "occurred_at": (BASE + timedelta(seconds=at_s)).isoformat(),
     }
 
 
@@ -386,3 +389,55 @@ def test_layouts_are_sanitised_and_the_heatmap_splits_clicks_by_job_kind(client,
     session = client.get("/admin/usage/sessions/r").json()
     assert session["events"][0]["detail"]["job_type"] == "review"
     assert "layout" not in client.get("/admin/usage/export/events.csv").text.split("\n", 1)[1]
+
+
+def test_screen_snapshots_are_cleaned_stored_and_drawn_behind_the_clicks(client, db):
+    import base64
+    import gzip
+
+    from shared_models.models import UsageSnapshot, UsageSnapshotStyle
+
+    client.as_admin()
+    sid = make_study(client)
+    rev = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "review", "title": "Review", "position_x": 0, "position_y": 0, "config": {}}).json()
+    html = '<html><head></head><body><h1>Viewer</h1><img src="/scan.png"><button onclick="x()">Submit review</button><input value="typed"></body></html>'
+    body = {
+        "session_id": "snap-s",
+        "app": "viewer",
+        "app_version": "0.1.0+t",
+        "route": "/viewer/:id",
+        "job_id": rev["id"],
+        "viewport": [1600, 900],
+        "occurred_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+        "html_gz": base64.b64encode(gzip.compress(html.encode())).decode(),
+        "css_hash": "abc123",
+        "css": ".btn{color:red;background:url(/x.png)}",
+    }
+    client.as_user(REVIEWER_SUBJECT, ["reviewer"])
+    post(client, [ev("page_view", "/viewer/:id", session="snap-s", app="viewer", detail={"job_id": rev["id"], "case_id": "c"}), ev("click", "/viewer/:id", session="snap-s", app="viewer", at_s=1, detail={"x": 10, "y": 10, "viewport": [1600, 900]})])
+    assert client.post("/admin/usage/snapshots", json=body).json() == {"stored": True}
+    assert client.post("/admin/usage/snapshots", json={**body, "html_gz": "!!"}).status_code == 422
+    assert db.query(UsageSnapshot).one().user_id == REVIEWER_SUBJECT and db.query(UsageSnapshotStyle).count() == 1
+    assert client.get("/admin/usage/snapshots/" + str(db.query(UsageSnapshot).one().id)).status_code == 403
+
+    client.as_admin()
+    heat = client.get("/admin/usage/heatmap", params={"route": "/viewer/:id"}).json()
+    assert heat["snapshot"]["mode"] == "review" and heat["snapshot"]["viewport"] == [1600, 900]
+    assert client.get("/admin/usage/heatmap", params={"route": "/viewer/:id", "mode": "annotation"}).json()["snapshot"] is None
+    doc = client.get(f"/admin/usage/snapshots/{heat['snapshot']['id']}").json()["document"]
+    assert "<h1>Viewer</h1>" in doc and "Submit review" in doc and ".btn{color:red" in doc
+    for gone in ("<img", "scan.png", "onclick", "typed", "url(/x.png)"):
+        assert gone not in doc, gone
+    session = client.get("/admin/usage/sessions/snap-s").json()
+    assert [x["id"] for x in session["snapshots"]] == [heat["snapshot"]["id"]]
+
+    # recording clicks off: snapshots are refused too
+    client.put("/admin/usage/settings", json={"track_clicks": False})
+    client.as_user(REVIEWER_SUBJECT, ["reviewer"])
+    assert client.post("/admin/usage/snapshots", json=body).json() == {"stored": False}
+
+    # old snapshots go with the events, and styles nothing uses any more
+    db.query(UsageSnapshot).update({"occurred_at": datetime.now(timezone.utc) - timedelta(days=400)})
+    db.commit()
+    purge_expired(db, get_settings(db), force=True)
+    assert db.query(UsageSnapshot).count() == 0 and db.query(UsageSnapshotStyle).count() == 0

@@ -52,6 +52,8 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const errors = []; page.on("pageerror", (e) => errors.push(e.message));
     const posted = [];
     page.on("request", (r) => { if (r.url().endsWith("/usage/events") && r.method() === "POST") posted.push(r.postDataJSON()); });
+    const snapshotsStored = [];
+    page.on("response", async (r) => { if (r.url().endsWith("/usage/snapshots") && r.request().method() === "POST") snapshotsStored.push(await r.json().catch(() => null)); });
     await login(page, "dr-test", "Test1234!", `${VIEWER}/viewer/series/${series}?studyId=${F.STUDY}&caseId=${kase.id}&jobId=${F.ANNOT_CARD}`);
     await page.waitForFunction(() => document.querySelectorAll("canvas").length >= 1, null, { timeout: 60000 });
     await page.waitForTimeout(2500);
@@ -66,6 +68,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("viewer shipped page_view, click, mouse_trace and key events", ["page_view", "click", "mouse_trace", "key"].every((t) => types.has(t)), [...types]);
     const layouts = all.filter((e) => e.event_type === "layout");
     const boxes = layouts.flatMap((e) => e.detail.elements);
+    check("viewer sent a snapshot of the screen and it was stored", snapshotsStored.some((b) => b && b.stored === true), snapshotsStored);
     check("viewer recorded the screen's layout once: the image as a bare block, controls with labels", layouts.length >= 1 && boxes.some((b) => b[4] === "media" && b.length === 5) && boxes.some((b) => b[4] === "button" && b[5]), layouts.map((e) => e.detail.elements.length));
     check("every viewer event carries its build", all.length > 0 && all.every((e) => typeof e.app_version === "string" && e.app_version.length > 0), [...new Set(all.map((e) => e.app_version))]);
     check("viewer page views say mouse or touch", all.some((e) => e.event_type === "page_view" && ["mouse", "touch"].includes(e.detail && e.detail.device)));
@@ -153,7 +156,11 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await page.locator('[data-testid="usage-heatmap-route"]').selectOption("/viewer/:id");
     await page.waitForTimeout(800);
     check("heatmap shows click dots", (await page.locator('[data-testid="usage-heatmap-dot"]').count()) >= 1);
-    check("the screen is drawn behind the clicks, with its image as a grey block", (await page.locator('[data-testid="usage-heatmap-svg"] [data-testid="usage-layout-backdrop"]').count()) === 1 && (await page.locator('[data-testid="usage-layout-backdrop"] text', { hasText: "image" }).count()) >= 1);
+    const frame = page.locator('[data-testid="usage-heatmap"] [data-testid="usage-screen-snapshot-frame"]');
+    await frame.waitFor({ timeout: 15000 });
+    const srcdoc = (await frame.getAttribute("srcdoc")) || "";
+    check("the recorded screen is drawn behind the clicks, in a sandboxed frame", (await frame.getAttribute("sandbox")) === "" && (await page.locator('[data-testid="usage-screen-snapshot"] [data-testid="usage-heatmap-svg"]').count()) === 1);
+    check("the recorded screen keeps the page's controls but no image, canvas or script", srcdoc.includes("data-vl-image") && srcdoc.includes("Mark as") && !/<canvas|<img|<script/i.test(srcdoc), srcdoc.length);
     check("clicks are split by the kind of job they were made in", (await page.locator('[data-testid="usage-heatmap-mode-annotation"]').count()) === 1);
     await page.locator('[data-testid="usage-heatmap-mode-annotation"]').click();
     await page.waitForTimeout(800);
@@ -258,7 +265,7 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
       if (!traced) await page.waitForTimeout(250);
     }
     check("playing draws the pointer path as it happened", traced);
-    check("the replay draws the screen behind the pointer and says it was an annotation job", (await page.locator('[data-testid="usage-replay-svg"] [data-testid="usage-layout-backdrop"]').count()) === 1 && (await page.locator('[data-testid="usage-replay-job-type"]').innerText()) === "Annotation job");
+    check("the replay draws the recorded screen behind the pointer and says it was an annotation job", (await page.locator('[data-testid="usage-timeline"] [data-testid="usage-screen-snapshot-frame"]').count()) === 1 && (await page.locator('[data-testid="usage-replay-job-type"]').innerText()) === "Annotation job");
     const clockText = await page.locator('[data-testid="usage-replay-clock"]').innerText();
     check("the replay clock advances", !clockText.startsWith("0:00 /"), clockText);
     check("the log lists the session's events", (await page.locator('[data-testid="usage-timeline"] li').count()) >= 3);

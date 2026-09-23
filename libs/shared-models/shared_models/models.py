@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -849,6 +850,46 @@ class UsageSettings(Base):
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class UsageSnapshot(Base):
+    """A picture of one screen as someone saw it -- its HTML with every
+    image, canvas and video swapped for a grey placeholder, scripts and
+    typed values removed (see the tracker's captureSnapshot) -- drawn
+    behind the click heatmap and the session replay in a sandboxed
+    iframe. Stylesheets are stored once per content hash
+    (UsageSnapshotStyle). Kept per screen up to a cap, and purged with
+    the usage events."""
+
+    __tablename__ = "usage_snapshots"
+    __table_args__ = (
+        Index("ix_usage_snapshots_route_occurred", "route", "occurred_at"),
+        Index("ix_usage_snapshots_session", "session_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    app: Mapped[str] = mapped_column(String(16), nullable=False)
+    app_version: Mapped[str | None] = mapped_column(String(40))
+    route: Mapped[str] = mapped_column(String(255), nullable=False)
+    # the job the screen was opened from (viewer), to tell annotation from review
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    viewport_w: Mapped[int] = mapped_column(Integer, nullable=False)
+    viewport_h: Mapped[int] = mapped_column(Integer, nullable=False)
+    html_gz: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    css_hash: Mapped[str | None] = mapped_column(String(64))
+    occurred_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UsageSnapshotStyle(Base):
+    """One app build's stylesheets, stored once, shared by its snapshots."""
+
+    __tablename__ = "usage_snapshot_styles"
+
+    css_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    css_gz: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class CaseStageEvent(Base):
