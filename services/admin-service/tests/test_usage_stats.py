@@ -121,10 +121,10 @@ def test_friction_signals():
     f = stats.friction(EVENTS)
     assert f["bounces"] == [{"route": "/studies", "bounces": 1, "rate": 0.5}]
     assert f["back_and_forth"] == [{"route": "/studies", "returns": 1, "rate": 0.5}]
+    # the three fast clicks on bare background (no control, no response signal)
     assert f["rage_clicks"] == [{"route": "/viewer/:id", "bursts": 1}]
-    # the lone click at 40 s (nothing within 2 s) -- the burst's clicks
-    # are followed by nothing either, so they count as dead too
-    assert f["dead_clicks"] == [{"route": "/viewer/:id", "clicks": 4}]
+    # these clicks predate the tracker's response signal: unknown, not dead
+    assert f["dead_clicks"] == []
     assert f["errors"] == [{"route": "/viewer/:id", "errors": 1}]
     # 5 s idle out of 70 s (alice) + 40 s (bob)
     assert f["idle_share"] == round(5000 / 110000, 3)
@@ -135,12 +135,12 @@ def test_friction_by_screen_scores_and_ranks_every_screen():
     studies = rows["/studies"]
     # 2 views, 1 bounce, 1 return, 1 click (followed by a page_view: not dead), no rage
     assert studies["views"] == 2 and studies["bounce_rate"] == 0.5 and studies["back_rate"] == 0.5
-    assert studies["clicks"] == 1 and studies["dead_clicks"] == 0 and studies["dead_rate"] == 0.0
+    assert studies["clicks"] == 1 and studies["measured_clicks"] == 0 and studies["dead_rate"] is None
     assert studies["score"] == round(100 * (0.35 * 0.5 + 0.25 * 0.5))
     viewer = rows["/viewer/:id"]
-    # 2 views, 4 clicks all dead, 1 rage burst, 1 error
-    assert viewer["clicks"] == 4 and viewer["dead_rate"] == 1.0 and viewer["rage_bursts"] == 1 and viewer["errors"] == 1
-    assert viewer["score"] == round(100 * (0.20 * 1.0 + 0.20 * 0.5))
+    # 2 views, 4 clicks (none measured), 1 rage burst, 1 error
+    assert viewer["clicks"] == 4 and viewer["dead_rate"] is None and viewer["rage_bursts"] == 1 and viewer["errors"] == 1
+    assert viewer["score"] == round(100 * (0.20 * 0.5))
     ordered = [r["route"] for r in stats.friction(EVENTS)["by_screen"]]
     assert ordered.index("/viewer/:id") < ordered.index("/my-jobs")  # scored screens before untouched ones
     assert rows["/my-jobs"]["score"] == 0
@@ -180,7 +180,7 @@ def test_per_user_figures():
 
 def test_click_points_normalise_by_viewport_and_skip_incomplete_ones():
     points = stats.click_points(EVENTS, "/studies")
-    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE}]
+    assert points == [{"x": round(100 / 1600, 4), "y": round(100 / 900, 4), "target": "row", "user_id": ALICE, "dead": False}]
     no_viewport = [ev("s", "click", "/x", detail={"x": 1, "y": 1})]
     assert stats.click_points(no_viewport, "/x") == []
 
@@ -237,3 +237,70 @@ def test_a_page_leave_without_its_page_view_still_counts_as_one_visit():
     assert all(0 <= r["score"] <= 100 for r in rows.values())
     per_route = {r["route"]: r for r in stats.time_per_route(events)}
     assert per_route["/usage"]["views"] == 2 and per_route["/my-jobs"]["views"] == 1
+
+
+def _click(session, at_s, *, responded, interactive=True, pointer=False, target="button:Save", route="/x", x=10, y=10):
+    return ev(session, "click", route, at_s=at_s, detail={"x": x, "y": y, "target": target, "responded": responded, "interactive": interactive, "pointer": pointer})
+
+
+def test_dead_clicks_are_clickable_looking_clicks_that_got_no_response():
+    events = [
+        ev("s", "page_view", "/x", at_s=0),
+        _click("s", 1, responded=False),  # a control, nothing changed: dead
+        _click("s", 5, responded=True),  # a control that reacted: live
+        _click("s", 9, responded=False, interactive=False, pointer=True, target="div"),  # pointer cursor, no reaction: dead
+        _click("s", 13, responded=False, interactive=False, pointer=False, target="div"),  # bare background: not counted
+        ev("s", "page_leave", "/x", at_s=20, duration_ms=20000),
+    ]
+    row = stats.friction(events)["by_screen"][0]
+    assert (row["clicks"], row["measured_clicks"], row["dead_clicks"], row["dead_rate"]) == (4, 3, 2, round(2 / 3, 3))
+
+
+def test_fast_clicks_that_each_got_a_response_are_not_rage():
+    stepping = [_click("s", 0.1 * i, responded=True, target="testid:slice-next") for i in range(5)]
+    stuck = [_click("t", 0.1 * i, responded=False) for i in range(3)]
+    assert stats.friction(stepping)["rage_clicks"] == []
+    assert stats.friction(stuck)["rage_clicks"] == [{"route": "/x", "bursts": 1}]
+
+
+def test_prepare_drops_redirect_pages_and_tutorial_clicks():
+    events = [
+        ev("s", "page_view", "/viewer/series/:id", at_s=0),
+        ev("s", "page_leave", "/viewer/series/:id", at_s=0.09, duration_ms=90),  # a redirect
+        ev("s", "page_view", "/viewer/:id", at_s=0.09),
+        ev("s", "click", "/viewer/:id", at_s=1, detail={"target": "button:Next", "guide": True}),
+        ev("s", "click", "/viewer/:id", at_s=2, detail={"target": "button:Next"}),  # legacy tour button
+        ev("s", "click", "/viewer/:id", at_s=3, detail={"target": "testid:tool-paint", "guide": False}),
+        ev("s", "page_leave", "/viewer/:id", at_s=30, duration_ms=29910),
+    ]
+    kept = stats.prepare(events)
+    assert [e["route"] for e in kept if e["event_type"] == "page_view"] == ["/viewer/:id"]
+    assert [e["detail"]["target"] for e in kept if e["event_type"] == "click"] == ["testid:tool-paint"]
+    summary = stats.summarize(events)
+    assert [r["route"] for r in summary["routes"]] == ["/viewer/:id"] and summary["transitions"] == []
+
+
+def test_case_effort_sums_active_time_across_sittings():
+    case = {"job_id": "job-1", "case_id": "case-1"}
+    events = [
+        ev("s1", "page_view", "/viewer/:id", at_s=0, app="viewer", detail=case),
+        ev("s1", "key", "/viewer/:id", at_s=4, app="viewer", name="p"),  # first input after 4 s
+        ev("s1", "action", "/viewer/:id", at_s=5, app="viewer", name="undo"),
+        ev("s1", "idle", "/viewer/:id", at_s=50, app="viewer", duration_ms=30000),
+        ev("s1", "page_leave", "/viewer/:id", at_s=60, app="viewer", duration_ms=60000),
+        ev("s2", "page_view", "/viewer/:id", at_s=3600, app="viewer", detail=case),
+        ev("s2", "click", "/viewer/:id", at_s=3602, app="viewer", detail={"x": 1, "y": 1}),
+        ev("s2", "page_leave", "/viewer/:id", at_s=3620, app="viewer", duration_ms=20000),
+    ]
+    [entry] = stats.case_effort(events)
+    assert entry == {"job_id": "job-1", "case_id": "case-1", "user_ids": [ALICE], "sittings": 2, "active_ms": 30000 + 20000, "undos": 1, "first_input_ms": [4000, 2000]}
+    assert stats.effort_summary([entry]) == {"cases": 1, "active_median_ms": 50000, "sittings_median": 2, "undos_per_case": 1.0, "first_input_median_ms": 3000, "first_input_count": 2}
+
+
+def test_friction_stays_linear_on_a_long_sitting():
+    import time
+
+    events = [ev("s", "page_view", "/x", at_s=0)] + [_click("s", i * 0.7, responded=bool(i % 2), x=(i * 50) % 1600) for i in range(1, 12000)]
+    started = time.perf_counter()
+    stats.summarize(events)
+    assert time.perf_counter() - started < 2.0  # the old scan took ~4 s for 8 000 events

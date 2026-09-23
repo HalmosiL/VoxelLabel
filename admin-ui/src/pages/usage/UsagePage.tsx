@@ -1,25 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
-  getLearningCurve,
-  getPipelineHealthSummary,
-  getUsageFindings,
   getUsageHeatmap,
+  getUsageOverview,
   getUsageSession,
   getUsageSettings,
-  getUsageSummary,
-  LearningCurvePoint,
+  listUsagePeople,
   listUsageSessions,
-  PipelineHealthSummary,
-  previousRange,
   setUsageUserSwitch,
-  UsageFindings,
   UsageHeatmap,
+  UsageOverview,
+  UsagePerson,
   UsageRange,
   UsageSession,
   UsageSessionDetail,
   UsageSettings,
-  UsageSummary,
   UsageTab,
 } from "../../api/adminApi";
 import { describeApiError } from "../../api/client";
@@ -42,7 +37,7 @@ const TABS: { key: UsageTab; label: string; question: string }[] = [
   { key: "behaviour", label: "Behaviour", question: "How do people actually work?" },
   { key: "friction", label: "Friction", question: "Where do they struggle?" },
   { key: "people", label: "People", question: "Who, specifically?" },
-  { key: "settings", label: "Settings", question: "What gets recorded" },
+  { key: "settings", label: "Settings", question: "What gets recorded, and whose activity counts in the figures?" },
 ];
 
 /** `<input type="datetime-local">`'s own value format, in the browser's
@@ -69,14 +64,14 @@ function CalendarPicker({ range, onChange }: { range: UsageRange; onChange: (r: 
   }
 
   return (
-    <div className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-1" data-testid="usage-calendar">
+    <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-1 sm:flex-nowrap" data-testid="usage-calendar">
       <label className="text-xs text-gray-500" htmlFor="usage-from">
         📅 From
       </label>
       <input
         id="usage-from"
         type="datetime-local"
-        className="input h-8 py-0 text-sm"
+        className="input h-8 w-full min-w-0 py-0 text-sm sm:w-52"
         value={from}
         max={to || undefined}
         onChange={(e) => (e.target.value ? onChange({ from: e.target.value, to: to || undefined }) : onChange({ days: 30 }))}
@@ -89,7 +84,7 @@ function CalendarPicker({ range, onChange }: { range: UsageRange; onChange: (r: 
       <input
         id="usage-to"
         type="datetime-local"
-        className="input h-8 py-0 text-sm"
+        className="input h-8 w-full min-w-0 py-0 text-sm sm:w-52"
         value={to}
         min={from || undefined}
         disabled={!active}
@@ -108,63 +103,58 @@ function CalendarPicker({ range, onChange }: { range: UsageRange; onChange: (r: 
 /** Platform admin's usage analytics: how everyone really works in
  * admin-ui and the viewer, organised as five questions (the tabs), with
  * the page's own findings on the Overview and every dataset exportable.
- * See admin-service's app/usage and app/pipeline_health packages for
- * what each figure means. */
+ * One /admin/usage/overview call per window and person carries every
+ * figure (see admin-service's app/usage and app/pipeline_health). */
 export default function UsagePage() {
   const [tab, setTab] = useState<UsageTab>("overview");
   const [range, setRange] = useState<UsageRange>({ days: 30 });
-  // Two independent pickers for the same `range`: the quick presets and
-  // the calendar. Editing the calendar's own fields is what puts it in
-  // control -- see CalendarPicker's onChange -- so both can share the
-  // header without fighting over which one "wins".
   const [userFilter, setUserFilter] = useState<string>("");
-  const [summary, setSummary] = useState<UsageSummary | null>(null);
-  // The immediately preceding period of the same length -- what the
-  // stat tiles' "vs. last period" deltas compare against. Best-effort:
-  // if it fails to load the tiles still render, just without deltas.
-  const [previous, setPrevious] = useState<UsageSummary | null>(null);
-  const [findings, setFindings] = useState<UsageFindings | null>(null);
+  const [overview, setOverview] = useState<UsageOverview | null>(null);
+  const [loading, setLoading] = useState(false);
   const [settings, setSettings] = useState<UsageSettings | null>(null);
+  const [people, setPeople] = useState<UsagePerson[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [heatRoute, setHeatRoute] = useState<string>("");
   const [heatmap, setHeatmap] = useState<UsageHeatmap | null>(null);
   const [sessionsFor, setSessionsFor] = useState<{ user_id: string; username: string } | null>(null);
   const [sessions, setSessions] = useState<UsageSession[] | null>(null);
   const [session, setSession] = useState<UsageSessionDetail | null>(null);
-  const [pipelineHealth, setPipelineHealth] = useState<PipelineHealthSummary | null>(null);
-  const [pipelineHealthPrevious, setPipelineHealthPrevious] = useState<PipelineHealthSummary | null>(null);
-  const [learningCurve, setLearningCurve] = useState<LearningCurvePoint[] | null>(null);
+  const summary = overview?.summary ?? null;
   useRegisterGuide("usage", USAGE_STEPS, summary !== null && tab === "overview", false);
   const rangeKey = JSON.stringify(range);
-  // Responses can land out of order -- a wide window's summary takes
-  // longer than the narrow one picked a moment later -- so every fetch
-  // is stamped and only the newest stamp is allowed to write state.
-  const summarySeq = useRef(0);
-  const pipelineSeq = useRef(0);
+  // Responses can land out of order -- a wide window takes longer than
+  // the narrow one picked a moment later -- so every fetch is stamped
+  // and only the newest stamp may write state.
+  const overviewSeq = useRef(0);
   const heatmapSeq = useRef(0);
+  const sessionsSeq = useRef(0);
 
-  function refreshSummary() {
-    const seq = ++summarySeq.current;
-    const fresh = () => seq === summarySeq.current;
-    getUsageSummary(range, userFilter || null)
-      .then((s) => fresh() && setSummary(s))
-      .catch((err) => fresh() && setError(describeApiError(err)));
-    setPrevious(null);
-    getUsageSummary(previousRange(range), userFilter || null)
-      .then((s) => fresh() && setPrevious(s))
-      .catch(() => undefined);
-    setFindings(null);
-    getUsageFindings(range, userFilter || null)
-      .then((f) => fresh() && setFindings(f))
-      .catch((err) => fresh() && setError(describeApiError(err)));
+  function refreshOverview() {
+    const seq = ++overviewSeq.current;
+    setLoading(true);
+    getUsageOverview(range, userFilter || null)
+      .then((o) => {
+        if (seq !== overviewSeq.current) return;
+        setOverview(o);
+        setError(null);
+      })
+      .catch((err) => seq === overviewSeq.current && setError(describeApiError(err)))
+      .finally(() => seq === overviewSeq.current && setLoading(false));
+  }
+
+  function refreshPeople() {
+    listUsagePeople()
+      .then(setPeople)
+      .catch((err) => setError(describeApiError(err)));
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  useEffect(refreshSummary, [rangeKey, userFilter]);
+  useEffect(refreshOverview, [rangeKey, userFilter]);
   useEffect(() => {
     getUsageSettings()
       .then(setSettings)
       .catch((err) => setError(describeApiError(err)));
+    refreshPeople();
   }, []);
 
   useEffect(() => {
@@ -175,50 +165,45 @@ export default function UsagePage() {
   }, [summary, heatRoute]);
 
   useEffect(() => {
-    const seq = ++pipelineSeq.current;
-    const fresh = () => seq === pipelineSeq.current;
-    getPipelineHealthSummary(range)
-      .then((s) => fresh() && setPipelineHealth(s))
-      .catch((err) => fresh() && setError(describeApiError(err)));
-    setPipelineHealthPrevious(null);
-    getPipelineHealthSummary(previousRange(range))
-      .then((s) => fresh() && setPipelineHealthPrevious(s))
-      .catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  }, [rangeKey]);
-
-  useEffect(() => {
-    getLearningCurve()
-      .then(setLearningCurve)
-      .catch((err) => setError(describeApiError(err)));
-  }, []);
-
-  useEffect(() => {
     if (!heatRoute) {
       setHeatmap(null);
       return;
     }
     const seq = ++heatmapSeq.current;
-    const fresh = () => seq === heatmapSeq.current;
     getUsageHeatmap(heatRoute, range, userFilter || null)
-      .then((h) => fresh() && setHeatmap(h))
-      .catch((err) => fresh() && setError(describeApiError(err)));
+      .then((h) => seq === heatmapSeq.current && setHeatmap(h))
+      .catch((err) => seq === heatmapSeq.current && setError(describeApiError(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
   }, [heatRoute, rangeKey, userFilter]);
 
-  function openUserSessions(user_id: string, username: string, replayLatest = false) {
-    setTab("people");
-    setSessionsFor({ user_id, username });
-    setSession(null);
+  function loadSessions(who: { user_id: string; username: string }, replayLatest: boolean) {
+    const seq = ++sessionsSeq.current;
     setSessions(null);
-    listUsageSessions(range, user_id)
+    listUsageSessions(range, who.user_id)
       .then((list) => {
+        if (seq !== sessionsSeq.current) return;
         setSessions(list);
+        setSession((current) => (current && list.some((s) => s.session_id === current.session_id) ? current : null));
         // "Replay": straight into their newest sitting that has pages to show.
         const latest = replayLatest ? list.find((s) => s.page_views > 0) : undefined;
         if (latest) openSession(latest.session_id);
       })
       .catch((err) => setError(describeApiError(err)));
+  }
+
+  // The session list belongs to the window it was opened for: a new
+  // window reloads it, and drops an open replay that isn't in it.
+  useEffect(() => {
+    if (sessionsFor) loadSessions(sessionsFor, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the window changes
+  }, [rangeKey]);
+
+  function openUserSessions(user_id: string, username: string, replayLatest = false) {
+    setTab("people");
+    const who = { user_id, username };
+    setSessionsFor(who);
+    setSession(null);
+    loadSessions(who, replayLatest);
   }
 
   function openSession(sessionId: string) {
@@ -228,30 +213,53 @@ export default function UsagePage() {
       .catch((err) => setError(describeApiError(err)));
   }
 
-  async function toggleUser(user_id: string, enabled: boolean) {
+  async function switchPerson(user_id: string, change: { enabled?: boolean; counted?: boolean }) {
+    // Flip the switch on screen at once; the server's answer (or a
+    // failure, which puts it back) follows.
+    const before = people;
+    setPeople((list) =>
+      (list ?? []).map((p) =>
+        p.user_id !== user_id
+          ? p
+          : {
+              ...p,
+              ...(change.enabled !== undefined ? { recorded: change.enabled } : {}),
+              ...(change.counted !== undefined ? { counted_switch: change.counted, counted: change.counted && !(p.is_admin && settings?.exclude_admins) } : {}),
+            }
+      )
+    );
     try {
-      setSettings(await setUsageUserSwitch(user_id, enabled));
-      refreshSummary();
+      setSettings(await setUsageUserSwitch(user_id, change));
+      refreshPeople();
+      refreshOverview();
     } catch (err) {
+      setPeople(before);
       setError(describeApiError(err));
     }
   }
 
-  const users = summary?.users ?? [];
-  const attention = findings?.findings.filter((f) => f.severity === "critical" || f.severity === "warn").length ?? 0;
+  function settingsSaved(next: UsageSettings) {
+    setSettings(next);
+    refreshPeople();
+    refreshOverview();
+  }
+
+  // Everyone who counts, whether or not they did anything in this
+  // window -- so a chosen person never silently drops out of the list.
+  const choosable = (people ?? []).filter((p) => p.counted || p.user_id === userFilter);
+  const findings = overview ? { since: overview.since, until: overview.until, findings: overview.findings, friction_score: overview.summary.friction_score } : null;
+  const attention = overview?.findings.filter((f) => f.severity === "critical" || f.severity === "warn").length ?? 0;
+  const chosen = choosable.find((p) => p.user_id === userFilter);
 
   return (
     <div className="space-y-5" data-testid="usage-page">
-      <PageHeader
-        title="Usage"
-        subtitle="How people actually work in the platform -- where the time goes, what they click, where they get stuck. Recorded for every signed-in person; never patient data or anything typed."
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            <select className="input" value={userFilter} onChange={(e) => setUserFilter(e.target.value)} aria-label="Person" data-testid="usage-user-filter">
+      <PageHeader title="Usage" subtitle="How people actually work in the platform: where the time goes, what they click, where they get stuck, and how long a case really takes." />
+      <div className="flex flex-wrap items-center gap-2" data-testid="usage-toolbar">
+            <select className="input w-48 max-w-full" value={userFilter} onChange={(e) => setUserFilter(e.target.value)} aria-label="Person" data-testid="usage-user-filter">
               <option value="">Everyone</option>
-              {users.map((u) => (
-                <option key={u.user_id} value={u.user_id}>
-                  {u.username}
+              {choosable.map((p) => (
+                <option key={p.user_id} value={p.user_id}>
+                  {p.username}
                 </option>
               ))}
             </select>
@@ -269,14 +277,27 @@ export default function UsagePage() {
               ))}
             </div>
             <CalendarPicker range={range} onChange={setRange} />
-          </div>
-        }
-      />
-      {"from" in range && (
-        <p className="text-sm text-gray-500" data-testid="usage-range-label">
-          Showing {formatWhen(range.from)} – {range.to ? formatWhen(range.to) : "now"}
-        </p>
-      )}
+      </div>
+      <p className="text-sm text-gray-500" data-testid="usage-range-label">
+        {"from" in range ? `Showing ${formatWhen(range.from)} – ${range.to ? formatWhen(range.to) : "now"}` : `Showing the last ${range.days} days`}
+        {chosen ? ` · only ${chosen.username}` : " · everyone"}
+        {summary && (
+          <span data-testid="usage-basis">
+            {" "}
+            · {summary.basis.people} {summary.basis.people === 1 ? "person" : "people"}, {summary.basis.sessions} sessions, {summary.basis.events.toLocaleString()} events
+            {summary.basis.not_counted > 0 && (
+              <>
+                {" "}
+                ·{" "}
+                <button type="button" className="underline decoration-dotted hover:text-gray-700" onClick={() => setTab("settings")} title="Recorded, but left out of every figure -- change it in Settings">
+                  {summary.basis.not_counted} {summary.basis.not_counted === 1 ? "account" : "accounts"} not counted{summary.basis.admins_left_out ? " (admins, test accounts)" : ""}
+                </button>
+              </>
+            )}
+          </span>
+        )}
+        {loading && <span className="ml-2 text-gray-400">updating…</span>}
+      </p>
       {error && <div className="alert-error">{error}</div>}
 
       <div className="flex flex-wrap border-b border-gray-200/70" role="tablist" aria-label="Usage sections" data-testid="usage-tabs">
@@ -303,28 +324,31 @@ export default function UsagePage() {
           </button>
         ))}
       </div>
+      <p className="-mt-3 text-xs text-gray-400" data-testid="usage-tab-question">
+        {TABS.find((t) => t.key === tab)?.question}
+      </p>
 
-      {summary && tab === "overview" && (
+      {overview && summary && tab === "overview" && (
         <OverviewTab
           summary={summary}
-          previous={previous}
+          previous={overview.previous}
           findings={findings}
-          pipelineHealth={pipelineHealth}
-          pipelineHealthPrevious={pipelineHealthPrevious}
-          learningCurve={learningCurve}
+          pipelineHealth={overview.pipeline}
+          pipelineHealthPrevious={overview.pipeline_previous}
+          learningCurve={overview.learning_curve}
           range={range}
           userFilter={userFilter}
+          personName={chosen?.username ?? null}
           onGoTo={setTab}
           onError={setError}
         />
       )}
       {summary && tab === "behaviour" && <BehaviourTab summary={summary} heatRoute={heatRoute} onHeatRoute={setHeatRoute} heatmap={heatmap} />}
-      {summary && tab === "friction" && <FrictionTab summary={summary} pipelineHealth={pipelineHealth} />}
-      {summary && tab === "people" && (
+      {overview && summary && tab === "friction" && <FrictionTab summary={summary} pipelineHealth={overview.pipeline} personName={chosen?.username ?? null} />}
+      {overview && summary && tab === "people" && (
         <PeopleTab
           summary={summary}
-          settings={settings}
-          learningCurve={learningCurve}
+          learningCurve={overview.learning_curve}
           sessionsFor={sessionsFor}
           sessions={sessions}
           session={session}
@@ -334,10 +358,9 @@ export default function UsagePage() {
             setSessionsFor(null);
             setSession(null);
           }}
-          onToggle={toggleUser}
         />
       )}
-      {tab === "settings" && settings && <SettingsTab settings={settings} onSaved={setSettings} onError={setError} />}
+      {tab === "settings" && settings && <SettingsTab settings={settings} people={people} onSaved={settingsSaved} onSwitch={switchPerson} onOpenSessions={(id, name) => openUserSessions(id, name)} onError={setError} />}
       {!summary && tab !== "settings" && <p className="hint">Loading…</p>}
     </div>
   );

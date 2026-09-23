@@ -149,7 +149,7 @@ def test_summary_sessions_and_heatmap(client):
     assert client.get("/admin/usage/sessions/nope").status_code == 404
 
     heat = client.get("/admin/usage/heatmap", params={"route": "/my-jobs"}).json()
-    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT}]
+    assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT, "dead": False}]
     assert heat["users"] == [{"user_id": ANNOTATOR_SUBJECT, "username": "dr-test", "clicks": 1}]
     assert client.get("/admin/usage/heatmap", params={"route": "/nothing"}).json()["points"] == []
 
@@ -237,3 +237,62 @@ def test_retention_purge_removes_old_rows_only(client, db):
     assert purge_expired(db, get_settings(db), force=True) == 1
     assert db.query(UsageEvent).filter(UsageEvent.session_id == "old").count() == 0
     assert db.query(UsageEvent).count() == 7
+
+
+def test_admins_and_excluded_accounts_are_recorded_but_not_counted(client, db):
+    _seed_session(client)  # dr-test
+    client.as_admin()
+    post(client, [ev("page_view", "/studies", session="admin-s"), ev("page_leave", "/studies", session="admin-s", at_s=20, duration_ms=20000)])
+    assert db.query(UsageEvent).filter_by(user_id=ADMIN_SUBJECT).count() == 2  # recorded...
+    summary = client.get("/admin/usage/summary").json()
+    assert [u["username"] for u in summary["users"]] == ["dr-test"]  # ...but admins are left out by default
+    assert summary["basis"]["admins_left_out"] is True and summary["basis"]["not_counted"] >= 1
+
+    assert client.put("/admin/usage/settings", json={"exclude_admins": False}).json()["exclude_admins"] is False
+    assert {u["username"] for u in client.get("/admin/usage/summary").json()["users"]} == {"dr-test", "platform-admin"}
+
+    # a test account: still recorded, left out of every figure and export
+    settings = client.put(f"/admin/usage/settings/users/{ANNOTATOR_SUBJECT}", json={"counted": False}).json()
+    assert settings["excluded_user_ids"] == [ANNOTATOR_SUBJECT] and settings["disabled_user_ids"] == []
+    assert [u["username"] for u in client.get("/admin/usage/summary").json()["users"]] == ["platform-admin"]
+    assert "dr-test" not in client.get("/admin/usage/export/events.csv").text
+    assert client.get("/admin/usage/heatmap", params={"route": "/my-jobs"}).json()["points"] == []
+    people = {p["username"]: p for p in client.get("/admin/usage/people").json()}
+    assert people["dr-test"]["recorded"] is True and people["dr-test"]["counted"] is False
+    assert people["platform-admin"]["is_admin"] is True and people["platform-admin"]["counted"] is True
+    client.as_user(ANNOTATOR_SUBJECT)
+    assert client.get("/admin/usage/people").status_code == 403
+
+
+def test_overview_returns_every_dataset_in_one_call(client):
+    _seed_session(client)
+    client.as_admin()
+    overview = client.get("/admin/usage/overview", params={"days": 7}).json()
+    assert set(overview) == {"since", "until", "summary", "previous", "pipeline", "pipeline_previous", "learning_curve", "findings"}
+    assert overview["summary"]["totals"] == client.get("/admin/usage/summary", params={"days": 7}).json()["totals"]
+    assert set(overview["summary"]["effort"]) == {"annotation", "review", "all"}
+    assert "quality" in overview["pipeline"]
+
+
+def test_a_backwards_window_is_422_and_a_future_clock_is_clamped(client, db):
+    client.as_admin()
+    for path in ("/admin/usage/summary", "/admin/usage/overview", "/admin/pipeline-health/summary"):
+        assert client.get(path, params={"from": "2026-09-20T00:00:00Z", "to": "2026-09-01T00:00:00Z"}).status_code == 422, path
+    assert client.get("/admin/pipeline-health/summary", params={"card_id": "junk"}).status_code == 422
+    client.as_user(ANNOTATOR_SUBJECT)
+    post(client, [{**ev("page_view", "/x"), "occurred_at": "2030-01-01T00:00:00Z"}])
+    stored = db.query(UsageEvent).one().occurred_at
+    assert stored <= datetime.now(timezone.utc) + timedelta(minutes=1)
+
+
+def test_id_like_runs_in_click_targets_are_normalised(client, db):
+    client.as_user(ANNOTATOR_SUBJECT)
+    post(client, [ev("click", "/patients", detail={"target": "a:Patient 09a1d4c3…", "x": 1, "y": 1, "responded": True, "interactive": True})])
+    assert db.query(UsageEvent).one().detail == {"target": "a:Patient #…", "x": 1, "y": 1, "responded": True, "interactive": True}
+
+
+def test_csv_cells_that_look_like_formulas_are_escaped(client):
+    client.as_user(ANNOTATOR_SUBJECT)
+    post(client, [ev("action", "/x", name="=HYPERLINK(1)")])
+    client.as_admin()
+    assert ",'=HYPERLINK(1)," in client.get("/admin/usage/export/events.csv").text

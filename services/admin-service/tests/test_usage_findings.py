@@ -32,6 +32,7 @@ def screen(route, *, views=20, clicks=20, bounce_rate=0.0, back_rate=0.0, dead_r
         "bounce_rate": bounce_rate,
         "returns": round(back_rate * views),
         "back_rate": back_rate,
+        "measured_clicks": clicks,
         "dead_clicks": round(dead_rate * clicks),
         "dead_rate": dead_rate,
         "rage_bursts": rage_bursts,
@@ -83,14 +84,17 @@ def test_many_open_legs_without_history_warns_per_card():
 
 
 def test_cycle_time_trend_both_directions():
-    now = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 120_000}}, "review": {"queue": {}, "work": {"median_ms": 50_000}}})
-    prev = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 100_000}}, "review": {"queue": {}, "work": {"median_ms": 100_000}}})
+    now = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 120_000, "count": 5}}, "review": {"queue": {}, "work": {"median_ms": 50_000, "count": 5}}})
+    prev = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 100_000, "count": 5}}, "review": {"queue": {}, "work": {"median_ms": 100_000, "count": 5}}})
     result = {x["id"]: x for x in f.findings(usage(), None, now, prev, None)}
     assert result["cycle.slower.annotation"]["severity"] == "warn" and "20% slower" in result["cycle.slower.annotation"]["title"]
     assert result["cycle.faster.review"]["severity"] == "good" and "50% faster" in result["cycle.faster.review"]["title"]
     # just under the threshold: silent
-    prev_close = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 110_000}}, "review": {"queue": {}, "work": {"median_ms": 50_000}}})
+    prev_close = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 110_000, "count": 5}}, "review": {"queue": {}, "work": {"median_ms": 50_000, "count": 5}}})
     assert not [i for i in ids(f.findings(usage(), None, now, prev_close, None)) if i.startswith("cycle.")]
+    # a big change over too few cases is noise, not a trend
+    thin = pipeline(legs={"annotation": {"queue": {}, "work": {"median_ms": 10_000, "count": 4}}, "review": {"queue": {}, "work": {"median_ms": 10_000, "count": 4}}})
+    assert not [i for i in ids(f.findings(usage(), None, now, thin, None)) if i.startswith("cycle.")]
 
 
 def test_screen_rules_fire_at_thresholds_with_enough_traffic():
@@ -106,10 +110,36 @@ def test_screen_rules_fire_at_thresholds_with_enough_traffic():
             ]
         }
     )
-    got = ids(f.findings(u, None, pipeline(), None, None))
-    assert {"screen.bounce./a", "screen.rage./c", "screen.dead./d", "screen.back./f"} <= set(got)
-    assert not any(i.endswith("/b") or i.endswith("/e") for i in got)
-    assert all(x["tab"] == "friction" for x in f.findings(u, None, pipeline(), None, None) if x["id"].startswith("screen."))
+    result = {x["id"]: x for x in f.findings(u, None, pipeline(), None, None)}
+    assert {"screens.bounce", "screens.rage", "screens.dead", "screens.back"} <= set(result)
+    routes = {kind: [sc["route"] for sc in result[f"screens.{kind}"]["evidence"]["screens"]] for kind in ("bounce", "rage", "dead", "back")}
+    assert routes == {"bounce": ["/a"], "rage": ["/c"], "dead": ["/d"], "back": ["/f"]}  # /b, /e: too little traffic
+    assert all(x["tab"] == "friction" for x in result.values() if x["id"].startswith("screens."))
+
+
+def test_one_finding_per_problem_naming_the_worst_screens():
+    u = usage(friction={"by_screen": [screen(f"/s{i}", views=20, bounce_rate=0.3 + i / 100) for i in range(5)]})
+    bounce = [x for x in f.findings(u, None, pipeline(), None, None) if x["id"] == "screens.bounce"]
+    assert len(bounce) == 1 and bounce[0]["title"] == "People leave 5 screens within seconds"
+    assert bounce[0]["detail"].startswith("/s4 34% (7 of 20 visits), /s3 33%") and ", and 2 more." in bounce[0]["detail"]
+
+
+def test_rework_and_hands_on_time_rules():
+    q = pipeline(quality={"decided": 10, "first_pass_rate": 0.6, "sent_back_rate": 0.4, "rounds_to_approve": 1.5})
+    prev = pipeline(quality={"decided": 10, "first_pass_rate": 0.8, "sent_back_rate": 0.2, "rounds_to_approve": 1.2})
+    result = {x["id"]: x for x in f.findings(usage(), None, q, prev, None)}
+    assert result["quality.rework"]["title"] == "40% of reviewed cases were sent back"
+    assert result["quality.trend"]["severity"] == "warn" and "fell to 60%" in result["quality.trend"]["title"]
+    few = pipeline(quality={"decided": 4, "first_pass_rate": 0.0, "sent_back_rate": 1.0, "rounds_to_approve": None})
+    assert not [i for i in ids(f.findings(usage(), None, few, None, None)) if i.startswith("quality.")]
+
+    def effort(ms, cases, first=None, visits=0):
+        return {"annotation": {"cases": cases, "active_median_ms": ms}, "review": {}, "all": {"first_input_median_ms": first, "first_input_count": visits}}
+
+    slower = {x["id"]: x for x in f.findings(usage(effort=effort(130_000, 5, 20_000, 5)), usage(effort=effort(100_000, 5)), pipeline(), None, None)}
+    assert slower["effort.annotation"]["severity"] == "warn" and "rose 30%" in slower["effort.annotation"]["title"]
+    assert slower["effort.first_input"]["title"] == "It takes 20s before anyone can act on a case"
+    assert "effort.first_input" not in ids(f.findings(usage(effort=effort(1, 5, 20_000, 4)), None, pipeline(), None, None))
 
 
 def test_errors_escalate_when_many_or_rising():

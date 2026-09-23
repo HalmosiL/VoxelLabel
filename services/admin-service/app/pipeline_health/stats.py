@@ -44,6 +44,22 @@ def leg_summary(legs: list[dict]) -> dict:
     return {card_type: {"queue": stat(b["queue_ms"]), "work": stat(b["work_ms"])} for card_type, b in by_type.items()}
 
 
+def review_quality(legs: list[dict], since: datetime, until: datetime) -> dict:
+    """How often an annotated case passes review first time, over the
+    annotation legs whose first review decision fell in the window: the
+    share approved first time, the share sent back at least once, and
+    for approved cases how many submissions it took. Rework is the most
+    expensive kind of cycle time -- the whole case goes round again."""
+    decided = [leg["quality"] for leg in legs if leg.get("quality") and leg["quality"]["decided_at"] is not None and since <= leg["quality"]["decided_at"] <= until]
+    approved = [q for q in decided if q["approved"]]
+    return {
+        "decided": len(decided),
+        "first_pass_rate": round(sum(1 for q in decided if q["first_pass"]) / len(decided), 3) if decided else None,
+        "sent_back_rate": round(sum(1 for q in decided if q["rejections"] > 0) / len(decided), 3) if decided else None,
+        "rounds_to_approve": round(mean(1 + q["rejections"] for q in approved), 2) if approved else None,
+    }
+
+
 def _card_medians(legs: list[dict]) -> dict[tuple, dict[str, int | None]]:
     """(card_id, leg_kind) -> that card's own median duration, only when
     at least MIN_HISTORY_FOR_MEDIAN completed samples exist -- the

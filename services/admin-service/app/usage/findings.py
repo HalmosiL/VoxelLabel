@@ -20,6 +20,16 @@ DEAD_CLICK_RATE_WARN = 0.30
 DEAD_MIN_CLICKS = 10
 BACK_AND_FORTH_WARN = 0.25
 CYCLE_TREND_CHANGE = 0.20
+# A trend (this period vs the last) is only reported when both periods
+# have at least this many cases -- 1 case vs 1 case is noise.
+TREND_MIN_CASES = 5
+FIRST_PASS_WARN = 0.70
+QUALITY_MIN_DECIDED = 5
+FIRST_INPUT_WARN_MS = 15_000
+FIRST_INPUT_MIN_VISITS = 5
+# Per-screen findings of one kind are reported as one line naming the
+# worst few screens -- one finding per problem, not per page.
+SCREENS_NAMED = 3
 ERRORS_CRITICAL = 10
 IDLE_SHARE_INFO = 0.40
 LOAD_IMBALANCE_SHARE = 0.70
@@ -94,9 +104,10 @@ def _cycle_findings(pipeline: dict | None, pipeline_previous: dict | None) -> li
         return []
     out = []
     for card_type, label in (("annotation", "annotating"), ("review", "reviewing")):
-        now_ms = (pipeline.get("legs", {}).get(card_type) or {}).get("work", {}).get("median_ms")
-        prev_ms = (pipeline_previous.get("legs", {}).get(card_type) or {}).get("work", {}).get("median_ms")
-        if not now_ms or not prev_ms:
+        now_leg = (pipeline.get("legs", {}).get(card_type) or {}).get("work", {})
+        prev_leg = (pipeline_previous.get("legs", {}).get(card_type) or {}).get("work", {})
+        now_ms, prev_ms = now_leg.get("median_ms"), prev_leg.get("median_ms")
+        if not now_ms or not prev_ms or min(now_leg.get("count", 0), prev_leg.get("count", 0)) < TREND_MIN_CASES:
             continue
         change = (now_ms - prev_ms) / prev_ms
         if change >= CYCLE_TREND_CHANGE:
@@ -105,7 +116,7 @@ def _cycle_findings(pipeline: dict | None, pipeline_previous: dict | None) -> li
                     f"cycle.slower.{card_type}",
                     "warn",
                     f"{label.capitalize()} a case got {_pct(change)} slower",
-                    f"Median {_duration(now_ms)} now vs {_duration(prev_ms)} in the previous period.",
+                    f"From first opening a case to finishing it: median {_duration(now_ms)} over {now_leg['count']} cases, vs {_duration(prev_ms)} over {prev_leg['count']} in the previous period.",
                     "overview",
                     {"card_type": card_type, "now_ms": now_ms, "previous_ms": prev_ms, "change": round(change, 3)},
                 )
@@ -116,7 +127,7 @@ def _cycle_findings(pipeline: dict | None, pipeline_previous: dict | None) -> li
                     f"cycle.faster.{card_type}",
                     "good",
                     f"{label.capitalize()} a case got {_pct(-change)} faster",
-                    f"Median {_duration(now_ms)} now vs {_duration(prev_ms)} in the previous period.",
+                    f"From first opening a case to finishing it: median {_duration(now_ms)} over {now_leg['count']} cases, vs {_duration(prev_ms)} over {prev_leg['count']} in the previous period.",
                     "overview",
                     {"card_type": card_type, "now_ms": now_ms, "previous_ms": prev_ms, "change": round(change, 3)},
                 )
@@ -124,54 +135,67 @@ def _cycle_findings(pipeline: dict | None, pipeline_previous: dict | None) -> li
     return out
 
 
+def _grouped(kind: str, screens: list[dict], rate_key: str, headline, detail_of, why: str) -> list[dict]:
+    """One finding for every screen showing the same problem: the title
+    names the problem and how widespread, the detail the worst few
+    screens with their numbers."""
+    if not screens:
+        return []
+    screens = sorted(screens, key=lambda sc: (-(sc[rate_key] or 0), -sc["views"]))
+    named = ", ".join(detail_of(sc) for sc in screens[:SCREENS_NAMED])
+    more = f", and {len(screens) - SCREENS_NAMED} more" if len(screens) > SCREENS_NAMED else ""
+    return [
+        _finding(
+            f"screens.{kind}",
+            "warn",
+            headline(screens),
+            f"{named}{more}. {why}",
+            "friction",
+            {"screens": [{"route": sc["route"], rate_key: sc[rate_key], "views": sc["views"]} for sc in screens]},
+        )
+    ]
+
+
 def _screen_findings(usage: dict) -> list[dict]:
-    out = []
-    for screen in usage.get("friction", {}).get("by_screen", []):
-        route = screen["route"]
-        if screen["views"] >= BOUNCE_MIN_VIEWS and screen["bounce_rate"] >= BOUNCE_RATE_WARN:
-            out.append(
-                _finding(
-                    f"screen.bounce.{route}",
-                    "warn",
-                    f"People leave {route} within seconds {_pct(screen['bounce_rate'])} of the time",
-                    f"{screen['bounces']} of {screen['views']} visits bounced -- either it isn't what they expected, or what they need isn't visible.",
-                    "friction",
-                    {"route": route, "bounce_rate": screen["bounce_rate"], "views": screen["views"]},
-                )
-            )
-        if screen["rage_bursts"] >= RAGE_BURSTS_WARN:
-            out.append(
-                _finding(
-                    f"screen.rage.{route}",
-                    "warn",
-                    f"{screen['rage_bursts']} rage-click bursts on {route}",
-                    "Someone hammered the same spot repeatedly -- a control that doesn't respond, or doesn't look like it did.",
-                    "friction",
-                    {"route": route, "rage_bursts": screen["rage_bursts"]},
-                )
-            )
-        if screen["clicks"] >= DEAD_MIN_CLICKS and screen["dead_rate"] >= DEAD_CLICK_RATE_WARN:
-            out.append(
-                _finding(
-                    f"screen.dead.{route}",
-                    "warn",
-                    f"{_pct(screen['dead_rate'])} of clicks on {route} do nothing",
-                    f"{screen['dead_clicks']} of {screen['clicks']} clicks weren't followed by any action or navigation -- things that look clickable but aren't.",
-                    "friction",
-                    {"route": route, "dead_rate": screen["dead_rate"], "clicks": screen["clicks"]},
-                )
-            )
-        if screen["views"] >= BOUNCE_MIN_VIEWS and screen["back_rate"] >= BACK_AND_FORTH_WARN:
-            out.append(
-                _finding(
-                    f"screen.back.{route}",
-                    "warn",
-                    f"People flip back and forth to {route} {_pct(screen['back_rate'])} of the time",
-                    "Returning to the previous screen right away usually means carrying information in your head the UI should show side by side.",
-                    "friction",
-                    {"route": route, "back_rate": screen["back_rate"], "views": screen["views"]},
-                )
-            )
+    screens = usage.get("friction", {}).get("by_screen", [])
+    bounce = [sc for sc in screens if sc["views"] >= BOUNCE_MIN_VIEWS and sc["bounce_rate"] >= BOUNCE_RATE_WARN]
+    back = [sc for sc in screens if sc["views"] >= BOUNCE_MIN_VIEWS and sc["back_rate"] >= BACK_AND_FORTH_WARN]
+    dead = [sc for sc in screens if sc.get("measured_clicks", 0) >= DEAD_MIN_CLICKS and (sc["dead_rate"] or 0) >= DEAD_CLICK_RATE_WARN]
+    rage = [sc | {"rage_rate": sc["rage_bursts"]} for sc in screens if sc["rage_bursts"] >= RAGE_BURSTS_WARN]
+
+    out: list[dict] = []
+    out += _grouped(
+        "bounce",
+        bounce,
+        "bounce_rate",
+        lambda g: f"People leave {g[0]['route']} within seconds {_pct(g[0]['bounce_rate'])} of the time" if len(g) == 1 else f"People leave {len(g)} screens within seconds",
+        lambda sc: f"{sc['route']} {_pct(sc['bounce_rate'])} ({sc['bounces']} of {sc['views']} visits)",
+        "Leaving within 3 s for another screen: it wasn't what they expected, or what they needed wasn't visible.",
+    )
+    out += _grouped(
+        "back",
+        back,
+        "back_rate",
+        lambda g: f"People flip back and forth to {g[0]['route']}" if len(g) == 1 else f"People flip back and forth between {len(g)} screens",
+        lambda sc: f"{sc['route']} {_pct(sc['back_rate'])} of visits",
+        "Going straight back to the screen before usually means carrying something in your head the UI should show side by side.",
+    )
+    out += _grouped(
+        "dead",
+        dead,
+        "dead_rate",
+        lambda g: f"Clicks on {g[0]['route']} often get no response" if len(g) == 1 else f"Clicks often get no response on {len(g)} screens",
+        lambda sc: f"{sc['route']} {_pct(sc['dead_rate'])} ({sc['dead_clicks']} of {sc['measured_clicks']} clicks)",
+        "Something that looks clickable (a control, a pointer cursor) was clicked and nothing on the page changed within a second.",
+    )
+    out += _grouped(
+        "rage",
+        rage,
+        "rage_rate",
+        lambda g: f"{g[0]['rage_bursts']} rage-click bursts on {g[0]['route']}" if len(g) == 1 else f"Rage-click bursts on {len(g)} screens",
+        lambda sc: f"{sc['route']} {sc['rage_bursts']} bursts",
+        "Three or more quick clicks on one spot that got no response -- a control that doesn't react, or doesn't look like it did.",
+    )
     return out
 
 
@@ -204,8 +228,8 @@ def _idle_findings(usage: dict) -> list[dict]:
         _finding(
             "idle",
             "info",
-            f"{_pct(share)} of session time is idle",
-            "Long pauses inside sessions -- waiting on something to load, or on someone else -- rather than active work.",
+            f"{_pct(share)} of session time has no input",
+            "Stretches of 30 s or more without a click, key or mouse move. In the viewer that is often reading an image -- look at where it happens before calling it waste.",
             "behaviour",
             {"idle_share": share},
         )
@@ -296,12 +320,84 @@ def _tool_findings(usage: dict) -> list[dict]:
     ]
 
 
+def _quality_findings(pipeline: dict | None, pipeline_previous: dict | None) -> list[dict]:
+    q = (pipeline or {}).get("quality") or {}
+    if not q.get("decided") or q["decided"] < QUALITY_MIN_DECIDED or q.get("first_pass_rate") is None:
+        return []
+    out = []
+    if q["first_pass_rate"] < FIRST_PASS_WARN:
+        out.append(
+            _finding(
+                "quality.rework",
+                "warn",
+                f"{_pct(1 - q['first_pass_rate'])} of reviewed cases were sent back",
+                f"Only {_pct(q['first_pass_rate'])} of {q['decided']} cases passed review first time"
+                + (f"; approved cases took {q['rounds_to_approve']} submissions on average" if q.get("rounds_to_approve") else "")
+                + ". Every rejection sends the whole case round the pipeline again -- the costliest kind of cycle time.",
+                "overview",
+                q,
+            )
+        )
+    prev = (pipeline_previous or {}).get("quality") or {}
+    if prev.get("decided", 0) >= QUALITY_MIN_DECIDED and prev.get("first_pass_rate") is not None:
+        delta = q["first_pass_rate"] - prev["first_pass_rate"]
+        if abs(delta) >= 0.10:
+            out.append(
+                _finding(
+                    "quality.trend",
+                    "good" if delta > 0 else "warn",
+                    f"First-time review pass rate {'rose' if delta > 0 else 'fell'} to {_pct(q['first_pass_rate'])}",
+                    f"From {_pct(prev['first_pass_rate'])} in the previous period ({q['decided']} vs {prev['decided']} cases decided).",
+                    "overview",
+                    {"now": q["first_pass_rate"], "previous": prev["first_pass_rate"]},
+                )
+            )
+    return out
+
+
+def _effort_findings(usage: dict, usage_previous: dict | None) -> list[dict]:
+    out = []
+    labels = {"annotation": "annotating", "review": "reviewing"}
+    for kind, label in labels.items():
+        now = (usage.get("effort") or {}).get(kind) or {}
+        prev = ((usage_previous or {}).get("effort") or {}).get(kind) or {}
+        if not now.get("active_median_ms") or not prev.get("active_median_ms") or min(now.get("cases", 0), prev.get("cases", 0)) < TREND_MIN_CASES:
+            continue
+        change = (now["active_median_ms"] - prev["active_median_ms"]) / prev["active_median_ms"]
+        if abs(change) >= CYCLE_TREND_CHANGE:
+            out.append(
+                _finding(
+                    f"effort.{kind}",
+                    "warn" if change > 0 else "good",
+                    f"Hands-on time {label} a case {'rose' if change > 0 else 'fell'} {_pct(abs(change))}",
+                    f"Active time in the viewer per case: median {_duration(now['active_median_ms'])} over {now['cases']} cases, vs {_duration(prev['active_median_ms'])} over {prev['cases']}.",
+                    "overview",
+                    {"kind": kind, "now_ms": now["active_median_ms"], "previous_ms": prev["active_median_ms"]},
+                )
+            )
+    first = (usage.get("effort") or {}).get("all") or {}
+    if first.get("first_input_count", 0) >= FIRST_INPUT_MIN_VISITS and (first.get("first_input_median_ms") or 0) >= FIRST_INPUT_WARN_MS:
+        out.append(
+            _finding(
+                "effort.first_input",
+                "warn",
+                f"It takes {_duration(first['first_input_median_ms'])} before anyone can act on a case",
+                f"Median time from opening a case in the viewer to the first click or key, over {first['first_input_count']} openings -- image loading plus getting oriented, paid on every case.",
+                "overview",
+                {"median_ms": first["first_input_median_ms"], "visits": first["first_input_count"]},
+            )
+        )
+    return out
+
+
 def findings(usage: dict, usage_previous: dict | None, pipeline: dict | None, pipeline_previous: dict | None, learning_curve: list[dict] | None) -> list[dict]:
     if not usage.get("totals", {}).get("events"):
         return [_finding("no_data", "info", "Nothing recorded in this period yet", "Findings appear once people have used the platform with recording on.", "settings")]
     out: list[dict] = []
     out += _bottleneck_findings(pipeline)
     out += _cycle_findings(pipeline, pipeline_previous)
+    out += _quality_findings(pipeline, pipeline_previous)
+    out += _effort_findings(usage, usage_previous)
     out += _screen_findings(usage)
     out += _error_findings(usage, usage_previous)
     out += _idle_findings(usage)

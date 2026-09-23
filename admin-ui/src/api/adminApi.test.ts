@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { previousRange } from "./adminApi";
+import { previousRange, toInstant } from "./adminApi";
 
 describe("previousRange", () => {
   beforeEach(() => {
@@ -28,5 +28,13 @@ describe("previousRange", () => {
     const prev = previousRange({ from: "2026-09-21T06:00" });
     expect("from" in prev && prev.to).toBe(new Date("2026-09-21T06:00:00.000Z").toISOString());
     expect("from" in prev && prev.from).toBe(new Date("2026-09-21T00:00:00.000Z").toISOString());
+  });
+});
+
+describe("toInstant", () => {
+  it("turns a calendar (wall-clock) value into the real instant and leaves real instants alone", () => {
+    expect(toInstant("2026-09-20T10:00")).toBe(new Date(2026, 8, 20, 10, 0).toISOString());
+    expect(toInstant("2026-09-20T10:00:00.000Z")).toBe("2026-09-20T10:00:00.000Z");
+    expect(toInstant("garbage")).toBe("garbage");
   });
 });

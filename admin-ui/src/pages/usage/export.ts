@@ -17,6 +17,9 @@ export function csvCell(value: unknown): string {
   else if (value instanceof Date) text = value.toISOString();
   else if (typeof value === "object") text = JSON.stringify(value);
   else text = String(value);
+  // A text cell a spreadsheet would run as a formula gets a leading
+  // apostrophe (shown as text). Numbers -- negative ones included -- stay as they are.
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

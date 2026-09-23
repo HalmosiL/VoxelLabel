@@ -240,8 +240,9 @@ function NavigationMapCard({ summary }: { summary: UsageSummary }) {
 
 /** Validated categorical palette (dataviz check: lightness, chroma,
  * CVD separation, contrast all pass in this order) -- assigned to the
- * five people with the most clicks on the screen, in fixed order;
- * anyone past five folds into a neutral "Others". */
+ * five people with the most time in the period (the People table's
+ * order), so a person keeps the same colour on every screen; anyone
+ * past five folds into a neutral "Others". */
 const USER_COLORS = ["#2563eb", "#d97706", "#7c3aed", "#0891b2", "#db2777"];
 const OTHERS_COLOR = "#9ca3af";
 const OTHERS = "__others__";
@@ -249,9 +250,9 @@ const OTHERS = "__others__";
 function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSummary; route: string; onRoute: (r: string) => void; heatmap: UsageHeatmap | null }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const users = heatmap?.users ?? [];
-  const named = users.slice(0, USER_COLORS.length);
-  const others = users.slice(USER_COLORS.length);
-  const colorOf = new Map<string, string>(named.map((u, i) => [u.user_id, USER_COLORS[i]]));
+  const colorOf = new Map<string, string>(summary.users.slice(0, USER_COLORS.length).map((u, i) => [u.user_id, USER_COLORS[i]]));
+  const named = users.filter((u) => colorOf.has(u.user_id));
+  const others = users.filter((u) => !colorOf.has(u.user_id));
   const keyOf = (userId: string) => (colorOf.has(userId) ? userId : OTHERS);
   const single = users.length <= 1;
   const points = (heatmap?.points ?? []).filter((p) => !hidden.has(keyOf(p.user_id)));
@@ -270,7 +271,7 @@ function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSumma
     <div className="card" data-testid="usage-heatmap">
       <CardHeader
         title="Click heatmap"
-        hint="Every click on one screen, on a window scaled to 16:9, one colour per person. Clusters where nothing is clickable are the interesting ones; click a name to hide or show their dots."
+        hint="Every click on one screen, on a window scaled to 16:9, one colour per person (the same colour on every screen). A hollow ring is a click that got no response -- clusters of those are the thing to fix. Click a name to hide or show their clicks."
         actions={
           <select className="input" value={route} onChange={(e) => onRoute(e.target.value)} aria-label="Screen" data-testid="usage-heatmap-route">
             {summary.routes.map((r) => (
@@ -298,14 +299,17 @@ function HeatmapCard({ summary, route, onRoute, heatmap }: { summary: UsageSumma
             </ul>
           )}
           <svg viewBox="0 0 160 90" className="w-full rounded border border-gray-200 bg-gray-50" role="img" aria-label={`${heatmap.points.length} clicks on ${heatmap.route} by ${users.length} ${users.length === 1 ? "person" : "people"}`} data-testid="usage-heatmap-svg">
-            {points.map((p, i) => (
-              <circle key={i} cx={p.x * 160} cy={p.y * 90} r={1.8} fill={single ? ACCENT : (colorOf.get(p.user_id) ?? OTHERS_COLOR)} fillOpacity={0.45}>
-                <title>{`${nameOf.get(p.user_id) ?? p.user_id}: ${p.target ?? "click"}`}</title>
-              </circle>
-            ))}
+            {points.map((p, i) => {
+              const color = single ? ACCENT : (colorOf.get(p.user_id) ?? OTHERS_COLOR);
+              return (
+                <circle key={i} cx={p.x * 160} cy={p.y * 90} r={p.dead ? 2.2 : 1.8} fill={p.dead ? "none" : color} fillOpacity={0.45} stroke={p.dead ? color : "none"} strokeWidth={0.6} data-dead={p.dead ? "" : undefined}>
+                  <title>{`${nameOf.get(p.user_id) ?? p.user_id}: ${p.target ?? "click"}${p.dead ? " -- no response" : ""}`}</title>
+                </circle>
+              );
+            })}
           </svg>
           <p className="hint mt-2">
-            {heatmap.points.length} clicks in this period{single && users[0] ? `, all by ${users[0].username}` : ""}.
+            {heatmap.points.length} clicks in this period{single && users[0] ? `, all by ${users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.
           </p>
         </>
       )}

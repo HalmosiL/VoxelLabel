@@ -11,6 +11,15 @@
  * other key anyway. Keys are recorded only when the focused element is
  * not editable (shortcuts, not typing).
  *
+ * Each click also records how it landed, so the Usage page can tell a
+ * control that ignored someone from a click on empty space: whether it
+ * hit a real control (`interactive`) or anything with a pointer cursor
+ * (`pointer`), whether it was inside the tutorial overlay (`guide` --
+ * the tour's own buttons aren't work), and whether anything on the page
+ * changed within a second (`responded`: a DOM change, an action, a
+ * navigation). The click is therefore queued a second late, stamped
+ * with the moment it happened.
+ *
  * Every category has a switch a platform admin flips on the Usage page;
  * the effective config is fetched at start and re-polled, so a change
  * reaches every open tab. Nothing here may ever break the app: every
@@ -76,6 +85,12 @@ const IDLE_AFTER_MS = 30_000;
 const IDLE_CHECK_MS = 5_000;
 const MAX_TRACE_POINTS = 600;
 const SESSION_KEY = "vl.usage.session";
+/** How long after a click a page change still counts as its response. */
+const RESPONSE_MS = 1000;
+const INTERACTIVE_SELECTOR =
+  'button, a[href], input, select, textarea, label, summary, [role="button"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="option"], [role="switch"], [role="link"], [contenteditable="true"]';
+/** Id-like runs inside a control's label become "#" (the server does the same). */
+const ID_LIKE = /[0-9A-Fa-f]{6,}|[0-9]{4,}/g;
 
 const CATEGORY: Record<UsageEventType, keyof UsageConfig> = {
   page_view: "track_pages",
@@ -124,6 +139,11 @@ interface State {
   idleSince: number | null;
   timers: number[];
   listening: boolean;
+  /** Last moment the page visibly reacted: a DOM change, an action, a navigation. */
+  lastResponseAt: number;
+  /** Clicks waiting RESPONSE_MS to learn whether anything happened. */
+  pendingClicks: { event: UsageEvent; at: number; measure: boolean; timer: number }[];
+  observer: MutationObserver | null;
 }
 
 const state: State = {
@@ -143,6 +163,9 @@ const state: State = {
   idleSince: null,
   timers: [],
   listening: false,
+  lastResponseAt: 0,
+  pendingClicks: [],
+  observer: null,
 };
 
 function now(): number {
@@ -189,7 +212,7 @@ export function describeTarget(el: EventTarget | null): string {
     if (aria) return `aria:${aria.slice(0, 40)}`;
     const tag = node.tagName.toLowerCase();
     if (tag === "button" || tag === "a") {
-      const text = (node.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
+      const text = (node.textContent ?? "").trim().replace(/\s+/g, " ").replace(ID_LIKE, "#").slice(0, 40);
       return text ? `${tag}:${text}` : tag;
     }
   }
@@ -346,6 +369,7 @@ function leavePage(): void {
 /** Call on every route change. `detail` is the page's internal ids
  * (study_id, case_id, job_id, series_id) -- nothing else. */
 export function trackPageView(pathname: string, detail?: UsageDetail): void {
+  noteResponse();
   leavePage();
   state.route = normalizeRoute(pathname);
   state.routeEnteredAt = now();
@@ -357,14 +381,64 @@ export function trackPageView(pathname: string, detail?: UsageDetail): void {
 }
 
 export function trackAction(name: string, detail?: UsageDetail): void {
+  noteResponse();
   push("action", { name, detail: detail ?? state.pageDetail });
+}
+
+function noteResponse(): void {
+  state.lastResponseAt = now();
+}
+
+/** Queues every click still waiting on its response, with the verdict so far. */
+export function settleClicks(): void {
+  const pending = state.pendingClicks.splice(0, state.pendingClicks.length);
+  for (const p of pending) {
+    if (typeof window !== "undefined") window.clearTimeout(p.timer);
+    if (p.measure && p.event.detail) p.event.detail.responded = state.lastResponseAt > p.at;
+    push("click", p.event);
+  }
 }
 
 function onClick(e: MouseEvent): void {
   noteInput();
-  push("click", {
-    detail: { x: Math.round(e.clientX), y: Math.round(e.clientY), target: describeTarget(e.target), viewport: viewport(), button: e.button },
-  });
+  if (!state.options || (state.configKnown && !allows("click"))) return;
+  const el = e.target instanceof Element ? e.target : null;
+  const onCanvas = el?.tagName.toLowerCase() === "canvas";
+  let pointer = false;
+  try {
+    pointer = el ? window.getComputedStyle(el).cursor === "pointer" : false;
+  } catch {
+    // ignore
+  }
+  const at = now();
+  const event: UsageEvent = {
+    session_id: state.sessionId,
+    app: state.options.app,
+    event_type: "click",
+    route: state.route ?? "/",
+    occurred_at: new Date(at).toISOString(),
+    detail: {
+      x: Math.round(e.clientX),
+      y: Math.round(e.clientY),
+      target: describeTarget(e.target),
+      viewport: viewport(),
+      button: e.button,
+      interactive: onCanvas || Boolean(el?.closest(INTERACTIVE_SELECTOR)),
+      pointer,
+      guide: Boolean(el?.closest("[data-guide-overlay]")),
+    },
+  };
+  // Drawing on the viewer's canvas doesn't touch the DOM -- whether it
+  // "responded" can't be told from here, so it isn't claimed either way.
+  const entry = { event, at, measure: !onCanvas, timer: 0 };
+  entry.timer = window.setTimeout(() => {
+    const i = state.pendingClicks.indexOf(entry);
+    if (i < 0) return;
+    state.pendingClicks.splice(i, 1);
+    if (entry.measure && event.detail) event.detail.responded = state.lastResponseAt > at;
+    push("click", event);
+  }, RESPONSE_MS);
+  state.pendingClicks.push(entry);
 }
 
 function onMouseMove(e: MouseEvent): void {
@@ -417,12 +491,14 @@ function onRejection(e: PromiseRejectionEvent): void {
 
 function onVisibility(): void {
   if (document.visibilityState === "hidden") {
+    settleClicks();
     emitTrace();
     flush(true);
   }
 }
 
 function onPageHide(): void {
+  settleClicks();
   leavePage();
   flush(true);
 }
@@ -447,6 +523,10 @@ function listen(): void {
   window.addEventListener("unhandledrejection", onRejection);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pagehide", onPageHide);
+  if (typeof MutationObserver !== "undefined") {
+    state.observer = new MutationObserver(noteResponse);
+    state.observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+  }
   state.timers.push(
     window.setInterval(() => {
       emitTrace();
@@ -487,6 +567,8 @@ export function _reset(): void {
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("pagehide", onPageHide);
     state.timers.forEach((t) => window.clearInterval(t));
+    state.pendingClicks.forEach((p) => window.clearTimeout(p.timer));
+    state.observer?.disconnect();
   }
   Object.assign(state, {
     options: null,
@@ -505,5 +587,8 @@ export function _reset(): void {
     idleSince: null,
     timers: [],
     listening: false,
+    lastResponseAt: 0,
+    pendingClicks: [],
+    observer: null,
   });
 }

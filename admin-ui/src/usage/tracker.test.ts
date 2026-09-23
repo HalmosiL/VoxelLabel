@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { _reset, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, pendingEvents, setConfig, trackAction, trackPageView, UsageConfig } from "./tracker";
+import { _reset, describeKey, describeTarget, flush, init, isEditableTarget, normalizeRoute, pendingEvents, setConfig, settleClicks, trackAction, trackPageView, UsageConfig } from "./tracker";
 
 const ON: UsageConfig = {
   enabled: true,
@@ -168,8 +168,62 @@ describe("switches", () => {
     document.dispatchEvent(new MouseEvent("mousemove", { clientX: 20, clientY: 20, bubbles: true }));
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
     document.body.dispatchEvent(new MouseEvent("click", { clientX: 5, clientY: 6, bubbles: true }));
+    settleClicks();
     const types = pendingEvents().map((e) => e.event_type);
     expect(types).toEqual(["page_view", "click"]);
+  });
+});
+
+describe("click response", () => {
+  const microtask = () => new Promise((resolve) => setTimeout(resolve, 0));
+  function click(el: Element) {
+    el.dispatchEvent(new MouseEvent("click", { clientX: 1, clientY: 2, bubbles: true }));
+  }
+
+  it("marks a click on a control that changed nothing as not responded, and one that did as responded", async () => {
+    trackPageView("/a");
+    const button = document.createElement("button");
+    button.textContent = "Save";
+    document.body.appendChild(button);
+    await microtask();
+    clock += 10;
+    click(button);
+    clock += 100;
+    settleClicks();
+    click(button);
+    clock += 100;
+    button.textContent = "Saved"; // the page reacted
+    await microtask();
+    settleClicks();
+    const clicks = pendingEvents().filter((e) => e.event_type === "click");
+    expect(clicks.map((c) => [c.detail?.interactive, c.detail?.responded])).toEqual([
+      [true, false],
+      [true, true],
+    ]);
+  });
+
+  it("flags tutorial-overlay clicks, leaves the canvas unjudged and masks ids in labels", async () => {
+    trackPageView("/a");
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-guide-overlay", "");
+    const next = document.createElement("button");
+    next.textContent = "Next";
+    overlay.appendChild(next);
+    const canvas = document.createElement("canvas");
+    const link = document.createElement("a");
+    link.href = "#";
+    link.textContent = "Patient 09a1d4c3 case 20931";
+    document.body.append(overlay, canvas, link);
+    await microtask();
+    click(next);
+    click(canvas);
+    click(link);
+    settleClicks();
+    const [tour, draw, row] = pendingEvents().filter((e) => e.event_type === "click");
+    expect(tour.detail?.guide).toBe(true);
+    expect(draw.detail).toMatchObject({ interactive: true, guide: false });
+    expect(draw.detail && "responded" in draw.detail).toBe(false);
+    expect(row.detail?.target).toBe("a:Patient # case #");
   });
 });
 

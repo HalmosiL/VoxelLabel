@@ -39,8 +39,15 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
 
 def render_markdown(since, until, usage: dict, pipeline: dict | None, findings: list[dict], learning_curve: list[dict] | None) -> str:
     totals = usage.get("totals", {})
-    tasks = usage.get("tasks", {})
+    effort = usage.get("effort", {})
+    basis = usage.get("basis", {})
     parts = [f"# Usage report · {_date(since)} – {_date(until)}\n"]
+    if basis:
+        parts.append(
+            f"_Based on {basis.get('events', 0)} events from {basis.get('people', 0)} people in {basis.get('sessions', 0)} sessions"
+            + (f"; {basis['not_counted']} accounts not counted (admins and test accounts)" if basis.get("not_counted") else "")
+            + "._\n"
+        )
 
     parts.append("## Findings\n")
     if findings:
@@ -59,11 +66,12 @@ def render_markdown(since, until, usage: dict, pipeline: dict | None, findings: 
                 ["Active people", totals.get("active_users", 0)],
                 ["Sessions", totals.get("sessions", 0)],
                 ["Average session", _duration(totals.get("avg_session_ms"))],
-                ["Median time to annotate", f"{_duration(tasks.get('annotate', {}).get('median_ms'))} ({tasks.get('annotate', {}).get('count', 0)} cases)"],
-                ["Median time to review", f"{_duration(tasks.get('review', {}).get('median_ms'))} ({tasks.get('review', {}).get('count', 0)} cases)"],
+                ["Hands-on time per case, annotating", f"{_duration((effort.get('annotation') or {}).get('active_median_ms'))} ({(effort.get('annotation') or {}).get('cases', 0)} cases)"],
+                ["Hands-on time per case, reviewing", f"{_duration((effort.get('review') or {}).get('active_median_ms'))} ({(effort.get('review') or {}).get('cases', 0)} cases)"],
+                ["Time to first action in the viewer", f"{_duration((effort.get('all') or {}).get('first_input_median_ms'))} ({(effort.get('all') or {}).get('first_input_count', 0)} openings)"],
                 ["Errors", totals.get("errors", 0)],
                 ["Friction score (0–100)", score if score is not None else "–"],
-                ["Idle share", f"{round(usage.get('friction', {}).get('idle_share', 0) * 100)}%"],
+                ["Time with no input (30 s+)", f"{round(usage.get('friction', {}).get('idle_share', 0) * 100)}%"],
             ],
         )
     )
@@ -77,21 +85,28 @@ def render_markdown(since, until, usage: dict, pipeline: dict | None, findings: 
                 [
                     [label, _duration((legs.get(ct) or {}).get(kind, {}).get("median_ms")), (legs.get(ct) or {}).get(kind, {}).get("count", 0)]
                     for ct, kind, label in (
-                        ("annotation", "queue", "Waiting to be annotated"),
-                        ("annotation", "work", "Being annotated"),
-                        ("review", "queue", "Waiting to be reviewed"),
-                        ("review", "work", "Being reviewed"),
+                        ("annotation", "queue", "Waiting for an annotator"),
+                        ("annotation", "work", "Annotating (opened → submitted)"),
+                        ("review", "queue", "Waiting for a reviewer"),
+                        ("review", "work", "Reviewing (opened → decided)"),
                     )
                 ],
             )
         )
+        quality = pipeline.get("quality") or {}
+        if quality.get("decided"):
+            parts.append(
+                f"Review outcome: {round((quality.get('first_pass_rate') or 0) * 100)}% of {quality['decided']} cases passed first time"
+                + (f"; approved cases took {quality['rounds_to_approve']} submissions on average." if quality.get("rounds_to_approve") else ".")
+                + "\n"
+            )
         flagged = [b for b in pipeline.get("bottlenecks", []) if b.get("flagged")]
         parts.append("## Bottlenecks\n")
         parts.append(
             _table(
                 ["Case", "Card", "Assignee", "Waiting for", "Waiting"],
                 [
-                    [b.get("case_title") or b["case_id"], b["card_type"], b.get("assignee") or "–", "someone to start" if b["kind"] == "queue" else "a decision", _duration(b["waiting_ms"])]
+                    [b.get("case_title") or b["case_id"], b["card_type"], b.get("assignee") or "–", ("an annotator to start" if b["card_type"] == "annotation" else "a reviewer to start") if b["kind"] == "queue" else ("the annotation to be submitted" if b["card_type"] == "annotation" else "the review decision"), _duration(b["waiting_ms"])]
                     for b in (flagged or pipeline.get("bottlenecks", [])[:5])
                 ],
             )
@@ -103,7 +118,7 @@ def render_markdown(since, until, usage: dict, pipeline: dict | None, findings: 
         _table(
             ["Screen", "Score", "Views", "Bounce", "Back & forth", "Dead clicks", "Rage bursts", "Errors"],
             [
-                [s["route"], s["score"], s["views"], f"{round(s['bounce_rate'] * 100)}%", f"{round(s['back_rate'] * 100)}%", f"{round(s['dead_rate'] * 100)}%", s["rage_bursts"], s["errors"]]
+                [s["route"], s["score"], s["views"], f"{round(s['bounce_rate'] * 100)}%", f"{round(s['back_rate'] * 100)}%", (f"{round(s['dead_rate'] * 100)}%" if s.get("dead_rate") is not None else "–"), s["rage_bursts"], s["errors"]]
                 for s in screens
             ],
         )

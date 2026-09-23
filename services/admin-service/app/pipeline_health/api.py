@@ -10,6 +10,7 @@ exactly the history this needs), AnnotationReview (decisions) -- joined
 through Case -> ImagingStudy -> Series/Instance the same way
 status.py's _latest_annotation_per_case does, since an Annotation's
 target is a series/instance, not a case."""
+import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -25,6 +26,7 @@ from shared_models.models import (
     ImagingStudy,
     Instance,
     Series,
+    UsageEvent,
     WorkflowCard,
     WorkflowCardType,
 )
@@ -72,7 +74,10 @@ def _load_legs(db: Session, card_id: str | None) -> list[dict]:
     submission, not the submission itself)."""
     card_query = db.query(WorkflowCard).filter(WorkflowCard.type.in_([WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW]))
     if card_id:
-        card_query = card_query.filter(WorkflowCard.id == card_id)
+        try:
+            card_query = card_query.filter(WorkflowCard.id == uuid.UUID(card_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="card_id must be a UUID") from None
     cards = {c.id: c for c in card_query.all()}
     if not cards:
         return []
@@ -128,6 +133,32 @@ def _load_legs(db: Session, card_id: str | None) -> list[dict]:
         ):
             reviews_by_annotation[annotation_id].append((created_at, reviewer_id))
 
+    # When someone first opened the case in the viewer for this job. The
+    # viewer stamps job_id/case_id on its page_view (usage tracking);
+    # opening the case is the real start of work -- a first Annotation
+    # row often only appears at "Mark as annotated" itself, which would
+    # count the whole drawing time as waiting and the work as zero.
+    opens: dict[tuple[str, str], list[datetime]] = defaultdict(list)
+    for occurred_at, detail in (
+        db.query(UsageEvent.occurred_at, UsageEvent.detail)
+        .filter(
+            UsageEvent.app == "viewer",
+            UsageEvent.event_type == "page_view",
+            UsageEvent.detail["job_id"].astext.in_([str(cid) for cid in cards]),
+        )
+        .order_by(UsageEvent.occurred_at)
+        .all()
+    ):
+        if detail and detail.get("case_id"):
+            opens[(str(detail["job_id"]), str(detail["case_id"]))].append(occurred_at)
+
+    def first_open(card_key: str, case_key: str, after_at: datetime) -> datetime | None:
+        return next((t for t in opens.get((card_key, case_key), []) if t >= after_at), None)
+
+    def earliest(*values: datetime | None) -> datetime | None:
+        present = [v for v in values if v is not None]
+        return min(present) if present else None
+
     legs = []
     for event in events:
         card = cards.get(event.card_id)
@@ -140,21 +171,35 @@ def _load_legs(db: Session, card_id: str | None) -> list[dict]:
         if card.type == WorkflowCardType.ANNOTATION:
             queue_start = event.occurred_at
             after = [r for r in rows if r[2] >= queue_start]
-            first_touch = after[0][2] if after else None
             submitted = next((r for r in after if r[1] in _EVER_SUBMITTED), None)
             terminal_at, actor_id = (submitted[2], submitted[3]) if submitted else (None, None)
+            first_touch = earliest(after[0][2] if after else None, first_open(str(card.id), case_id, queue_start))
+            # Review outcome of what this leg produced: how many
+            # submissions were sent back before one was approved.
+            submissions = [r for r in after if r[1] in _EVER_SUBMITTED]
+            first_decision = reviews_by_annotation.get(submissions[0][0], []) if submissions else []
+            quality = {
+                "decided_at": first_decision[0][0] if first_decision else None,
+                "first_pass": submissions[0][1] == AnnotationStatus.APPROVED if first_decision else None,
+                "rejections": sum(1 for r in submissions if r[1] == AnnotationStatus.REJECTED),
+                "approved": any(r[1] == AnnotationStatus.APPROVED for r in submissions),
+            }
         else:  # REVIEW
             submitted = next((r for r in rows if r[1] in _EVER_SUBMITTED), None)
             if submitted is None:
                 continue  # entered the review queue, but the submission that put it there isn't visible (shouldn't happen)
             queue_start = submitted[2]
             after = [r for r in rows if r[2] > queue_start]
-            first_touch = after[0][2] if after else None
             decisions = reviews_by_annotation.get(submitted[0], [])
             terminal_at, actor_id = decisions[0] if decisions else (None, None)
+            first_touch = earliest(after[0][2] if after else None, first_open(str(card.id), case_id, queue_start))
+            quality = None
 
+        if first_touch is not None and terminal_at is not None and first_touch > terminal_at:
+            first_touch = terminal_at  # opened again only after finishing; the work began no later than the finish
         legs.append(
             {
+                "quality": quality,
                 "card_id": str(card.id),
                 "card_title": card.title,
                 "card_type": card.type.value,
@@ -166,7 +211,10 @@ def _load_legs(db: Session, card_id: str | None) -> list[dict]:
                 "terminal_at": terminal_at,
                 "actor_id": actor_id,
                 "queue_ms": _ms(first_touch - queue_start) if first_touch else None,
-                "work_ms": _ms(terminal_at - first_touch) if (first_touch and terminal_at) else None,
+                # A first touch that *is* the finish (no earlier draft, no
+                # viewer open on record -- e.g. submitted through the API)
+                # says nothing about how long the work took: unknown, not 0.
+                "work_ms": _ms(terminal_at - first_touch) if (first_touch and terminal_at and first_touch < terminal_at) else None,
             }
         )
     return legs
@@ -197,15 +245,21 @@ def _window(days: int, since: datetime | None, until: datetime | None) -> tuple[
         since = since.replace(tzinfo=timezone.utc)
     if until is not None and until.tzinfo is None:
         until = until.replace(tzinfo=timezone.utc)
-    return since or datetime.now(timezone.utc) - timedelta(days=days), until or datetime.now(timezone.utc)
+    since, until = since or datetime.now(timezone.utc) - timedelta(days=days), until or datetime.now(timezone.utc)
+    if since >= until:
+        raise HTTPException(status_code=422, detail="'from' must be before 'to'")
+    return since, until
 
 
-def build_summary(db: Session, window_since: datetime, window_until: datetime, card_id: str | None = None) -> dict:
+def build_summary(db: Session, window_since: datetime, window_until: datetime, card_id: str | None = None, person_id: str | None = None) -> dict:
     """The /summary payload for an explicit window -- also what the
-    Usage page's findings/report endpoints (app/usage) call, so the
-    pipeline half of a finding is the same number the Pipeline tab
-    shows."""
-    legs = _load_legs(db, card_id)
+    Usage page's overview/findings/report endpoints (app/usage) call, so
+    the pipeline half of a finding is the same number the page shows.
+    With `person_id`, only the cases that person was assigned or did;
+    the "usual wait" a bottleneck is judged against stays every case's,
+    so one person's cases aren't flagged by a yardstick of their own."""
+    all_legs = _load_legs(db, card_id)
+    legs = [leg for leg in all_legs if person_id in (leg["assignee_id"], leg["actor_id"])] if person_id else all_legs
     windowed = [leg for leg in legs if leg["terminal_at"] is not None and window_since <= leg["terminal_at"] <= window_until]
     names = _usernames()
 
@@ -213,11 +267,14 @@ def build_summary(db: Session, window_since: datetime, window_until: datetime, c
     # an old stuck case is exactly what should surface, not get filtered
     # out for predating the selected range.
     now = datetime.now(timezone.utc)
-    bottleneck_rows = stats.bottlenecks(legs, now)[:50]
+    bottleneck_rows = stats.bottlenecks(all_legs, now)
+    if person_id:
+        bottleneck_rows = [row for row in bottleneck_rows if row["assignee_id"] == person_id]
+    bottleneck_rows = bottleneck_rows[:50]
     for row in bottleneck_rows:
         row["assignee"] = names.get(row["assignee_id"], {}).get("username", row["assignee_id"])
 
-    load_rows = stats.assignee_load(legs)
+    load_rows = [row for row in stats.assignee_load(all_legs) if not person_id or row["assignee_id"] == person_id]
     for row in load_rows:
         row["assignee"] = names.get(row["assignee_id"], {}).get("username", row["assignee_id"])
         row["oldest_since"] = row["oldest_since"].isoformat()
@@ -226,6 +283,7 @@ def build_summary(db: Session, window_since: datetime, window_until: datetime, c
         "since": window_since.isoformat(),
         "until": window_until.isoformat(),
         "legs": stats.leg_summary(windowed),
+        "quality": stats.review_quality(legs, window_since, window_until),
         "bottlenecks": bottleneck_rows,
         "assignee_load": load_rows,
     }
@@ -237,12 +295,13 @@ def read_summary(
     since: datetime | None = Query(None, alias="from"),
     until: datetime | None = Query(None, alias="to"),
     card_id: str | None = None,
+    user_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
-    return {"days": days, **build_summary(db, window_since, window_until, card_id)}
+    return {"days": days, **build_summary(db, window_since, window_until, card_id, user_id)}
 
 
 def build_learning_curve(db: Session) -> list[dict]:

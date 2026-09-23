@@ -76,7 +76,9 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
 
   // ---- admin reads the Usage page ----
   {
-    const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true });
+    // A browser in Budapest time: the calendar hands over wall-clock
+    // values, and a UTC-only run would never notice them being misread.
+    const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true, timezoneId: "Europe/Budapest" });
     await ctx.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => undefined);
     await ctx.addInitScript(seenGuides);
     const page = await ctx.newPage();
@@ -94,7 +96,10 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
 
     // ---- Overview: findings, tiles, cycle time, export ----
     check("five tabs, Overview selected", (await page.locator('[data-testid="usage-tabs"] [role="tab"]').count()) === 5 && (await page.locator('[data-testid="usage-tab-overview"]').getAttribute("aria-selected")) === "true");
-    check("tiles render (incl. friction score)", (await page.locator('[data-testid="usage-tiles"] .stat-card').count()) === 7);
+    check("tiles render (incl. friction score)", (await page.locator('[data-testid="usage-tiles"] .stat-card').count()) === 6);
+    check("every judged tile says which direction is better", (await page.locator('[data-testid="usage-tiles"] .stat-card', { hasText: /is better/ }).count()) === 6);
+    check("the header says what the figures are built from and who is left out", /\d+ sessions, [\d,]+ events/.test(await page.locator('[data-testid="usage-basis"]').innerText()) && /not counted/.test(await page.locator('[data-testid="usage-basis"]').innerText()));
+    check("admin accounts are left out of the figures by default", (await api(admin, `${ADMIN}/admin/usage/summary?days=7`)).body.users.every((u) => u.username !== "platform-admin"));
     await page.waitForSelector('[data-testid="usage-finding"]', { timeout: 15000 });
     const severities = await page.locator('[data-testid="usage-finding"]').evaluateAll((els) => els.map((el) => el.dataset.severity));
     // seed.py leaves a rejected case waiting on the Review card with no
@@ -180,17 +185,32 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     // period alongside the usage summary, so a fixed sleep is a race
     // under real system load (this ran fine solo, then flaked inside
     // the full suite) -- poll for the real settled value instead.
-    const firstTile = page.locator('[data-testid="usage-tiles"] .stat-value').first();
+    const basis = page.locator('[data-testid="usage-basis"]');
     let settled = null;
     for (let i = 0; i < 20; i++) {
-      settled = await firstTile.innerText();
-      if (settled === "0") break;
+      settled = await basis.innerText();
+      if (/ 0 people, 0 sessions, 0 events/.test(settled)) break;
       await page.waitForTimeout(300);
     }
-    check("an empty calendar window zeroes the tiles", settled === "0", settled);
+    check("an empty calendar window zeroes the figures", / 0 people, 0 sessions, 0 events/.test(settled), settled);
     await page.locator('[data-testid="usage-calendar-clear"]').click();
     await page.waitForTimeout(800);
     check("clearing the calendar restores the 30-day preset", await page.locator('[data-testid="usage-range-30"]').evaluate((el) => el.className.includes("bg-blue-600")));
+    // The last hour in the browser's own (Budapest) time must contain the
+    // annotator's session from a minute ago -- read as UTC it would be
+    // two hours off and empty.
+    const localNow = await page.evaluate(() => { const d = new Date(); const at = (m) => new Date(d.getTime() + m * 60000 - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); return { from: at(-60), to: at(5) }; });
+    await page.locator('[data-testid="usage-from-input"]').fill(localNow.from);
+    await page.locator('[data-testid="usage-to-input"]').fill(localNow.to);
+    let recent = null;
+    for (let i = 0; i < 20; i++) {
+      recent = Number((/(\d+) (?:person|people),/.exec(await basis.innerText()) || [])[1] ?? 0);
+      if (recent >= 1) break;
+      await page.waitForTimeout(300);
+    }
+    check("the calendar reads times in the browser's own time zone", Number(recent) >= 1, { recent, localNow });
+    await page.locator('[data-testid="usage-calendar-clear"]').click();
+    await page.waitForTimeout(800);
     await page.screenshot({ path: "usage-page.png", fullPage: true });
 
     // ---- People: table, sessions, replay, learning curve ----
@@ -228,8 +248,15 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const learningFigures = await page.locator('[data-testid="usage-learning-curve-figure"]').count();
     check("learning curve either has figures or explains it needs more weeks of history", learningEmpty || learningFigures >= 1, { learningEmpty, learningFigures });
 
-    // ---- Settings: flip the mouse switch off, save, and see it land in the annotator's config ----
+    // ---- Settings: who counts; flip the mouse switch off, save, and see it land in the annotator's config ----
     await tab("settings");
+    check("settings lists every account with its recorded/counted switches", (await page.locator('[data-testid^="usage-person-"]').count()) >= 3 && (await page.locator('[data-testid="usage-exclude-admins"]').isChecked()));
+    check("an admin account shows as left out by the admin rule", /admin account/.test(await page.locator('[data-testid="usage-person-platform-admin"]').innerText()));
+    await page.locator('[data-testid="usage-count-dr-review"]').uncheck();
+    await page.waitForTimeout(800);
+    check("a test account switched off stops counting (and says so)", /test account/.test(await page.locator('[data-testid="usage-person-dr-review"]').innerText()) && (await api(admin, `${ADMIN}/admin/usage/settings`)).body.excluded_user_ids.length === 1);
+    await page.locator('[data-testid="usage-count-dr-review"]').check();
+    await page.waitForTimeout(500);
     check("recording card present with the mouse switch on", await page.locator('[data-testid="usage-switch-track_mouse"]').isChecked());
     await page.locator('[data-testid="usage-switch-track_mouse"]').uncheck();
     await page.locator('[data-testid="usage-save-settings"]').click();

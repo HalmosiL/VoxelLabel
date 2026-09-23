@@ -11,6 +11,12 @@ UNTIL = datetime(2026, 9, 21, tzinfo=timezone.utc)
 USAGE = {
     "totals": {"events": 500, "active_users": 3, "sessions": 12, "avg_session_ms": 754_000, "errors": 2},
     "tasks": {"annotate": {"count": 4, "median_ms": 600_000, "mean_ms": 700_000}, "review": {"count": 2, "median_ms": 120_000, "mean_ms": 150_000}},
+    "effort": {
+        "annotation": {"cases": 4, "active_median_ms": 600_000, "sittings_median": 1, "undos_per_case": 2.0, "first_input_median_ms": None, "first_input_count": 0},
+        "review": {"cases": 2, "active_median_ms": 120_000, "sittings_median": 1, "undos_per_case": 0.0, "first_input_median_ms": None, "first_input_count": 0},
+        "all": {"cases": 6, "active_median_ms": 300_000, "sittings_median": 1, "undos_per_case": 1.3, "first_input_median_ms": 8_000, "first_input_count": 6},
+    },
+    "basis": {"events": 900, "people": 3, "sessions": 12, "not_counted": 1, "admins_left_out": True},
     "friction": {
         "idle_share": 0.12,
         "by_screen": [
@@ -42,10 +48,12 @@ def test_report_has_every_section_and_the_headline_numbers():
         assert heading in md, heading
     assert "- [!!] **1 case is stuck far longer than usual** — CT 7 has waited 10d." in md
     assert "- [+] **dr-test got 40% faster at annotation**" in md
-    assert "| Active people | 3 |" in md and "| Median time to annotate | 10m 00s (4 cases) |" in md
+    assert "| Active people | 3 |" in md and "| Hands-on time per case, annotating | 10m 00s (4 cases) |" in md
+    assert "| Time to first action in the viewer | 8s (6 openings) |" in md
+    assert "_Based on 900 events from 3 people in 12 sessions; 1 accounts not counted (admins and test accounts)._" in md
     assert "| Friction score (0–100) | 31 |" in md  # (42*30 + 5*12) / 42
-    assert "| Being annotated | 10m 00s | 4 |" in md
-    assert "| CT 7 | annotation | dr-test | someone to start | 240h 00m |" in md
+    assert "| Annotating (opened → submitted) | 10m 00s | 4 |" in md
+    assert "| CT 7 | annotation | dr-test | an annotator to start | 240h 00m |" in md
     assert "| /studies | 42 | 30 | 30% | 10% | 10% | 1 | 0 |" in md
     assert "| dr-test | 8 | 1h 00m | 45s | 20% | 4 | 0 | 2 |" in md
     assert "| dr-test | annotation | week 0: 15m 00s | week 2: 9m 00s |" in md

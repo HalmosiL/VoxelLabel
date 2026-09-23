@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSettings, UsageSummary } from "../../api/adminApi";
+import { LearningCurvePoint, UsageEventRow, UsageSession, UsageSessionDetail, UsageSummary } from "../../api/adminApi";
 import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
 import { advance, buildTimeline, GAP_MS, markIndexAt, pageAt } from "./replay";
@@ -8,7 +8,6 @@ import { ACCENT, CardHeader, DownloadCsvButton, formatDuration, formatWhen } fro
 
 export default function PeopleTab({
   summary,
-  settings,
   learningCurve,
   sessionsFor,
   sessions,
@@ -16,10 +15,8 @@ export default function PeopleTab({
   onOpenUser,
   onOpenSession,
   onCloseSessions,
-  onToggle,
 }: {
   summary: UsageSummary;
-  settings: UsageSettings | null;
   learningCurve: LearningCurvePoint[] | null;
   sessionsFor: { user_id: string; username: string } | null;
   sessions: UsageSession[] | null;
@@ -27,11 +24,10 @@ export default function PeopleTab({
   onOpenUser: (user_id: string, username: string, replayLatest?: boolean) => void;
   onOpenSession: (id: string) => void;
   onCloseSessions: () => void;
-  onToggle: (user_id: string, enabled: boolean) => void;
 }) {
   return (
     <div className="space-y-5">
-      <PeopleCard summary={summary} settings={settings} onOpen={onOpenUser} onToggle={onToggle} />
+      <PeopleCard summary={summary} onOpen={onOpenUser} />
       {sessionsFor && <SessionsCard who={sessionsFor} sessions={sessions} selected={session?.session_id ?? null} since={summary.since} until={summary.until} onOpen={onOpenSession} onClose={onCloseSessions} />}
       {session && <ReplayCard session={session} />}
       {learningCurve && <LearningCurveCard rows={learningCurve} since={summary.since} until={summary.until} />}
@@ -41,23 +37,12 @@ export default function PeopleTab({
 
 // ---------------------------------------------------------------- people
 
-function PeopleCard({
-  summary,
-  settings,
-  onOpen,
-  onToggle,
-}: {
-  summary: UsageSummary;
-  settings: UsageSettings | null;
-  onOpen: (user_id: string, username: string, replayLatest?: boolean) => void;
-  onToggle: (user_id: string, enabled: boolean) => void;
-}) {
-  const disabled = new Set(settings?.disabled_user_ids ?? summary.recording.disabled_user_ids);
+function PeopleCard({ summary, onOpen }: { summary: UsageSummary; onOpen: (user_id: string, username: string, replayLatest?: boolean) => void }) {
   return (
     <div className="card" data-guide="usage-people" data-testid="usage-people">
       <CardHeader
         title="People"
-        hint="One row per person. Open a name for their sessions, or Replay to watch their newest sitting as it happened. The recording switch here turns one person off without touching anyone else."
+        hint="One row per person who counts in the figures (admin and test accounts are managed in Settings). Open a name for their sessions, or Replay to watch their newest sitting as it happened."
         actions={
           <DownloadCsvButton
             filename={exportFilename("people", summary.since, summary.until, "csv")}
@@ -75,6 +60,8 @@ function PeopleCard({
               { header: "Clicks", value: (u) => u.clicks },
               { header: "Clicks per minute", value: (u) => u.clicks_per_min },
               { header: "Mouse px per page", value: (u) => u.mouse_px_per_page },
+              { header: "Cases worked", value: (u) => u.cases_worked },
+              { header: "Hands-on time per case (ms)", value: (u) => u.active_per_case_ms },
               { header: "Annotated", value: (u) => u.annotated },
               { header: "Reviewed", value: (u) => u.reviewed },
               { header: "Errors", value: (u) => u.errors },
@@ -92,21 +79,27 @@ function PeopleCard({
             <thead>
               <tr>
                 <th>Person</th>
-                <th>Recording</th>
-                <th className="text-right">Sessions</th>
-                <th className="text-right">Total time</th>
-                <th className="text-right">Pages / session</th>
-                <th className="text-right">Avg stay</th>
-                <th className="text-right" title="Share of navigations that went straight back to the previous screen -- carrying something in their head the UI should show">
+                <th className="text-right" title="Sittings -- one per browser tab per visit">
+                  Sessions
+                </th>
+                <th className="text-right" title="Total time with the platform open">
+                  Time in the app
+                </th>
+                <th className="text-right" title="Cases they opened in the viewer from a job in this period">
+                  Cases worked
+                </th>
+                <th className="text-right" title="Median active time in the viewer per case, across all sittings, idle stretches left out. Lower is better -- compare a person with their own earlier weeks, not with each other.">
+                  Hands-on / case
+                </th>
+                <th className="text-right" title="Mark as annotated / Submit review clicks in the viewer">
+                  Annotated · Reviewed
+                </th>
+                <th className="text-right" title="Share of moves that went straight back to the screen before -- carrying something in their head the UI should show side by side. Lower is better.">
                   Back &amp; forth
                 </th>
-                <th className="text-right">Clicks / min</th>
-                <th className="text-right" title="Pointer travel per page, in pixels -- a lot of it is a lot of searching">
-                  Mouse px / page
+                <th className="text-right" title="JavaScript errors they hit">
+                  Errors
                 </th>
-                <th className="text-right">Annotated</th>
-                <th className="text-right">Reviewed</th>
-                <th className="text-right">Errors</th>
                 <th>Last seen</th>
               </tr>
             </thead>
@@ -124,22 +117,15 @@ function PeopleCard({
                     </div>
                     {u.email && <div className="text-xs text-gray-400">{u.email}</div>}
                   </td>
-                  <td>
-                    <label className="flex items-center gap-1 text-xs">
-                      <input type="checkbox" checked={!disabled.has(u.user_id)} onChange={(e) => onToggle(u.user_id, e.target.checked)} aria-label={`Record ${u.username}`} />
-                      {disabled.has(u.user_id) ? "off" : "on"}
-                    </label>
-                  </td>
                   <td className="text-right tabular-nums">{u.sessions}</td>
                   <td className="text-right tabular-nums">{formatDuration(u.total_ms)}</td>
-                  <td className="text-right tabular-nums">{u.pages_per_session}</td>
-                  <td className="text-right tabular-nums">{formatDuration(u.avg_dwell_ms)}</td>
+                  <td className="text-right tabular-nums">{u.cases_worked}</td>
+                  <td className="text-right tabular-nums">{formatDuration(u.active_per_case_ms)}</td>
+                  <td className="text-right tabular-nums">
+                    {u.annotated} · {u.reviewed}
+                  </td>
                   <td className="text-right tabular-nums">{Math.round(u.back_and_forth * 100)}%</td>
-                  <td className="text-right tabular-nums">{u.clicks_per_min}</td>
-                  <td className="text-right tabular-nums">{u.mouse_px_per_page}</td>
-                  <td className="text-right tabular-nums">{u.annotated}</td>
-                  <td className="text-right tabular-nums">{u.reviewed}</td>
-                  <td className="text-right tabular-nums">{u.errors}</td>
+                  <td className={`text-right tabular-nums ${u.errors ? "font-semibold text-red-700" : ""}`}>{u.errors}</td>
                   <td className="text-xs text-gray-500">{formatWhen(u.last_seen_at)}</td>
                 </tr>
               ))}

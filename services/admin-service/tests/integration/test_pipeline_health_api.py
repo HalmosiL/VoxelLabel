@@ -3,9 +3,10 @@ card records CaseStageEvent rows, a full annotate-then-review cycle
 shows up correctly in the summary's legs, a case left untouched shows
 up as a bottleneck once its wait crosses the fallback threshold, and
 every read is admin-only."""
+import uuid
 from datetime import datetime, timedelta, timezone
 
-from shared_models.models import Annotation, CaseStageEvent
+from shared_models.models import Annotation, CaseStageEvent, UsageEvent
 
 from .conftest import ANNOTATOR_SUBJECT, DM_SUBJECT, REVIEWER_SUBJECT, add_member, make_annotation, make_case, make_review, make_series, make_study
 
@@ -114,6 +115,9 @@ def test_bottlenecks_flag_a_stalled_case_once_it_crosses_the_fallback_threshold(
 
 def test_learning_curve_uses_the_persons_own_first_annotation_as_tenure_start(client, db):
     sid, cases, series, ann, rev = _pipeline(client, db)
+    # A Save before Mark as annotated: evidence of when the work began (a
+    # bare submission alone leaves the work time unknown, not zero).
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "draft")
     annotation_id = make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
     # ct-annotator's real review flow always saves the reviewer's own
     # draft (handleSubmitReview) before posting the decision -- that's
@@ -129,3 +133,47 @@ def test_learning_curve_uses_the_persons_own_first_annotation_as_tenure_start(cl
     assert annot_rows and annot_rows[0]["week"] == 0 and annot_rows[0]["username"] == "dr-test"
     review_rows = [r for r in rows if r["actor_id"] == REVIEWER_SUBJECT and r["card_type"] == "review"]
     assert review_rows and review_rows[0]["username"] == "dr-review"
+
+
+def test_work_starts_when_the_case_is_first_opened_in_the_viewer(client, db):
+    """Mark as annotated without a prior Save makes the submission the
+    first Annotation row; the viewer's page_view for the case is then
+    the real start of work, not the submission itself."""
+    sid, cases, series, ann, rev = _pipeline(client, db)
+    queue_start = db.query(CaseStageEvent).filter_by(card_id=ann["id"]).one().occurred_at - timedelta(hours=5)
+    db.query(CaseStageEvent).filter_by(card_id=ann["id"]).update({"occurred_at": queue_start})
+    db.commit()
+    submitted_id = make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    db.query(Annotation).filter_by(id=submitted_id).update({"created_at": queue_start + timedelta(hours=3)})
+    db.add(
+        UsageEvent(
+            id=uuid.uuid4(),
+            user_id=ANNOTATOR_SUBJECT,
+            session_id="s",
+            app="viewer",
+            event_type="page_view",
+            route="/viewer/:id",
+            detail={"job_id": ann["id"], "case_id": cases[0]["id"]},
+            occurred_at=queue_start + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    client.as_admin()
+    legs = client.get("/admin/pipeline-health/summary", params={"card_id": ann["id"]}).json()["legs"]["annotation"]
+    assert legs["queue"]["median_ms"] == 1 * 3_600_000 and legs["work"]["median_ms"] == 2 * 3_600_000
+
+
+def test_review_quality_and_the_person_filter(client, db):
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=2)
+    first = make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    second = make_annotation(db, sid, series[1], ANNOTATOR_SUBJECT, "submitted")
+    make_review(db, first, REVIEWER_SUBJECT, "approve")
+    make_review(db, second, REVIEWER_SUBJECT, "reject")
+    client.as_admin()
+    quality = client.get("/admin/pipeline-health/summary").json()["quality"]
+    assert quality["decided"] == 2 and quality["first_pass_rate"] == 0.5 and quality["sent_back_rate"] == 0.5 and quality["rounds_to_approve"] == 1
+    # someone who handled none of these cases sees none of them
+    other = client.get("/admin/pipeline-health/summary", params={"user_id": DM_SUBJECT}).json()
+    assert other["quality"]["decided"] == 0 and other["bottlenecks"] == [] and other["assignee_load"] == []
+    mine = client.get("/admin/pipeline-health/summary", params={"user_id": ANNOTATOR_SUBJECT}).json()
+    assert mine["quality"]["decided"] == 2

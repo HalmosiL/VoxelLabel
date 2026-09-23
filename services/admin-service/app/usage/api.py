@@ -6,6 +6,7 @@ always the caller's token subject -- the body never says who."""
 import csv
 import io
 import json
+import re
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import UsageEvent
+from shared_models.models import UsageEvent, WorkflowCard
 from sqlalchemy.orm import Session
 
 from app.keycloak_admin import list_realm_users
@@ -37,7 +38,17 @@ MAX_TEXT = 200
 # The only keys a client may put in `detail` -- internal ids, geometry
 # and short descriptors. Anything else (and any patient data someone
 # might try to smuggle) is dropped before storage.
-ALLOWED_DETAIL_KEYS = {"study_id", "case_id", "job_id", "series_id", "x", "y", "target", "points", "depth", "viewport", "message", "button"}
+ALLOWED_DETAIL_KEYS = {
+    "study_id", "case_id", "job_id", "series_id", "x", "y", "target", "points", "depth", "viewport", "message", "button",
+    # click response signals (see stats._click_signal) and the tutorial-overlay flag
+    "responded", "interactive", "pointer", "guide",
+}  # fmt: skip
+# Id-like runs inside a control's label ("Patient 09a1d4c3…", "Case 20931")
+# become "#": they'd split one control into one row per record, and an
+# identifier is not what a usage figure is about.
+_ID_LIKE = re.compile(r"[0-9A-Fa-f]{6,}|[0-9]{4,}")
+# A clock skewed this far ahead is still accepted, stamped "now".
+MAX_CLOCK_SKEW = timedelta(minutes=5)
 
 EventType = Literal["page_view", "page_leave", "action", "click", "mouse_trace", "scroll", "key", "focus", "idle", "error"]
 
@@ -68,10 +79,15 @@ class SettingsPatch(BaseModel):
     track_errors: bool | None = None
     mouse_sample_ms: int | None = Field(default=None, ge=20, le=2000)
     retention_days: int | None = Field(default=None, ge=1, le=3650)
+    exclude_admins: bool | None = None
 
 
 class UserSwitch(BaseModel):
-    enabled: bool
+    """Either switch, or both: `enabled` records the person at all;
+    `counted` includes their recorded events in the page's figures."""
+
+    enabled: bool | None = None
+    counted: bool | None = None
 
 
 def _require_global_admin(user: CurrentUser) -> None:
@@ -97,6 +113,8 @@ def _clean_detail(detail: dict | None) -> dict | None:
         elif key == "viewport":
             if isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value):
                 cleaned[key] = [int(value[0]), int(value[1])]
+        elif key == "target" and isinstance(value, str):
+            cleaned[key] = _ID_LIKE.sub("#", value)[:MAX_TEXT]
         elif isinstance(value, str):
             cleaned[key] = value[:MAX_TEXT]
         elif isinstance(value, (int, float, bool)):
@@ -111,6 +129,8 @@ def _serialize_settings(row) -> dict:
         "mouse_sample_ms": row.mouse_sample_ms,
         "retention_days": row.retention_days,
         "disabled_user_ids": list(row.disabled_user_ids or []),
+        "excluded_user_ids": list(row.excluded_user_ids or []),
+        "exclude_admins": bool(row.exclude_admins),
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
@@ -147,11 +167,26 @@ def _rows_as_dicts(rows: list[UsageEvent]) -> list[dict]:
     ]
 
 
-def _usernames() -> dict[str, dict]:
+def _people() -> dict[str, dict]:
+    """Every realm account: username, email, whether it holds the global
+    admin role. Fetched once per request and passed down."""
     try:
-        return {u["id"]: {"username": u.get("username") or u["id"], "email": u.get("email")} for u in list_realm_users()}
+        return {u["id"]: {"username": u.get("username") or u["id"], "email": u.get("email"), "is_admin": bool(u.get("is_admin"))} for u in list_realm_users()}
     except Exception:  # noqa: BLE001 -- names are a nicety, the figures are the point
         return {}
+
+
+def _usernames() -> dict[str, dict]:
+    return _people()
+
+
+def _not_counted(settings, people: dict[str, dict]) -> set[str]:
+    """Accounts recorded but left out of every figure: the explicit
+    exclusion list, plus every admin account when exclude_admins is on."""
+    out = set(settings.excluded_user_ids or [])
+    if settings.exclude_admins:
+        out |= {uid for uid, p in people.items() if p.get("is_admin")}
+    return out
 
 
 def _window(days: int, since: datetime | None, until: datetime | None) -> tuple[datetime, datetime]:
@@ -167,13 +202,18 @@ def _window(days: int, since: datetime | None, until: datetime | None) -> tuple[
         since = since.replace(tzinfo=timezone.utc)
     if until is not None and until.tzinfo is None:
         until = until.replace(tzinfo=timezone.utc)
-    return since or datetime.now(timezone.utc) - timedelta(days=days), until or datetime.now(timezone.utc)
+    since, until = since or datetime.now(timezone.utc) - timedelta(days=days), until or datetime.now(timezone.utc)
+    if since >= until:
+        raise HTTPException(status_code=422, detail="'from' must be before 'to'")
+    return since, until
 
 
-def _load(db: Session, since: datetime, until: datetime, user_id: str | None = None) -> list[dict]:
+def _load(db: Session, since: datetime, until: datetime, user_id: str | None = None, not_counted: set[str] | None = None) -> list[dict]:
     query = db.query(UsageEvent).filter(UsageEvent.occurred_at >= since, UsageEvent.occurred_at <= until)
     if user_id:
         query = query.filter(UsageEvent.user_id == user_id)
+    if not_counted:
+        query = query.filter(UsageEvent.user_id.notin_(not_counted))
     return _rows_as_dicts(query.order_by(UsageEvent.occurred_at).all())
 
 
@@ -201,10 +241,14 @@ def ingest_events(body: EventsBody, db: Session = Depends(get_db), user: Current
     settings = get_settings(db)
     config = effective_config(settings, user.subject)
     accepted = 0
+    now = datetime.now(timezone.utc)
     if config["enabled"]:
         for item in body.events:
             if not allows(config, item.event_type):
                 continue
+            occurred_at = item.occurred_at if item.occurred_at.tzinfo else item.occurred_at.replace(tzinfo=timezone.utc)
+            if occurred_at > now + MAX_CLOCK_SKEW:
+                occurred_at = now  # a client clock far ahead; keep the event, not the date
             db.add(
                 UsageEvent(
                     id=uuid.uuid4(),
@@ -216,7 +260,7 @@ def ingest_events(body: EventsBody, db: Session = Depends(get_db), user: Current
                     name=item.name,
                     detail=_clean_detail(item.detail),
                     duration_ms=item.duration_ms,
-                    occurred_at=item.occurred_at,
+                    occurred_at=occurred_at,
                 )
             )
             accepted += 1
@@ -249,35 +293,72 @@ def update_settings(body: SettingsPatch, db: Session = Depends(get_db), user: Cu
 def set_user_switch(
     user_id: str, body: UserSwitch, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    """Per-person recording switch: off adds them to the excluded list,
-    on takes them off it. Everyone not on the list is recorded."""
+    """Per-person switches. `enabled` false stops recording them at all;
+    `counted` false keeps recording but leaves them out of the figures
+    (a test or demo account). Everyone not on a list is on."""
     _require_global_admin(user)
     row = get_settings(db)
-    excluded = [u for u in (row.disabled_user_ids or []) if u != user_id]
-    if not body.enabled:
-        excluded.append(user_id)
-    row.disabled_user_ids = excluded
+    if body.enabled is not None:
+        disabled = [u for u in (row.disabled_user_ids or []) if u != user_id]
+        if not body.enabled:
+            disabled.append(user_id)
+        row.disabled_user_ids = disabled
+    if body.counted is not None:
+        excluded = [u for u in (row.excluded_user_ids or []) if u != user_id]
+        if not body.counted:
+            excluded.append(user_id)
+        row.excluded_user_ids = excluded
     db.commit()
     db.refresh(row)
     return _serialize_settings(row)
 
 
-def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None) -> dict:
+def _effort_by_type(db: Session, entries: list[dict]) -> dict:
+    """case_effort() entries split by the kind of job they were for --
+    annotating or reviewing -- via the workflow card the viewer page was
+    opened from."""
+    job_ids = set()
+    for e in entries:
+        try:
+            job_ids.add(uuid.UUID(e["job_id"]))
+        except ValueError:
+            continue
+    types = {str(c.id): c.type.value for c in db.query(WorkflowCard.id, WorkflowCard.type).filter(WorkflowCard.id.in_(job_ids)).all()} if job_ids else {}
+    split: dict[str, list[dict]] = {"annotation": [], "review": []}
+    for e in entries:
+        kind = types.get(e["job_id"])
+        if kind in split:
+            split[kind].append(e)
+    return {kind: stats.effort_summary(rows) for kind, rows in split.items()} | {"all": stats.effort_summary(entries)}
+
+
+def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None, people: dict | None = None) -> dict:
     """The /summary payload for an explicit window (usernames resolved,
-    friction score attached) -- shared by /summary, /findings and
-    /report.md so a finding's number is the number the page shows."""
-    summary = stats.summarize(_load(db, window_since, window_until, user_id))
-    names = _usernames()
-    for row in summary["users"]:
-        row.update(names.get(row["user_id"], {"username": row["user_id"], "email": None}))
-        row["last_seen_at"] = _iso(row["last_seen_at"])
+    friction score and per-case effort attached, excluded accounts left
+    out) -- shared by /summary, /overview, /findings and /report.md so a
+    finding's number is the number the page shows."""
+    people = _people() if people is None else people
     settings = get_settings(db)
+    not_counted = _not_counted(settings, people)
+    events = _load(db, window_since, window_until, user_id, not_counted)
+    summary = stats.summarize(events)
+    summary["effort"] = _effort_by_type(db, summary.pop("_effort"))
+    for row in summary["users"]:
+        row.update({k: v for k, v in people.get(row["user_id"], {"username": row["user_id"], "email": None}).items() if k in ("username", "email")})
+        row["last_seen_at"] = _iso(row["last_seen_at"])
     summary["since"] = window_since.isoformat()
     summary["until"] = window_until.isoformat()
     summary["friction_score"] = friction_score(summary)
     summary["recording"] = {
         "enabled": settings.enabled,
         "disabled_user_ids": list(settings.disabled_user_ids or []),
+    }
+    summary["basis"] = {
+        "events": len(events),
+        "people": summary["totals"]["active_users"],
+        "sessions": summary["totals"]["sessions"],
+        "not_counted": len(not_counted),
+        "admins_left_out": bool(settings.exclude_admins),
     }
     return summary
 
@@ -290,10 +371,11 @@ def _previous_window(window_since: datetime, window_until: datetime) -> tuple[da
 
 def _build_findings_bundle(db: Session, window_since: datetime, window_until: datetime, user_id: str | None) -> dict:
     prev_since, prev_until = _previous_window(window_since, window_until)
-    usage = build_usage_summary(db, window_since, window_until, user_id)
-    usage_previous = build_usage_summary(db, prev_since, prev_until, user_id)
-    pipeline = build_pipeline_summary(db, window_since, window_until)
-    pipeline_previous = build_pipeline_summary(db, prev_since, prev_until)
+    people = _people()
+    usage = build_usage_summary(db, window_since, window_until, user_id, people)
+    usage_previous = build_usage_summary(db, prev_since, prev_until, user_id, people)
+    pipeline = build_pipeline_summary(db, window_since, window_until, person_id=user_id)
+    pipeline_previous = build_pipeline_summary(db, prev_since, prev_until, person_id=user_id)
     learning = build_learning_curve(db)
     return {
         "since": window_since.isoformat(),
@@ -319,6 +401,61 @@ def read_summary(
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
     return {"days": days, **build_usage_summary(db, window_since, window_until, user_id)}
+
+
+@router.get("/overview")
+def read_overview(
+    days: int = Query(30, ge=1, le=365),
+    since: datetime | None = Query(None, alias="from"),
+    until: datetime | None = Query(None, alias="to"),
+    user_id: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Everything the Usage page needs for one window in one call: the
+    usage summary and the previous period's, the pipeline figures and
+    theirs, the learning curve and the findings drawn from all of it.
+    Each is computed once -- the page used to ask for the same summary
+    four times over."""
+    _require_global_admin(user)
+    window_since, window_until = _window(days, since, until)
+    bundle = _build_findings_bundle(db, window_since, window_until, user_id)
+    return {
+        "since": bundle["since"],
+        "until": bundle["until"],
+        "summary": bundle["usage"],
+        "previous": bundle["usage_previous"],
+        "pipeline": bundle["pipeline"],
+        "pipeline_previous": bundle["pipeline_previous"],
+        "learning_curve": bundle["learning_curve"],
+        "findings": bundle["findings"],
+    }
+
+
+@router.get("/people")
+def read_people(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> list[dict]:
+    """Every account with its two switches -- recorded at all, counted in
+    the figures -- for the Settings tab. Admin accounts show as not
+    counted while exclude_admins is on, whatever their own switch says."""
+    _require_global_admin(user)
+    settings = get_settings(db)
+    disabled = set(settings.disabled_user_ids or [])
+    excluded = set(settings.excluded_user_ids or [])
+    rows = []
+    for uid, p in _people().items():
+        rows.append(
+            {
+                "user_id": uid,
+                "username": p["username"],
+                "email": p.get("email"),
+                "is_admin": p.get("is_admin", False),
+                "recorded": bool(settings.enabled) and uid not in disabled,
+                "counted": uid not in excluded and not (settings.exclude_admins and p.get("is_admin")),
+                "counted_switch": uid not in excluded,
+            }
+        )
+    rows.sort(key=lambda r: (r["is_admin"], r["username"].lower()))
+    return rows
 
 
 @router.get("/findings")
@@ -360,11 +497,21 @@ def read_report(
 EXPORT_COLUMNS = ["occurred_at", "user_id", "username", "session_id", "app", "event_type", "route", "name", "duration_ms", "detail"]
 
 
+def _safe_cell(value):
+    """A text cell a spreadsheet would run as a formula (=, +, -, @,
+    tab, CR at the start) gets a leading apostrophe -- shown as text."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
 def _events_csv(db: Session, window_since: datetime, window_until: datetime, user_id: str | None, include_mouse: bool) -> Iterator[str]:
     """Streams one CSV row per event -- a generator so a 90-day window
     is never built in memory. Mouse traces (bulky, rarely wanted in a
     spreadsheet) only with include_mouse. `detail` is JSON text."""
-    names = _usernames()
+    people = _people()
+    names = people
+    not_counted = _not_counted(get_settings(db), people)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(EXPORT_COLUMNS)
@@ -376,9 +523,11 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
         query = query.filter(UsageEvent.user_id == user_id)
     if not include_mouse:
         query = query.filter(UsageEvent.event_type != "mouse_trace")
+    if not_counted:
+        query = query.filter(UsageEvent.user_id.notin_(not_counted))
     for e in query.order_by(UsageEvent.occurred_at).yield_per(1000):
         writer.writerow(
-            [
+            [_safe_cell(v) for v in [
                 e.occurred_at.isoformat() if e.occurred_at else "",
                 e.user_id,
                 names.get(e.user_id, {}).get("username", e.user_id),
@@ -389,7 +538,7 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
                 e.name or "",
                 e.duration_ms if e.duration_ms is not None else "",
                 json.dumps(e.detail, separators=(",", ":")) if e.detail else "",
-            ]
+            ]]
         )
         yield buffer.getvalue()
         buffer.seek(0)
@@ -479,11 +628,14 @@ def read_heatmap(
     )
     if user_id:
         query = query.filter(UsageEvent.user_id == user_id)
+    names = _people()
+    not_counted = _not_counted(get_settings(db), names)
+    if not_counted:
+        query = query.filter(UsageEvent.user_id.notin_(not_counted))
     rows = query.order_by(UsageEvent.occurred_at).all()
     points = stats.click_points(_rows_as_dicts(rows), route)
     # Who clicked, most clicks first -- the heatmap's legend and colour key.
     clicks_by_user = Counter(p["user_id"] for p in points)
-    names = _usernames()
     users = [
         {"user_id": user_id, "username": names.get(user_id, {}).get("username", user_id), "clicks": n}
         for user_id, n in sorted(clicks_by_user.items(), key=lambda kv: (-kv[1], kv[0]))

@@ -3,11 +3,11 @@ import EmptyState from "../../components/EmptyState";
 import { exportFilename } from "./export";
 import { CardHeader, DownloadCsvButton, formatDuration, formatWhen } from "./shared";
 
-export default function FrictionTab({ summary, pipelineHealth }: { summary: UsageSummary; pipelineHealth: PipelineHealthSummary | null }) {
+export default function FrictionTab({ summary, pipelineHealth, personName }: { summary: UsageSummary; pipelineHealth: PipelineHealthSummary | null; personName: string | null }) {
   return (
     <div className="space-y-5">
       <ScreensByFrictionCard summary={summary} />
-      {pipelineHealth && <BottlenecksCard summary={pipelineHealth} />}
+      {pipelineHealth && <BottlenecksCard summary={pipelineHealth} personName={personName} />}
     </div>
   );
 }
@@ -18,7 +18,13 @@ function scoreChip(score: number): string {
   return "badge-green";
 }
 
-const pct = (v: number) => `${Math.round(v * 100)}%`;
+/** What a waiting case is waiting on, in the words of the job. */
+function waitingFor(row: { kind: "queue" | "work"; card_type: "annotation" | "review" }): string {
+  if (row.kind === "queue") return row.card_type === "review" ? "a reviewer to start" : "an annotator to start";
+  return row.card_type === "review" ? "the review decision" : "the annotation to be submitted";
+}
+
+const pct = (v: number | null) => (v === null ? "–" : `${Math.round(v * 100)}%`);
 
 function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
   const rows = summary.friction.by_screen;
@@ -28,8 +34,9 @@ function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
         title="Screens by friction"
         hint={
           <>
-            One score per screen (0 = smooth, 100 = everyone struggling), from four signals: <strong>bounce</strong> -- left within 3 s and went elsewhere; <strong>back &amp; forth</strong> -- returned straight to the previous screen; <strong>dead clicks</strong> -- clicks
-            nothing followed within 2 s; <strong>rage</strong> -- 3+ clicks within half a second on the same spot. Idle time was {pct(summary.friction.idle_share)} of all session time.
+            Every screen ranked by one score (0 smooth, 100 everyone struggling) built from four signals: <strong>bounce</strong> -- left within 3 s for another screen; <strong>back &amp; forth</strong> -- went straight back to the screen before; <strong>no response</strong> -- clicked
+            something that looks clickable and nothing on the page changed within a second; <strong>rage</strong> -- 3+ quick clicks on one spot, none answered. Start at the top. Redirects and tutorial clicks are left out. {pct(summary.friction.idle_share)} of session time had no input for
+            30 s or more.
           </>
         }
         actions={
@@ -45,8 +52,9 @@ function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
               { header: "Bounce rate", value: (r) => r.bounce_rate },
               { header: "Returns", value: (r) => r.returns },
               { header: "Back-and-forth rate", value: (r) => r.back_rate },
-              { header: "Dead clicks", value: (r) => r.dead_clicks },
-              { header: "Dead click rate", value: (r) => r.dead_rate },
+              { header: "Measured clicks", value: (r) => r.measured_clicks },
+              { header: "No-response clicks", value: (r) => r.dead_clicks },
+              { header: "No-response rate", value: (r) => r.dead_rate },
               { header: "Rage bursts", value: (r) => r.rage_bursts },
               { header: "Errors", value: (r) => r.errors },
             ]}
@@ -70,10 +78,10 @@ function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
                 <th className="text-right" title="Returned to the screen visited two steps earlier">
                   Back &amp; forth
                 </th>
-                <th className="text-right" title="Clicks nothing followed within 2 seconds">
-                  Dead clicks
+                <th className="text-right" title="Clicks on something that looks clickable where nothing on the page changed within a second -- out of the clicks where that could be measured">
+                  No response
                 </th>
-                <th className="text-right" title="3+ clicks within half a second on the same spot">
+                <th className="text-right" title="3+ clicks within half a second on the same spot, none of them answered">
                   Rage bursts
                 </th>
                 <th className="text-right">Errors</th>
@@ -93,8 +101,8 @@ function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
                   <td className="text-right tabular-nums">
                     {pct(r.back_rate)} <span className="text-xs text-gray-400">({r.returns})</span>
                   </td>
-                  <td className="text-right tabular-nums">
-                    {pct(r.dead_rate)} <span className="text-xs text-gray-400">({r.dead_clicks}/{r.clicks})</span>
+                  <td className="text-right tabular-nums" title={r.dead_rate === null ? "No click here could be measured yet (bare background, the image canvas, or recorded before this was measured)" : undefined}>
+                    {pct(r.dead_rate)} {r.measured_clicks > 0 && <span className="text-xs text-gray-400">({r.dead_clicks}/{r.measured_clicks})</span>}
                   </td>
                   <td className="text-right tabular-nums">{r.rage_bursts}</td>
                   <td className={`text-right tabular-nums ${r.errors ? "font-semibold text-red-700" : ""}`}>{r.errors}</td>
@@ -108,12 +116,17 @@ function ScreensByFrictionCard({ summary }: { summary: UsageSummary }) {
   );
 }
 
-function BottlenecksCard({ summary }: { summary: PipelineHealthSummary }) {
+function BottlenecksCard({ summary, personName }: { summary: PipelineHealthSummary; personName: string | null }) {
   return (
     <div className="card" data-guide="usage-bottlenecks" data-testid="usage-bottlenecks">
       <CardHeader
         title="Bottlenecks"
-        hint="Cases currently waiting, ranked by how long. Flagged rows are waiting more than twice as long as that card's own usual wait (or, for a card with too little history yet, more than a week)."
+        hint={
+          <>
+            Cases waiting right now, longest first. A red row waits more than twice as long as that job usually does (or, with too little history, more than a week) -- the ones to chase.
+            {personName && <strong> Only cases assigned to {personName}.</strong>}
+          </>
+        }
         actions={
           <DownloadCsvButton
             filename={exportFilename("bottlenecks", summary.since, summary.until, "csv")}
@@ -123,7 +136,7 @@ function BottlenecksCard({ summary }: { summary: PipelineHealthSummary }) {
               { header: "Case id", value: (r) => r.case_id },
               { header: "Card", value: (r) => r.card_type },
               { header: "Assignee", value: (r) => r.assignee ?? "" },
-              { header: "Waiting for", value: (r) => (r.kind === "queue" ? "someone to start" : "a decision") },
+              { header: "Waiting for", value: (r) => waitingFor(r) },
               { header: "Waiting (ms)", value: (r) => r.waiting_ms },
               { header: "Usual (ms)", value: (r) => r.baseline_ms },
               { header: "Flagged", value: (r) => r.flagged },
@@ -153,7 +166,7 @@ function BottlenecksCard({ summary }: { summary: PipelineHealthSummary }) {
                   <td>{row.case_title ?? row.case_id}</td>
                   <td className="capitalize">{row.card_type}</td>
                   <td>{row.assignee ?? "Unassigned"}</td>
-                  <td>{row.kind === "queue" ? "someone to start" : "a decision"}</td>
+                  <td>{waitingFor(row)}</td>
                   <td className={`text-right tabular-nums ${row.flagged ? "font-semibold text-red-700" : ""}`}>{formatDuration(row.waiting_ms)}</td>
                   <td className="text-right tabular-nums text-gray-400">{row.baseline_ms ? formatDuration(row.baseline_ms) : "no history yet"}</td>
                 </tr>

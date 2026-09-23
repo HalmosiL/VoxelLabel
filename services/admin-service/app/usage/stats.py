@@ -13,11 +13,23 @@ from datetime import datetime
 from statistics import mean, median
 
 BOUNCE_MS = 3000
+# A page left in under a second was passed through, not used -- a
+# redirect (the viewer's /viewer/series/:id hands over in ~90 ms) or a
+# fast click through a menu. Dropped before anything is counted, so it
+# can neither "bounce" nor appear as a step in someone's path.
+REDIRECT_MS = 1000
 RAGE_WINDOW_MS = 500
 RAGE_RADIUS_PX = 30
-DEAD_CLICK_MS = 2000
 VIEWER_ROUTE_PREFIX = "/viewer"
 TASK_ACTIONS = {"annotate": "mark_annotated", "review": "submit_review"}
+UNDO_ACTIONS = {"undo"}
+# Before the tracker marked clicks inside the tutorial overlay
+# (detail.guide), these were its buttons -- the tour's own clicks are
+# not work on the page underneath.
+LEGACY_GUIDE_TARGETS = {"button:Next", "button:Finish", "button:Back", "button:Skip tour"}
+# Before the tracker recorded whether a click got a response
+# (detail.responded), a click on one of these was on a real control.
+_LEGACY_INTERACTIVE_PREFIXES = ("button", "a:", "testid:", "aria:", "guide:")
 
 
 def _ms(value) -> int:
@@ -33,6 +45,44 @@ def _by_session(events: list[dict]) -> dict[str, list[dict]]:
     for rows in grouped.values():
         rows.sort(key=lambda e: _ms(e["occurred_at"]))
     return grouped
+
+
+def _is_guide_click(e: dict) -> bool:
+    d = e.get("detail") or {}
+    if "guide" in d:
+        return bool(d["guide"])
+    return d.get("target") in LEGACY_GUIDE_TARGETS
+
+
+def _legacy_interactive(target: str) -> bool:
+    return target in ("a", "canvas") or target.startswith(_LEGACY_INTERACTIVE_PREFIXES)
+
+
+def prepare(events: list[dict]) -> list[dict]:
+    """What every figure is computed over: the recorded events minus the
+    ones that aren't the person's own work -- pages passed through in
+    under REDIRECT_MS (the page_view and its page_leave both go) and
+    clicks inside the tutorial overlay. Returned grouped by session,
+    each session in time order."""
+    out: list[dict] = []
+    for rows in _by_session(events).values():
+        drop: set[int] = set()
+        open_view: dict[str, int] = {}
+        for i, e in enumerate(rows):
+            kind = e["event_type"]
+            if kind == "page_view":
+                open_view[e["route"]] = i
+            elif kind == "page_leave":
+                duration = e.get("duration_ms")
+                if duration is not None and int(duration) < REDIRECT_MS:
+                    drop.add(i)
+                    j = open_view.pop(e["route"], None)
+                    if j is not None:
+                        drop.add(j)
+            elif kind == "click" and _is_guide_click(e):
+                drop.add(i)
+        out.extend(e for i, e in enumerate(rows) if i not in drop)
+    return out
 
 
 def _page_routes(rows: list[dict]) -> list[str]:
@@ -176,6 +226,78 @@ def task_durations(events: list[dict]) -> dict:
     }
 
 
+def case_effort(events: list[dict]) -> list[dict]:
+    """What working one case in the viewer actually cost, per (job,
+    case), across every sitting: active time (time on the case's viewer
+    page minus idle stretches), how many sittings it took, undo count,
+    and -- per visit -- how long until the first click, key or action
+    (loading plus getting oriented: the wait before work can start).
+    Keyed by the job_id/case_id the viewer stamps on its page_view."""
+    per: dict[tuple, dict] = {}
+    for session_id, rows in _by_session(events).items():
+        current: tuple | None = None
+        idle = 0
+        opened = 0
+        waiting_for_input = False
+        for e in rows:
+            kind = e["event_type"]
+            if kind == "page_view":
+                d = e.get("detail") or {}
+                current = None
+                if e["route"].startswith(VIEWER_ROUTE_PREFIX) and d.get("case_id") and d.get("job_id"):
+                    current = (str(d["job_id"]), str(d["case_id"]))
+                    entry = per.setdefault(
+                        current,
+                        {"job_id": current[0], "case_id": current[1], "user_ids": set(), "sessions": set(), "active_ms": 0, "undos": 0, "first_input_ms": []},
+                    )
+                    entry["sessions"].add(session_id)
+                    entry["user_ids"].add(e["user_id"])
+                    idle, opened, waiting_for_input = 0, _ms(e["occurred_at"]), True
+                continue
+            if current is None:
+                continue
+            entry = per[current]
+            if kind == "idle":
+                idle += int(e.get("duration_ms") or 0)
+            elif kind == "page_leave":
+                if e.get("duration_ms") is not None:
+                    entry["active_ms"] += max(int(e["duration_ms"]) - idle, 0)
+                current = None
+            elif kind in ("click", "key", "action"):
+                if waiting_for_input:
+                    entry["first_input_ms"].append(_ms(e["occurred_at"]) - opened)
+                    waiting_for_input = False
+                if kind == "action" and e.get("name") in UNDO_ACTIONS:
+                    entry["undos"] += 1
+    return [
+        {
+            "job_id": v["job_id"],
+            "case_id": v["case_id"],
+            "user_ids": sorted(v["user_ids"]),
+            "sittings": len(v["sessions"]),
+            "active_ms": v["active_ms"],
+            "undos": v["undos"],
+            "first_input_ms": v["first_input_ms"],
+        }
+        for v in per.values()
+    ]
+
+
+def effort_summary(entries: list[dict]) -> dict:
+    """Medians over case_effort() entries: what one case typically costs."""
+    active = [e["active_ms"] for e in entries if e["active_ms"] > 0]
+    sittings = [e["sittings"] for e in entries]
+    first_input = [ms for e in entries for ms in e["first_input_ms"]]
+    return {
+        "cases": len(entries),
+        "active_median_ms": int(median(active)) if active else None,
+        "sittings_median": median(sittings) if sittings else None,
+        "undos_per_case": round(sum(e["undos"] for e in entries) / len(entries), 1) if entries else None,
+        "first_input_median_ms": int(median(first_input)) if first_input else None,
+        "first_input_count": len(first_input),
+    }
+
+
 def _rage_clicks(clicks: list[dict]) -> int:
     """Bursts of 3+ clicks within RAGE_WINDOW_MS landing within
     RAGE_RADIUS_PX of the first -- someone hammering a control that
@@ -199,12 +321,42 @@ def _rage_clicks(clicks: list[dict]) -> int:
     return bursts
 
 
+def _click_signal(e: dict) -> bool | None:
+    """True for a dead click, False for a live one, None when unknown.
+    A click is dead when it landed on something that looks clickable (a
+    control, or anything with a pointer cursor) and nothing on the page
+    changed within a second -- the tracker watches the DOM for that
+    (detail.responded). Clicks on bare background, on the viewer's image
+    canvas (drawing doesn't touch the DOM) and clicks recorded before
+    the tracker measured it are unknown, and left out of the rate."""
+    d = e.get("detail") or {}
+    if "responded" not in d:
+        return None
+    if not (d.get("interactive") or d.get("pointer")):
+        return None
+    return not d["responded"]
+
+
+def _rage_candidate(e: dict) -> bool:
+    """A click that could be part of a rage burst: one that got no
+    response (or, for older clicks, one not on a real control). Hammering
+    a Next button that does step each time is fast work, not rage."""
+    d = e.get("detail") or {}
+    if "responded" in d:
+        return not d["responded"]
+    return not _legacy_interactive(d.get("target") or "")
+
+
 def friction(events: list[dict]) -> dict:
+    """The friction signals per screen, over prepare()d events. Linear
+    in the number of events per session (a working day in the viewer is
+    thousands of them)."""
     bounces: Counter = Counter()
     views: Counter = Counter()
     returned_to: Counter = Counter()
     rage: Counter = Counter()
     dead: Counter = Counter()
+    measured: Counter = Counter()
     errors: Counter = Counter()
     clicks_total: Counter = Counter()
     idle_ms = 0
@@ -217,28 +369,27 @@ def friction(events: list[dict]) -> dict:
             if routes[i] == routes[i - 2]:
                 returned_to[routes[i]] += 1
         views.update(_visits(rows))
-        clicks_by_route: dict[str, list[dict]] = defaultdict(list)
+        last_view = max((i for i, e in enumerate(rows) if e["event_type"] == "page_view"), default=-1)
+        rage_by_route: dict[str, list[dict]] = defaultdict(list)
         for idx, e in enumerate(rows):
             kind = e["event_type"]
             if kind == "page_leave" and e.get("duration_ms") is not None and int(e["duration_ms"]) < BOUNCE_MS:
-                if any(later["event_type"] == "page_view" for later in rows[idx + 1 :]):
+                if idx < last_view:  # left for another page, not the end of the sitting
                     bounces[e["route"]] += 1
             elif kind == "click":
-                clicks_by_route[e["route"]].append(e)
                 clicks_total[e["route"]] += 1
-                t = _ms(e["occurred_at"])
-                followed = any(
-                    later["event_type"] in ("action", "page_view") and _ms(later["occurred_at"]) - t <= DEAD_CLICK_MS
-                    for later in rows[idx + 1 :]
-                    if _ms(later["occurred_at"]) - t <= DEAD_CLICK_MS
-                )
-                if not followed:
-                    dead[e["route"]] += 1
+                signal = _click_signal(e)
+                if signal is not None:
+                    measured[e["route"]] += 1
+                    if signal:
+                        dead[e["route"]] += 1
+                if _rage_candidate(e):
+                    rage_by_route[e["route"]].append(e)
             elif kind == "idle":
                 idle_ms += int(e.get("duration_ms") or 0)
             elif kind == "error":
                 errors[e["route"]] += 1
-        for route, clicks in clicks_by_route.items():
+        for route, clicks in rage_by_route.items():
             rage[route] += _rage_clicks(clicks)
 
     def ranked(counter: Counter, key: str, *, rate_of: Counter | None = None) -> list[dict]:
@@ -257,10 +408,10 @@ def friction(events: list[dict]) -> dict:
         "bounces": ranked(bounces, "bounces", rate_of=views),
         "back_and_forth": ranked(returned_to, "returns", rate_of=views),
         "rage_clicks": ranked(rage, "bursts"),
-        "dead_clicks": ranked(dead, "clicks"),
+        "dead_clicks": ranked(dead, "clicks", rate_of=measured),
         "errors": ranked(errors, "errors"),
         "idle_share": round(idle_ms / total_ms, 3) if total_ms else 0.0,
-        "by_screen": _by_screen(views, bounces, returned_to, rage, dead, clicks_total, errors),
+        "by_screen": _by_screen(views, bounces, returned_to, rage, dead, measured, clicks_total, errors),
     }
 
 
@@ -270,23 +421,24 @@ def friction(events: list[dict]) -> dict:
 SCORE_WEIGHTS = {"bounce": 0.35, "back": 0.25, "dead": 0.20, "rage": 0.20}
 
 
-def _by_screen(views: Counter, bounces: Counter, returned_to: Counter, rage: Counter, dead: Counter, clicks_total: Counter, errors: Counter) -> list[dict]:
+def _by_screen(views: Counter, bounces: Counter, returned_to: Counter, rage: Counter, dead: Counter, measured: Counter, clicks_total: Counter, errors: Counter) -> list[dict]:
     """One row per screen with every friction component as a rate and a
     single 0-100 score -- `100 * (0.35*bounce_rate + 0.25*back_rate +
     0.20*dead_click_rate + 0.20*min(rage_bursts/views, 1))` -- so
     screens rank by one number while the components stay visible next
-    to it. Rates are per view (bounces, returns, rage) or per click
-    (dead); a screen with no views scores on its clicks alone. Worst
-    first, then most viewed."""
+    to it. Rates are per view (bounces, returns, rage) or per measured
+    click (dead -- only clicks whose response was measured count, see
+    _click_signal; None when there were none, and it then adds 0 to the
+    score). Worst first, then most viewed."""
     routes = set(views) | set(bounces) | set(returned_to) | set(rage) | set(dead) | set(clicks_total) | set(errors)
     rows = []
     for route in routes:
-        v, c = views[route], clicks_total[route]
+        v, c, m = views[route], clicks_total[route], measured[route]
         bounce_rate = bounces[route] / v if v else 0.0
         back_rate = returned_to[route] / v if v else 0.0
-        dead_rate = dead[route] / c if c else 0.0
+        dead_rate = dead[route] / m if m else None
         rage_rate = min(rage[route] / v, 1.0) if v else (1.0 if rage[route] else 0.0)
-        score = round(100 * (SCORE_WEIGHTS["bounce"] * bounce_rate + SCORE_WEIGHTS["back"] * back_rate + SCORE_WEIGHTS["dead"] * dead_rate + SCORE_WEIGHTS["rage"] * rage_rate))
+        score = round(100 * (SCORE_WEIGHTS["bounce"] * bounce_rate + SCORE_WEIGHTS["back"] * back_rate + SCORE_WEIGHTS["dead"] * (dead_rate or 0.0) + SCORE_WEIGHTS["rage"] * rage_rate))
         rows.append(
             {
                 "route": route,
@@ -296,8 +448,9 @@ def _by_screen(views: Counter, bounces: Counter, returned_to: Counter, rage: Cou
                 "bounce_rate": round(bounce_rate, 3),
                 "returns": returned_to[route],
                 "back_rate": round(back_rate, 3),
+                "measured_clicks": m,
                 "dead_clicks": dead[route],
-                "dead_rate": round(dead_rate, 3),
+                "dead_rate": round(dead_rate, 3) if dead_rate is not None else None,
                 "rage_bursts": rage[route],
                 "errors": errors[route],
                 "score": score,
@@ -307,10 +460,15 @@ def _by_screen(views: Counter, bounces: Counter, returned_to: Counter, rage: Cou
     return rows
 
 
-def per_user(events: list[dict]) -> list[dict]:
+def per_user(events: list[dict], effort: list[dict] | None = None) -> list[dict]:
     by_user: dict[str, list[dict]] = defaultdict(list)
     for e in events:
         by_user[e["user_id"]].append(e)
+    active_by_user: dict[str, list[int]] = defaultdict(list)
+    for entry in effort or []:
+        if entry["active_ms"] > 0:
+            for uid in entry["user_ids"]:
+                active_by_user[uid].append(entry["active_ms"])
     result = []
     for user_id, rows in by_user.items():
         user_sessions = sessions(rows)
@@ -336,6 +494,8 @@ def per_user(events: list[dict]) -> list[dict]:
                 "clicks": clicks,
                 "clicks_per_min": round(clicks / (total_ms / 60000), 1) if total_ms else 0.0,
                 "mouse_px_per_page": int(mouse_distance(rows) / page_views) if page_views else 0,
+                "active_per_case_ms": int(median(active_by_user[user_id])) if active_by_user[user_id] else None,
+                "cases_worked": len(active_by_user[user_id]),
                 "annotated": actions.get(TASK_ACTIONS["annotate"], 0),
                 "reviewed": actions.get(TASK_ACTIONS["review"], 0),
                 "errors": sum(s["errors"] for s in user_sessions),
@@ -349,20 +509,26 @@ def per_user(events: list[dict]) -> list[dict]:
 def click_points(events: list[dict], route: str) -> list[dict]:
     """Every click on `route`, normalised to 0..1 by the viewport it was
     recorded in, so clicks from differently sized windows overlay. Each
-    carries who clicked, so the heatmap can colour people apart."""
+    carries who clicked, so the heatmap can colour people apart, and
+    whether it was dead. Tutorial-overlay clicks are left out."""
     points = []
     for e in events:
-        if e["event_type"] != "click" or e["route"] != route:
+        if e["event_type"] != "click" or e["route"] != route or _is_guide_click(e):
             continue
         d = e.get("detail") or {}
         viewport = d.get("viewport") or []
         if len(viewport) != 2 or not viewport[0] or not viewport[1] or "x" not in d or "y" not in d:
             continue
-        points.append({"x": round(d["x"] / viewport[0], 4), "y": round(d["y"] / viewport[1], 4), "target": d.get("target"), "user_id": e["user_id"]})
+        points.append({"x": round(d["x"] / viewport[0], 4), "y": round(d["y"] / viewport[1], 4), "target": d.get("target"), "user_id": e["user_id"], "dead": _click_signal(e) is True})
     return points
 
 
 def summarize(events: list[dict]) -> dict:
+    """Everything the Usage page draws, over prepare()d events. Also
+    returns the raw case_effort() entries (under "_effort") so the API
+    layer can split them by job type, which needs the database."""
+    events = prepare(events)
+    effort = case_effort(events)
     all_sessions = sessions(events)
     durations = [s["duration_ms"] for s in all_sessions]
     return {
@@ -378,5 +544,6 @@ def summarize(events: list[dict]) -> dict:
         "transitions": transitions(events),
         "actions": action_counts(events),
         "friction": friction(events),
-        "users": per_user(events),
+        "users": per_user(events, effort),
+        "_effort": effort,
     }

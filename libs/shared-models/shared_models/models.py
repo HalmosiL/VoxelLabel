@@ -830,6 +830,13 @@ class UsageSettings(Base):
     retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
     # Keycloak subjects excluded from recording; empty = everyone.
     disabled_user_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Keycloak subjects still recorded but left out of every figure on
+    # the Usage page (test and demo accounts) -- and whether accounts
+    # holding the global admin role are left out too. Admins configure
+    # and click around the platform; counting them skews every
+    # "how do people work" number toward administration.
+    excluded_user_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    exclude_admins: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

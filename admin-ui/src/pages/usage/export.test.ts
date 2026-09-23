@@ -46,3 +46,12 @@ describe("exportFilename", () => {
     expect(exportFilename("bundle", "2026-09-01", null, "json")).toBe("usage-bundle-20260901-now.json");
   });
 });
+
+describe("formula-looking cells", () => {
+  it("prefixes text that a spreadsheet would run, and leaves numbers alone", () => {
+    expect(csvCell("=HYPERLINK(1)")).toBe("'=HYPERLINK(1)");
+    expect(csvCell("@sum")).toBe("'@sum");
+    expect(csvCell(-5)).toBe("-5");
+    expect(csvCell("/viewer/:id")).toBe("/viewer/:id");
+  });
+});

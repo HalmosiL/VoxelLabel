@@ -426,10 +426,38 @@ export interface UsageSettings {
   mouse_sample_ms: number;
   retention_days: number;
   disabled_user_ids: string[];
+  /** Recorded, but left out of every figure (test/demo accounts). */
+  excluded_user_ids: string[];
+  /** Leave every account with the global admin role out of the figures. */
+  exclude_admins: boolean;
   updated_at: string | null;
 }
 
-export type UsageSettingsPatch = Partial<Omit<UsageSettings, "disabled_user_ids" | "updated_at">>;
+export type UsageSettingsPatch = Partial<Omit<UsageSettings, "disabled_user_ids" | "excluded_user_ids" | "updated_at">>;
+
+/** One account with its two switches, for the Settings tab. */
+export interface UsagePerson {
+  user_id: string;
+  username: string;
+  email: string | null;
+  is_admin: boolean;
+  /** Recording is on for them (master switch on, not switched off). */
+  recorded: boolean;
+  /** Their events count in the figures (their own switch, and not an admin while admins are left out). */
+  counted: boolean;
+  /** Their own "count in analysis" switch, whatever the admin rule says. */
+  counted_switch: boolean;
+}
+
+/** What one case costs in the viewer, medians over the cases worked in the window. */
+export interface UsageEffort {
+  cases: number;
+  active_median_ms: number | null;
+  sittings_median: number | null;
+  undos_per_case: number | null;
+  first_input_median_ms: number | null;
+  first_input_count: number;
+}
 
 export interface UsageRouteStat {
   route: string;
@@ -474,6 +502,9 @@ export interface UsageUser {
   clicks: number;
   clicks_per_min: number;
   mouse_px_per_page: number;
+  /** Median active time in the viewer per case they worked on; null if none. */
+  active_per_case_ms: number | null;
+  cases_worked: number;
   annotated: number;
   reviewed: number;
   errors: number;
@@ -505,12 +536,21 @@ export function previousRange(range: UsageRange): UsageRange {
   return { from: prevFrom.toISOString(), to: prevTo.toISOString() };
 }
 
+/** The calendar hands over `datetime-local` values -- the viewer's own
+ * wall-clock time, no offset. Sent as-is the server would read them as
+ * UTC (two hours off in Budapest in summer), so they go out as real
+ * instants. Values that already carry an offset pass through. */
+export function toInstant(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
 function rangeParams(range: UsageRange): URLSearchParams {
   const params = new URLSearchParams();
   if ("days" in range) params.set("days", String(range.days));
   else {
-    params.set("from", range.from);
-    if (range.to) params.set("to", range.to);
+    params.set("from", toInstant(range.from));
+    if (range.to) params.set("to", toInstant(range.to));
   }
   return params;
 }
@@ -525,8 +565,11 @@ export interface UsageScreenFriction {
   bounce_rate: number;
   returns: number;
   back_rate: number;
+  /** Clicks whose response was measured (on something clickable-looking); dead_rate is over these. */
+  measured_clicks: number;
   dead_clicks: number;
-  dead_rate: number;
+  /** null when no click on the screen had a measured response. */
+  dead_rate: number | null;
   rage_bursts: number;
   errors: number;
   score: number;
@@ -554,6 +597,9 @@ export interface UsageSummary {
   friction_score: number | null;
   users: UsageUser[];
   recording: { enabled: boolean; disabled_user_ids: string[] };
+  effort: { annotation: UsageEffort; review: UsageEffort; all: UsageEffort };
+  /** What the figures are built from, and who is left out. */
+  basis: { events: number; people: number; sessions: number; not_counted: number; admins_left_out: boolean };
 }
 
 export type UsageTab = "overview" | "behaviour" | "friction" | "people" | "settings";
@@ -616,7 +662,7 @@ export interface UsageSessionDetail {
 export interface UsageHeatmap {
   route: string;
   days: number;
-  points: { x: number; y: number; target: string | null; user_id: string }[];
+  points: { x: number; y: number; target: string | null; user_id: string; dead: boolean }[];
   /** Who clicked, most clicks first -- the legend's order and colour key. */
   users: { user_id: string; username: string; clicks: number }[];
 }
@@ -629,8 +675,30 @@ export function updateUsageSettings(patch: UsageSettingsPatch): Promise<UsageSet
   return apiFetch(base, "/admin/usage/settings", { method: "PUT", body: JSON.stringify(patch) });
 }
 
-export function setUsageUserSwitch(userId: string, enabled: boolean): Promise<UsageSettings> {
-  return apiFetch(base, `/admin/usage/settings/users/${encodeURIComponent(userId)}`, { method: "PUT", body: JSON.stringify({ enabled }) });
+export function setUsageUserSwitch(userId: string, change: { enabled?: boolean; counted?: boolean }): Promise<UsageSettings> {
+  return apiFetch(base, `/admin/usage/settings/users/${encodeURIComponent(userId)}`, { method: "PUT", body: JSON.stringify(change) });
+}
+
+export function listUsagePeople(): Promise<UsagePerson[]> {
+  return apiFetch(base, "/admin/usage/people");
+}
+
+/** Everything the page shows for one window, in one call (see admin-service's /admin/usage/overview). */
+export interface UsageOverview {
+  since: string;
+  until: string;
+  summary: UsageSummary;
+  previous: UsageSummary;
+  pipeline: PipelineHealthSummary;
+  pipeline_previous: PipelineHealthSummary;
+  learning_curve: LearningCurvePoint[];
+  findings: UsageFinding[];
+}
+
+export function getUsageOverview(range: UsageRange, userId?: string | null): Promise<UsageOverview> {
+  const params = rangeParams(range);
+  if (userId) params.set("user_id", userId);
+  return apiFetch(base, `/admin/usage/overview?${params}`);
 }
 
 export function getUsageSummary(range: UsageRange, userId?: string | null): Promise<UsageSummary> {
@@ -727,6 +795,8 @@ export interface PipelineHealthSummary {
     baseline_ms: number | null;
     flagged: boolean;
   }[];
+  /** How cases decided in the window fared at review. */
+  quality: { decided: number; first_pass_rate: number | null; sent_back_rate: number | null; rounds_to_approve: number | null };
   assignee_load: {
     assignee_id: string;
     assignee: string | null;

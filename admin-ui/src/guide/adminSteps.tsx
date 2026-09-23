@@ -435,7 +435,7 @@ export const USAGE_STEPS: GuideStep[] = [
   {
     target: "usage-tiles",
     title: "Headline numbers",
-    body: "Active people, time to annotate and review, errors and one friction score -- each with how it moved against the previous period. Hover any tile for what it means and which direction is good.",
+    body: "What a case really costs: hands-on time per case, how often cases pass review first time, the wait before the first action in the viewer, one friction score, errors -- each against the previous period, and marked when there are too few cases to call it a trend.",
     placement: "bottom",
   },
   {
@@ -471,7 +471,7 @@ export const USAGE_STEPS: GuideStep[] = [
   {
     target: "usage-tab-settings",
     title: "Settings",
-    body: "What gets recorded, for everyone. Turn a category off and every open tab stops sending it within a few minutes. Patient data and typed text are never recorded.",
+    body: "What gets recorded, and whose activity counts: admin and test accounts are still recorded but left out of every figure, so the numbers describe the people doing the work.",
     placement: "bottom",
   },
 ];

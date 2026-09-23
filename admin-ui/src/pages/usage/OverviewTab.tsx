@@ -34,6 +34,7 @@ export default function OverviewTab({
   learningCurve,
   range,
   userFilter,
+  personName,
   onGoTo,
   onError,
 }: {
@@ -45,14 +46,15 @@ export default function OverviewTab({
   learningCurve: LearningCurvePoint[] | null;
   range: UsageRange;
   userFilter: string;
+  personName: string | null;
   onGoTo: (tab: UsageTab) => void;
   onError: (message: string) => void;
 }) {
   return (
     <div className="space-y-5">
       <FindingsCard findings={findings} onGoTo={onGoTo} />
-      <StatTiles summary={summary} previous={previous} />
-      {pipelineHealth && <CycleTimeCard summary={pipelineHealth} previous={pipelineHealthPrevious} />}
+      <StatTiles summary={summary} previous={previous} pipeline={pipelineHealth} pipelinePrevious={pipelineHealthPrevious} />
+      {pipelineHealth && <CycleTimeCard summary={pipelineHealth} previous={pipelineHealthPrevious} personName={personName} />}
       <ExportCard summary={summary} previous={previous} findings={findings} pipelineHealth={pipelineHealth} pipelineHealthPrevious={pipelineHealthPrevious} learningCurve={learningCurve} range={range} userFilter={userFilter} onError={onError} />
       <HowToRead />
     </div>
@@ -100,57 +102,126 @@ function FindingsCard({ findings, onGoTo }: { findings: UsageFindings | null; on
 
 // ---------------------------------------------------------------- tiles
 
-function StatTiles({ summary, previous }: { summary: UsageSummary; previous: UsageSummary | null }) {
-  const t = summary.totals;
-  const p = previous?.totals;
-  const pt = previous?.tasks;
-  const tiles: { label: string; value: string; sub?: string; title: string; current: number | null; previous: number | null; better: Better }[] = [
-    { label: "Active people", value: String(t.active_users), title: "People with at least one recorded session in this period. More is better.", current: t.active_users, previous: p?.active_users ?? null, better: "up" },
-    { label: "Sessions", value: String(t.sessions), title: "Sittings -- one per browser tab per visit. Neither direction is good or bad on its own.", current: t.sessions, previous: p?.sessions ?? null, better: "neutral" },
-    { label: "Avg session", value: formatDuration(t.avg_session_ms), title: "Average length of a sitting. Longer can mean more work done or more struggling -- read it with the friction score.", current: t.avg_session_ms, previous: p?.avg_session_ms ?? null, better: "neutral" },
+/** Below this many cases a median is a hint, not a trend -- the tile
+ * says so and doesn't claim a change against last period. */
+const MIN_CASES = 5;
+
+interface Tile {
+  key: string;
+  label: string;
+  value: string;
+  sub?: string;
+  title: string;
+  current: number | null;
+  previous: number | null;
+  better: Better;
+  /** Number of cases behind the figure, when it is a per-case median. */
+  n?: number;
+  previousN?: number;
+}
+
+function StatTiles({ summary, previous, pipeline, pipelinePrevious }: { summary: UsageSummary; previous: UsageSummary | null; pipeline: PipelineHealthSummary | null; pipelinePrevious: PipelineHealthSummary | null }) {
+  const e = summary.effort;
+  const pe = previous?.effort;
+  const q = pipeline?.quality;
+  const pq = pipelinePrevious?.quality;
+  const pct = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${Math.round(v * 100)}%`);
+  const sittings = (v: number | null) => (v === null ? "" : ` · ${v} ${v === 1 ? "sitting" : "sittings"}`);
+  const tiles: Tile[] = [
     {
-      label: "Median time to annotate",
-      value: formatDuration(summary.tasks.annotate.median_ms),
-      sub: `${summary.tasks.annotate.count} cases`,
-      title: "From opening a case in the viewer to Mark as Annotated, in one sitting. Lower is better.",
-      current: summary.tasks.annotate.median_ms,
-      previous: pt?.annotate.median_ms ?? null,
+      key: "hands-on-annotating",
+      label: "Hands-on time per case · annotating",
+      value: formatDuration(e.annotation.active_median_ms),
+      sub: `${e.annotation.cases} cases${sittings(e.annotation.sittings_median)}`,
+      title: "Median active time spent in the viewer on one case of an annotation job, summed over every sitting, idle stretches (30 s+ without input) left out. The real labour cost of a case. Lower is better.",
+      current: e.annotation.active_median_ms,
+      previous: pe?.annotation.active_median_ms ?? null,
       better: "down",
+      n: e.annotation.cases,
+      previousN: pe?.annotation.cases,
     },
     {
-      label: "Median time to review",
-      value: formatDuration(summary.tasks.review.median_ms),
-      sub: `${summary.tasks.review.count} cases`,
-      title: "From opening a case in the viewer to Submit review, in one sitting. Lower is better.",
-      current: summary.tasks.review.median_ms,
-      previous: pt?.review.median_ms ?? null,
+      key: "hands-on-reviewing",
+      label: "Hands-on time per case · reviewing",
+      value: formatDuration(e.review.active_median_ms),
+      sub: `${e.review.cases} cases${sittings(e.review.sittings_median)}`,
+      title: "The same for review jobs: median active viewer time per reviewed case. Lower is better.",
+      current: e.review.active_median_ms,
+      previous: pe?.review.active_median_ms ?? null,
       better: "down",
+      n: e.review.cases,
+      previousN: pe?.review.cases,
     },
-    { label: "Errors", value: String(t.errors), title: "JavaScript errors people hit. Zero is the goal.", current: t.errors, previous: p?.errors ?? null, better: "down" },
     {
+      key: "first-pass",
+      label: "Passed review first time",
+      value: pct(q?.first_pass_rate),
+      sub: q ? `${q.decided} cases decided` : undefined,
+      title: "Share of annotated cases a reviewer approved on the first submission. Every rejection sends the whole case round the pipeline again. Higher is better.",
+      current: q?.first_pass_rate ?? null,
+      previous: pq?.first_pass_rate ?? null,
+      better: "up",
+      n: q?.decided,
+      previousN: pq?.decided,
+    },
+    {
+      key: "first-action",
+      label: "Wait before the first action",
+      value: formatDuration(e.all.first_input_median_ms),
+      sub: `${e.all.first_input_count} case openings`,
+      title: "Median time from opening a case in the viewer to the first click or key: image loading plus getting oriented, paid on every single case. Lower is better.",
+      current: e.all.first_input_median_ms,
+      previous: pe?.all.first_input_median_ms ?? null,
+      better: "down",
+      n: e.all.first_input_count,
+      previousN: pe?.all.first_input_count,
+    },
+    {
+      key: "friction-score",
       label: "Friction score",
       value: summary.friction_score === null ? "–" : String(summary.friction_score),
-      sub: "0 = smooth, 100 = everyone struggling",
-      title: "View-weighted average of every screen's friction score (bounces, back-and-forth, dead clicks, rage clicks). Lower is better.",
+      sub: "0 smooth · 100 everyone struggling",
+      title: "Every screen's friction score (bounces, back-and-forth, clicks that got no response, rage clicks), averaged by how often each screen was opened. See the Friction tab. Lower is better.",
       current: summary.friction_score,
       previous: previous?.friction_score ?? null,
       better: "down",
     },
+    {
+      key: "errors",
+      label: "Errors",
+      value: String(summary.totals.errors),
+      sub: "JavaScript errors people hit",
+      title: "Every one is a moment the app broke for someone. Zero is the goal.",
+      current: summary.totals.errors,
+      previous: previous?.totals.errors ?? null,
+      better: "down",
+    },
   ];
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-7" data-guide="usage-tiles" data-testid="usage-tiles">
-      {tiles.map((tile) => (
-        <div key={tile.label} className="stat-card" title={tile.title}>
-          <div className="min-w-0">
-            <div className="stat-value tabular-nums">{tile.value}</div>
-            <div className="stat-label">{tile.label}</div>
-            {tile.sub && <div className="text-xs text-gray-400">{tile.sub}</div>}
-            <div className="mt-1" data-testid={`usage-tile-delta-${tile.label.toLowerCase().replace(/\s+/g, "-")}`}>
-              <DeltaChip current={tile.current} previous={tile.previous} better={tile.better} />
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-guide="usage-tiles" data-testid="usage-tiles">
+      {tiles.map((tile) => {
+        const thin = tile.n !== undefined && tile.n < MIN_CASES;
+        const comparable = !thin && (tile.previousN === undefined || tile.previousN >= MIN_CASES);
+        return (
+          <div key={tile.key} className="stat-card" title={tile.title} data-testid={`usage-tile-${tile.key}`}>
+            <div className="min-w-0">
+              <div className="stat-value tabular-nums">{tile.value}</div>
+              <div className="stat-label">{tile.label}</div>
+              {tile.sub && <div className="text-xs text-gray-400">{tile.sub}</div>}
+              <div className="mt-1 text-xs" data-testid={`usage-tile-delta-${tile.key}`}>
+                {thin ? (
+                  <span className="text-amber-700" title={`Fewer than ${MIN_CASES} cases -- read it as a hint, not a trend`}>
+                    few cases -- a hint only
+                  </span>
+                ) : comparable ? (
+                  <DeltaChip current={tile.current} previous={tile.previous} better={tile.better} />
+                ) : null}
+              </div>
+              {tile.better !== "neutral" && <div className="text-[11px] text-gray-400">{tile.better === "down" ? "lower is better" : "higher is better"}</div>}
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -158,10 +229,10 @@ function StatTiles({ summary, previous }: { summary: UsageSummary; previous: Usa
 // ---------------------------------------------------------------- cycle time
 
 const LEG_LABELS: Record<string, string> = {
-  annotation_queue: "Waiting to be annotated",
-  annotation_work: "Being annotated",
-  review_queue: "Waiting to be reviewed",
-  review_work: "Being reviewed",
+  annotation_queue: "Waiting for an annotator",
+  annotation_work: "Annotating: opened → submitted",
+  review_queue: "Waiting for a reviewer",
+  review_work: "Reviewing: opened → decided",
 };
 // Same hue family throughout, light -> dark by pipeline order -- these
 // four segments are always the same four, in the same order, so the
@@ -173,7 +244,7 @@ const LEG_COLORS: Record<string, string> = {
   review_work: "#f59e0b",
 };
 
-function CycleTimeCard({ summary, previous }: { summary: PipelineHealthSummary; previous: PipelineHealthSummary | null }) {
+function CycleTimeCard({ summary, previous, personName }: { summary: PipelineHealthSummary; previous: PipelineHealthSummary | null; personName: string | null }) {
   const legs = [
     { key: "annotation_queue", ...summary.legs.annotation?.queue },
     { key: "annotation_work", ...summary.legs.annotation?.work },
@@ -193,7 +264,12 @@ function CycleTimeCard({ summary, previous }: { summary: PipelineHealthSummary; 
     <div className="card" data-guide="usage-cycle-time" data-testid="usage-cycle-time">
       <CardHeader
         title="Cycle time"
-        hint="How long a case actually takes to move through the pipeline, split into waiting for someone vs. someone actively working it. Lower is better everywhere here."
+        hint={
+          <>
+            Elapsed calendar time for a case to move through the pipeline (nights and weekends included), split into waiting for someone and someone working it -- work starts when the case is first opened in the viewer. The hands-on tiles above are the time actually spent in the viewer. Medians; lower is better.
+            {personName && <strong> Only the cases {personName} was assigned or worked on.</strong>}
+          </>
+        }
         actions={
           <DownloadCsvButton
             filename={exportFilename("cycle-time", summary.since, summary.until, "csv")}
@@ -229,6 +305,13 @@ function CycleTimeCard({ summary, previous }: { summary: PipelineHealthSummary; 
           </div>
         </div>
       </div>
+      {summary.quality.decided > 0 && (
+        <p className="mt-3 text-sm text-gray-600" data-testid="usage-review-quality">
+          Review outcome: <strong>{Math.round((summary.quality.first_pass_rate ?? 0) * 100)}%</strong> of {summary.quality.decided} decided cases passed first time
+          {summary.quality.sent_back_rate ? `, ${Math.round(summary.quality.sent_back_rate * 100)}% were sent back at least once` : ""}
+          {summary.quality.rounds_to_approve ? `; approved cases took ${summary.quality.rounds_to_approve} submissions on average` : ""}.
+        </p>
+      )}
       {total > 0 && (
         <div className="mt-4">
           <div className="flex h-6 w-full overflow-hidden rounded-sm" data-testid="usage-cycle-bar">
@@ -368,19 +451,34 @@ function HowToRead() {
   return (
     <details className="card" data-testid="usage-how-to-read">
       <summary className="cursor-pointer text-sm font-semibold text-gray-800">How to read this page</summary>
-      <div className="mt-2 space-y-2 text-sm text-gray-600">
-        <p>
-          <strong>What is measured:</strong> which screens people open and for how long, the tools and buttons they use, where they click, how the pointer moves, keyboard shortcuts, and how long a case takes at each pipeline step. Recorded for everyone with recording on
-          (Settings).
-        </p>
-        <p>
-          <strong>What is never recorded:</strong> patient data, DICOM contents, anything typed into a field. Events carry internal ids and short control names only.
-        </p>
-        <p>
-          <strong>How findings are decided:</strong> fixed rules -- e.g. a screen counts as "bounced" when someone leaves within 3 seconds and goes elsewhere; a case is "stuck" when it has waited more than twice that job's usual wait (or a week, with no history yet). The same
-          data always yields the same findings; nothing here is a guess.
-        </p>
-      </div>
+      <dl className="mt-3 grid gap-x-6 gap-y-3 text-sm text-gray-600 md:grid-cols-2">
+        <div>
+          <dt className="font-medium text-gray-800">What is recorded</dt>
+          <dd>Which screens people open and for how long, the tools and buttons they use, where they click and whether the page reacted, how the pointer moves, keyboard shortcuts, errors. Never anything typed into a field.</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-gray-800">Whose activity counts</dt>
+          <dd>Everyone except admin and test accounts, which are still recorded but left out of every figure (Settings). The line under the header says how many events and accounts a view is built from.</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-gray-800">What is left out before counting</dt>
+          <dd>Pages passed through in under a second (redirects, fast menu clicks) and clicks inside the tutorial -- neither is the person's own work.</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-gray-800">Hands-on vs. cycle time</dt>
+          <dd>Hands-on is time actually spent in the viewer on a case, across all sittings, idle stretches left out. Cycle time is calendar time from a case entering a job to it being finished.</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-gray-800">Friction signals</dt>
+          <dd>
+            <b>Bounce</b>: left within 3 s for another screen. <b>Back &amp; forth</b>: straight back to the screen before. <b>No response</b>: clicked something that looks clickable and nothing on the page changed within 1 s. <b>Rage</b>: 3+ quick clicks on one spot, none answered.
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-gray-800">How findings are decided</dt>
+          <dd>Fixed rules with fixed thresholds, one finding per problem, and trends only when both periods have at least 5 cases. The same data always gives the same findings; nothing here is a guess.</dd>
+        </div>
+      </dl>
     </details>
   );
 }
