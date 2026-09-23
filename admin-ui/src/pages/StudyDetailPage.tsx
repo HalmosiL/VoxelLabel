@@ -47,6 +47,11 @@ export default function StudyDetailPage() {
             <Link to={`/studies/${studyId}/workflow`} className="btn-secondary btn-sm">
               Workflow board
             </Link>
+            {canManage(studyId) && (
+              <Link to={`/studies/${studyId}/analytics`} className="btn-secondary btn-sm" data-testid="study-analytics-link" data-guide="study-analytics-link">
+                Analytics
+              </Link>
+            )}
             {canAdminister(studyId) && (
               <button onClick={() => setEditOpen(true)} className="btn-secondary btn-sm">
                 Edit

@@ -28,6 +28,7 @@ from app.core.config import settings
 from app.notifications import router as notifications_router
 from app.notifications import start_poller
 from app.pipeline_health import router as pipeline_health_router
+from app.study_analytics import router as study_analytics_router
 from app.usage import router as usage_router
 
 
@@ -64,6 +65,7 @@ app.include_router(registration_public_router)
 app.include_router(audit_router)
 app.include_router(usage_router)
 app.include_router(pipeline_health_router)
+app.include_router(study_analytics_router)
 
 
 @app.get("/health")

@@ -481,3 +481,28 @@ export const USAGE_STEPS: GuideStep[] = [
     placement: "bottom",
   },
 ];
+
+export const STUDY_ANALYTICS_STEPS: GuideStep[] = [
+  {
+    title: "Study analytics",
+    body: "What happened to this study's cases on their way through the workflow: how long each step took, how often cases went back and forth between annotation and review, what was drawn, and who did the work.",
+  },
+  {
+    target: "analytics-tiles",
+    title: "The headline",
+    body: "How many cases are approved, the lead time from entering the workflow to approval, how many pass review first time, and the hands-on time that went into it. Hover a tile for exactly what it counts.",
+    placement: "bottom",
+  },
+  {
+    target: "analytics-graph",
+    title: "The workflow, measured",
+    body: "The board as it is, each job card showing cases in, done and open, how long they waited and were worked on, and the review outcome. The numbers on the lines are the cases on each connection -- red is rework going back.",
+    placement: "top",
+  },
+  {
+    target: "analytics-tab-cases",
+    title: "Cases, labels, people",
+    body: "Every case with its rounds and times; what was drawn per label and how often it was rejected; and who did what on both sides. Every table exports to CSV.",
+    placement: "bottom",
+  },
+];

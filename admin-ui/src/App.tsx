@@ -16,6 +16,7 @@ import PatientsPage from "./pages/PatientsPage";
 import StudiesPage from "./pages/StudiesPage";
 import StudyDetailPage from "./pages/StudyDetailPage";
 import SystemPage from "./pages/SystemPage";
+import StudyAnalyticsPage from "./pages/study-analytics/StudyAnalyticsPage";
 import UsagePage from "./pages/usage/UsagePage";
 import UsersPage from "./pages/UsersPage";
 import WorkflowBoardPage from "./pages/WorkflowBoardPage";
@@ -83,6 +84,14 @@ function AppRoutes() {
           element={
             <FullUiOnly>
               <StudyDetailPage />
+            </FullUiOnly>
+          }
+        />
+        <Route
+          path="/studies/:studyId/analytics"
+          element={
+            <FullUiOnly>
+              <StudyAnalyticsPage />
             </FullUiOnly>
           }
         />

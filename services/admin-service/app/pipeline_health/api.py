@@ -65,7 +65,13 @@ def _usernames() -> dict[str, dict]:
         return {}
 
 
-def _load_legs(db: Session, card_id: str | None) -> list[dict]:
+def load_legs(db: Session, card_id: str | None = None, study_id: uuid.UUID | None = None) -> list[dict]:
+    """Public entry to the legs (see _load_legs) -- also what the
+    per-study analytics page builds on."""
+    return _load_legs(db, card_id, study_id)
+
+
+def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = None) -> list[dict]:
     """One entry per (card, case) with a recorded queue-start. See
     module docstring and stats.py for what a "leg" means; the Review
     branch below re-anchors on the actual SUBMITTED Annotation's own
@@ -73,6 +79,8 @@ def _load_legs(db: Session, card_id: str | None) -> list[dict]:
     approximate for Review (stamped by the ripple that runs right after
     submission, not the submission itself)."""
     card_query = db.query(WorkflowCard).filter(WorkflowCard.type.in_([WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW]))
+    if study_id is not None:
+        card_query = card_query.filter(WorkflowCard.study_id == study_id)
     if card_id:
         try:
             card_query = card_query.filter(WorkflowCard.id == uuid.UUID(card_id))

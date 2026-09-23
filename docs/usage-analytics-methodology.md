@@ -179,9 +179,35 @@ Ezek még nincsenek a rendszerben, fontossági sorrendben:
 
 ---
 
-## 9. Hol van mi a kódban
+## 9. Study-analitika: egy study munkája
+
+A Usage oldal azt méri, **hogyan használják a felületet**. A study **Analytics** lapja
+(Study oldal → Analytics, csak study admin és data manager látja) azt méri, **mi történt
+a study eseteivel** a workflow-n. Mindig a study teljes élettartamára vonatkozik.
+
+| Mérőszám | Mit jelent pontosan |
+|---|---|
+| **Beküldés (round)** | Az annotátor review-ra küldte az esetet. A reviewer saját mentett verziója nem számít beküldésnek. |
+| **Döntés** | Egy review jóváhagyás vagy visszaküldés. Mindkét review-folyamat számít: a viewer objektumonkénti és az admin-ui egész annotációs döntése is. |
+| **Állapot** | A legutolsó beküldés és döntés alapján: *Approved*, *Awaiting review* (beküldve, még nincs döntés), *Being annotated* (visszaküldés után újra piszkozat van), *Sent back* (visszaküldve, még nem javították), *Not started*. |
+| **Lead time** | Naptári idő attól, hogy az eset belépett az első Annotation kártyára, az első jóváhagyásig. Minden kör benne van. |
+| **Passed review first time** | Az esetek hány %-át hagyta jóvá az első review. A csempe és a kártya ugyanabból az esettörténetből számol. |
+| **Times sent back** | A visszaküldések száma. Egy eset többször is visszakerülhet. |
+| **Hands-on** | A viewerben töltött aktív idő a study jobjain, az üresjárat nélkül. Itt mindenki munkája számít, az admin fiókoké is. |
+| **Drawn / Labels** | Minden eset legutolsó beküldésének objektumai címkénként. A címkénkénti elutasítási arány a reviewer objektumonkénti döntéseiből jön. |
+
+**Használat.** A gráf megmutatja, hol áll a sor: sok „open” egy kártyán szűk
+keresztmetszet. A piros visszacsatoló vonal és a „Times sent back” az újrakör mértéke.
+A Labels fül megmutatja, melyik címkét utasítják el a legtöbbször. Ez általában nem
+egyértelmű definíciót jelez, nem emberi hibát. A People fül tényszerű, de
+embereket csak hasonló esetkeveréken szabad összevetni (lásd 5. pont, Goodhart).
+
+---
+
+## 10. Hol van mi a kódban
 
 - A mérőszámok definíciói és küszöbértékei:
+  - `services/admin-service/app/study_analytics/stats.py` (study-analitika)
   - `services/admin-service/app/usage/stats.py`
   - `services/admin-service/app/usage/findings.py`
   - `services/admin-service/app/pipeline_health/`
