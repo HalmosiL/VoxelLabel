@@ -211,6 +211,10 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     await page.fill('textarea[placeholder="Comment for the annotator…"]', "Boundary too generous on the medial side.");
     await page.locator("aside button", { hasText: "Reject" }).click();
     await page.waitForTimeout(300);
+    // tag why -- the reason travels with the saved objects (the annotation
+    // type's schema must allow it) and into the annotator's comment
+    await page.locator('[data-testid="reject-reason-boundary"]').click();
+    await page.waitForTimeout(200);
     // See viewas-viewer.spec.js's comment: bound generously and check
     // the count first, since a real job can have many objects to decide.
     let guard = 0;
@@ -225,6 +229,7 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     const after = await api(await token("dr-test", "Test1234!"), `${ADMIN}/admin/my-jobs`);
     const c2 = after.find((j) => j.card_id === ANNOT_CARD).cases.find((c) => c.id === pendingCase.id);
     check("case bounced back to annotator as rejected with comment", c2.status === "rejected" && /medial/.test(c2.latest_review_comment || ""), c2);
+    check("the tagged reason is in the comment the annotator reads", /\(boundary off\)/.test(c2.latest_review_comment || ""), c2.latest_review_comment);
     check("reviewer: no console errors", errors.length === 0, errors.slice(0, 5));
     await ctx.close();
   }

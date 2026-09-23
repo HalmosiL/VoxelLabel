@@ -46,7 +46,8 @@ FREEHAND_MASK_VOLUME_SCHEMA = {
 #
 # Grows over time (the script re-applies it to an already registered
 # type -- see register_annotation_type): `comment` and `review_status`
-# per object came with the review surface; a label's `fields` (its
+# per object came with the review surface, `reject_reason` (the tapped
+# reason for a rejected object) after it; a label's `fields` (its
 # per-object form: tick / pick one / scale, see the frontend's
 # components/ObjectForm.tsx) and an object's `attributes` (the answers)
 # with the per-object form. Every addition is optional so older saved
@@ -95,6 +96,10 @@ SEGMENTATION_VOLUME_SCHEMA = {
                     "hidden": {"type": "boolean"},
                     "comment": {"type": "string"},
                     "review_status": {"type": "string", "enum": ["pending", "accepted", "rejected"]},
+                    # why the reviewer rejected it -- one of the viewer's
+                    # REJECT_REASONS keys (ViewerPage.tsx); kept a plain
+                    # short string so a new reason doesn't need a schema bump
+                    "reject_reason": {"type": "string", "maxLength": 32},
                     "attributes": {
                         "type": "object",
                         "additionalProperties": {"type": ["string", "boolean", "number"]},
