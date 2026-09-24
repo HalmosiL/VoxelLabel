@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import PipelineTemplate
+from shared_models.models import PipelineTemplate, WorkflowCardType
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/admin/pipeline-templates", tags=["admin:pipeline-templates"])
@@ -76,6 +76,31 @@ def _serialize(template: PipelineTemplate) -> dict:
     }
 
 
+_SOURCE_HANDLES = {"output", "surface_config"}
+_TARGET_HANDLES = {"input", "surface_config"}
+
+
+def _check_insertable(body: PipelineTemplateIn) -> None:
+    """422 for a template that could never be inserted: an unknown or
+    retired card type, two cards with one key, an edge to a card the
+    template doesn't have, or an unknown handle. Such a template used to
+    be published to everyone's Store and left half a pipeline on the
+    board of whoever inserted it (C-14). The board still checks each
+    connection when it is inserted."""
+    valid_types = {t.value for t in WorkflowCardType} - {WorkflowCardType.SURFACE.value}
+    keys = [c.key for c in body.cards]
+    if len(set(keys)) != len(keys):
+        raise HTTPException(status_code=422, detail="Two cards of the template have the same key")
+    for card in body.cards:
+        if card.type not in valid_types:
+            raise HTTPException(status_code=422, detail=f"'{card.type}' is not a card type")
+    for edge in body.edges:
+        if edge.source_key not in keys or edge.target_key not in keys:
+            raise HTTPException(status_code=422, detail="An edge of the template points at a card it doesn't have")
+        if edge.source_handle not in _SOURCE_HANDLES or edge.target_handle not in _TARGET_HANDLES:
+            raise HTTPException(status_code=422, detail="An edge of the template uses a connection point cards don't have")
+
+
 @router.get("")
 def list_pipeline_templates(
     db: Session = Depends(get_db),
@@ -93,6 +118,7 @@ def create_pipeline_template(
 ) -> dict:
     if not body.cards:
         raise HTTPException(status_code=422, detail="A template needs at least one card")
+    _check_insertable(body)
 
     template = PipelineTemplate(
         title=body.title,

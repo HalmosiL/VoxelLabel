@@ -406,8 +406,8 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   async function insertTemplateAt(template: PipelineTemplate, origin: { x: number; y: number }) {
     setInsertingTemplateId(template.id);
     history.record(nodes, realEdges);
+    const keyToId = new Map<string, string>();
     try {
-      const keyToId = new Map<string, string>();
       for (const card of template.cards) {
         const created = await createWorkflowCard(studyId, {
           type: card.type,
@@ -480,7 +480,12 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       // from the server instead of hand-reconciling all of it locally.
       refreshBoard();
     } catch (err) {
-      setError(describeApiError(err));
+      // All or nothing: a template that fails halfway (a card or a
+      // connection refused) takes back what it already placed, instead
+      // of leaving half a pipeline on the board (C-14).
+      await Promise.all([...keyToId.values()].map((id) => deleteWorkflowCard(id).catch(() => undefined)));
+      refreshBoard();
+      setError(`The template couldn't be inserted, so nothing was added: ${describeApiError(err)}`);
     } finally {
       setInsertingTemplateId(null);
     }

@@ -36,3 +36,20 @@ def test_a_template_stored_before_the_fix_is_served_without_study_data(client, d
     db.commit()
     client.as_user(ANNOTATOR_SUBJECT)
     assert [_configs(t) for t in client.get("/admin/pipeline-templates").json()] == [GENERIC]
+
+
+def _card(key, type_="note"):
+    return {"key": key, "type": type_, "title": key, "x": 0, "y": 0, "width": 200, "height": 100, "config": {}}
+
+
+def test_a_template_that_could_not_be_inserted_is_refused(client, db):
+    """C-14: an unknown card type or an edge to a missing card was saved and
+    published to everyone's Store; inserting it left half a pipeline."""
+    post = lambda cards, edges: client.post("/admin/pipeline-templates", json={"title": "t", "cards": cards, "edges": edges})  # noqa: E731
+    edge = lambda s, t, sh="output", th="input": {"source_key": s, "source_handle": sh, "target_key": t, "target_handle": th}  # noqa: E731
+    assert post([_card("a"), _card("b", "bogus")], []).status_code == 422
+    assert post([_card("a", "surface")], []).status_code == 422
+    assert post([_card("a", "dataset")], [edge("a", "zzz")]).status_code == 422
+    assert post([_card("a", "dataset"), _card("a", "annotation")], []).status_code == 422  # duplicate key
+    assert post([_card("a", "dataset"), _card("b", "annotation")], [edge("a", "b", th="bogus")]).status_code == 422
+    assert post([_card("a", "dataset"), _card("b", "annotation")], [edge("a", "b")]).status_code == 201

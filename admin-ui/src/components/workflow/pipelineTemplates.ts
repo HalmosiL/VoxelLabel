@@ -78,6 +78,8 @@ export interface PipelineTemplate {
   cards: PipelineTemplateCard[];
   edges: PipelineTemplateEdge[];
   feedback?: PipelineTemplateFeedback[];
+  // Saved templates only: who saved it (Keycloak subject).
+  createdBy?: string | null;
 }
 
 // Drag payload format for dragging a whole template out of the Store
@@ -106,6 +108,7 @@ export function pipelineTemplateFromDTO(dto: PipelineTemplateDTO): PipelineTempl
       targetKey: e.target_key,
       targetHandle: e.target_handle,
     })),
+    createdBy: dto.created_by,
   };
 }
 

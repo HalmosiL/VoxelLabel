@@ -1,6 +1,7 @@
 import React, { DragEvent, useEffect, useMemo, useState } from "react";
 
 import { describeApiError } from "../../api/client";
+import keycloak from "../../keycloak";
 import { deletePipelineTemplate, listPipelineTemplates, WorkflowCardType } from "../../api/workflowApi";
 import {
   DatabaseIcon,
@@ -248,13 +249,17 @@ function TemplateCard({
   onInsert,
   inserting,
   onDelete,
+  badge,
 }: {
   template: PipelineTemplate;
   onInsert: (template: PipelineTemplate) => void;
   inserting: string | null;
-  // Only custom (saved-by-a-user) templates get a delete affordance --
-  // the built-in ones ship with the app and aren't removable.
+  // Only a saved template its author (or an admin) may delete gets a
+  // delete affordance -- the built-in ones ship with the app.
   onDelete?: (template: PipelineTemplate) => void;
+  // "Mine" only for the viewer's own templates; someone else's is
+  // "Shared" (every saved template used to say "Mine", C-14).
+  badge: "Built-in" | "Mine" | "Shared";
 }) {
   const busy = inserting === template.id;
   const types = templateTypes(template);
@@ -293,10 +298,10 @@ function TemplateCard({
           )}
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
-              onDelete ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-gray-50 text-gray-500 ring-gray-200"
+              badge === "Mine" ? "bg-amber-50 text-amber-700 ring-amber-200" : badge === "Shared" ? "bg-sky-50 text-sky-700 ring-sky-200" : "bg-gray-50 text-gray-500 ring-gray-200"
             }`}
           >
-            {onDelete ? "Mine" : "Built-in"}
+            {badge}
           </span>
         </div>
       </div>
@@ -385,7 +390,11 @@ export default function PipelineStore({
     t.description.toLowerCase().includes(needle) ||
     t.cards.some((c) => c.type.includes(needle) || c.title.toLowerCase().includes(needle));
   const builtIn = useMemo(() => PIPELINE_TEMPLATES.filter(matches), [needle]); // eslint-disable-line react-hooks/exhaustive-deps
-  const mine = useMemo(() => customTemplates.filter(matches), [customTemplates, needle]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => customTemplates.filter(matches), [customTemplates, needle]); // eslint-disable-line react-hooks/exhaustive-deps
+  const me = keycloak.subject;
+  const isAdmin = keycloak.hasRealmRole("admin");
+  const mine = saved.filter((t) => t.createdBy === me);
+  const shared = saved.filter((t) => t.createdBy !== me);
 
   return (
     // No width/border/scroll of its own -- shares WorkflowBoardPage's
@@ -409,22 +418,37 @@ export default function PipelineStore({
 
       <StoreSection title="Built-in" count={builtIn.length}>
         {builtIn.map((template) => (
-          <TemplateCard key={template.id} template={template} onInsert={onInsert} inserting={inserting} />
+          <TemplateCard key={template.id} template={template} onInsert={onInsert} inserting={inserting} badge="Built-in" />
         ))}
       </StoreSection>
 
       <StoreSection title="My templates" count={mine.length}>
         {mine.length === 0 && (
           <p className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400">
-            {customTemplates.length === 0
+            {saved.length === 0 && customTemplates.length === 0
               ? "Nothing saved yet -- select a group of cards on the board and click \"Save to Store\"."
               : "No saved template matches the filter."}
           </p>
         )}
         {mine.map((template) => (
-          <TemplateCard key={template.id} template={template} onInsert={onInsert} inserting={inserting} onDelete={handleDelete} />
+          <TemplateCard key={template.id} template={template} onInsert={onInsert} inserting={inserting} onDelete={handleDelete} badge="Mine" />
         ))}
       </StoreSection>
+
+      {shared.length > 0 && (
+        <StoreSection title="Shared by others" count={shared.length}>
+          {shared.map((template) => (
+            <TemplateCard
+              key={template.id}
+              template={template}
+              onInsert={onInsert}
+              inserting={inserting}
+              onDelete={isAdmin ? handleDelete : undefined}
+              badge="Shared"
+            />
+          ))}
+        </StoreSection>
+      )}
     </div>
   );
 }
