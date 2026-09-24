@@ -120,8 +120,11 @@ def record_version(db: Session, study_id, user_subject: str, kind: str = "auto",
     changed since the latest version, and coalesced into the latest
     version when that one is also automatic, by the same person, and
     recent (see module docstring). Manual/pre_restore versions are
-    always a new numbered entry. Commits."""
-    study = db.get(Study, study_id)
+    always a new numbered entry. Commits.
+
+    The study row is locked first, so recordings made at the same moment
+    run one after the other and get consecutive numbers (I-02)."""
+    study = db.query(Study).filter(Study.id == study_id).with_for_update().first()
     if study is None:
         return None
     snapshot = snapshot_study(db, study)

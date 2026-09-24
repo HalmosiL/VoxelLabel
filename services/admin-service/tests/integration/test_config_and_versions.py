@@ -72,3 +72,34 @@ def test_annotation_type_schema_can_be_widened_in_place(client):
     client.as_user("someone-else")
     assert client.put("/admin/annotation-types/growing/schema", json=v1).status_code == 403
 
+
+
+def test_versions_recorded_at_the_same_moment_get_consecutive_numbers(client, db):
+    """I-02: the next number was read without a lock, so two recordings at
+    once got the same number (a 500 on the real schema's unique key)."""
+    import threading
+
+    from app.versioning import record_version
+    from shared_models.database import SessionLocal
+    from shared_models.models import StudyVersion
+
+    sid = make_study(client, "Versioned")
+    for _ in range(3):
+        barrier = threading.Barrier(4)
+
+        def record():
+            session = SessionLocal()
+            try:
+                barrier.wait()
+                record_version(session, sid, "someone", kind="manual")
+            finally:
+                session.close()
+
+        threads = [threading.Thread(target=record) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    db.expire_all()
+    numbers = sorted(v.number for v in db.query(StudyVersion).filter_by(study_id=sid).all())
+    assert numbers == list(range(1, len(numbers) + 1)) and len(numbers) >= 12, numbers
