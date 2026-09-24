@@ -20,6 +20,8 @@ const results = []; const check = (n, ok, extra) => results.push({ n, ok: Boolea
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
   const page = await ctx.newPage();
+  const dialogs = [];
+  page.on("dialog", (d) => { dialogs.push(d.message()); d.accept(); });
   await login(page, "dr-review", "Test1234!", `${VIEWER}/tutorial`);
   await page.waitForSelector("canvas", { timeout: 15000 });
   await page.waitForTimeout(1000);
@@ -58,8 +60,27 @@ const results = []; const check = (n, ok, extra) => results.push({ n, ok: Boolea
     check(`${t} re-enabled with a new active object`, !(await page.locator(`[data-guide="tool-${t}"] button`).isDisabled()));
   }
 
+  // G-19: deleting an object asks first, and Undo right after doesn't bring
+  // its painting back with no object owning it (Save/Mark would enable on
+  // invisible paint).
+  await page.locator('[data-guide="tool-paint"] button').click();
+  const box = await page.locator("canvas").first().boundingBox();
+  for (const [fx, fy] of [[0.4, 0.4], [0.45, 0.5]]) {
+    await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + box.width * fx + i * 4, box.y + box.height * fy + i * 3);
+    await page.mouse.up(); await page.waitForTimeout(150);
+  }
+  const mark = page.locator("button", { hasText: "Mark as Practice-Annotated" });
+  check("painting enables Mark as Practice-Annotated", !(await mark.isDisabled()));
+  dialogs.length = 0;
+  await page.locator('[data-guide="objects"] li button[title="Delete"]').first().click();
+  await page.waitForTimeout(200);
+  check("deleting an object asks first", dialogs.length === 1 && /can't be undone/.test(dialogs[0]), dialogs);
+  await page.keyboard.press("Control+z"); await page.waitForTimeout(300);
+  check("Undo after a delete brings back no ownerless paint", await mark.isDisabled());
+
   await browser.close();
   const fails = results.filter((r) => !r.ok);
   console.log(`checks ${results.length}, fails ${fails.length}`);
-  for (const f of fails) console.log("FAIL", f.n);
+  for (const f of fails) console.log("FAIL", f.n, JSON.stringify(f.extra ?? null).slice(0, 200));
 })();

@@ -1327,10 +1327,16 @@ export default function TutorialPage() {
     setObjects((prev) => [...prev, { id, labelId, instanceNumber, hidden: false, locked: false, comment: "", reviewStatus: "pending" }]);
     setActiveObjectId(id);
   }
+  /** Same as the viewer: asks first, and removes the object's voxels from
+   * the mask AND from every undo/redo snapshot, so Undo can't bring the
+   * painting back with no object owning it (G-19). */
   function deleteObject(id: number) {
-    pushHistory();
-    const mask = maskRef.current;
-    for (let i = 0; i < mask.length; i++) if (mask[i] === id) mask[i] = 0;
+    const obj = objects.find((o) => o.id === id);
+    const name = obj ? `${labels.find((l) => l.id === obj.labelId)?.name ?? "Object"} ${obj.instanceNumber}` : "this object";
+    if (!window.confirm(`Delete ${name}? Its painting is removed, and this can't be undone.`)) return;
+    for (const mask of [maskRef.current, ...historyRef.current.map((h) => h.mask), ...redoRef.current.map((h) => h.mask)]) {
+      for (let i = 0; i < mask.length; i++) if (mask[i] === id) mask[i] = 0;
+    }
     setObjects((prev) => prev.filter((o) => o.id !== id));
     if (activeObjectId === id) setActiveObjectId(null);
     setMaskVersion((v) => v + 1);

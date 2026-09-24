@@ -1167,7 +1167,12 @@ export default function ViewerPage() {
       savedDefsRef.current = JSON.stringify({ labels: loadedLabels, objects: loadedObjects });
       setActiveObjectId(loadedObjects[0]?.id ?? null);
       nextLabelIdRef.current = Math.max(0, ...loadedLabels.map((l) => l.id)) + 1;
-      nextObjectIdRef.current = Math.max(0, ...loadedObjects.map((o) => o.id)) + 1;
+      // Past every id in use -- by an object, or by voxels an older save
+      // left without one -- so a new object never inherits someone
+      // else's painting (E-05).
+      let maxVoxel = 0;
+      for (let i = 0; i < volume.length; i++) if (volume[i] > maxVoxel) maxVoxel = volume[i];
+      nextObjectIdRef.current = Math.max(maxVoxel, ...loadedObjects.map((o) => o.id)) + 1;
       setMaskReady(true);
     })();
 
@@ -1206,10 +1211,23 @@ export default function ViewerPage() {
     setLabels((prev) => prev.map((l) => (l.id === id ? { ...l, color } : l)));
   }
 
+  /** Removes these objects' voxels from the volume AND from every
+   * undo/redo snapshot -- otherwise Undo right after a delete brought the
+   * painting back with no object owning it (E-05). */
+  function purgeObjectIds(ids: Set<number>) {
+    const volume = maskVolumeRef.current;
+    if (volume) for (let i = 0; i < volume.length; i++) if (ids.has(volume[i])) volume[i] = 0;
+    for (const entry of [...undoStackRef.current, ...redoStackRef.current]) {
+      for (let i = 0; i < entry.slice.length; i++) if (ids.has(entry.slice[i])) entry.slice[i] = 0;
+    }
+    maskDirtyRef.current = true;
+  }
+
   function deleteLabel(labelId: number) {
     const doomed = new Set(objects.filter((o) => o.label_id === labelId).map((o) => o.id));
-    const volume = maskVolumeRef.current;
-    if (volume) for (let i = 0; i < volume.length; i++) if (doomed.has(volume[i])) volume[i] = 0;
+    const name = labels.find((l) => l.id === labelId)?.name ?? "this label";
+    if (!window.confirm(`Delete "${name}" and its ${doomed.size} object${doomed.size === 1 ? "" : "s"}? Their painting is removed, and this can't be undone.`)) return;
+    purgeObjectIds(doomed);
     setObjects((prev) => prev.filter((o) => !doomed.has(o.id)));
     setLabels((prev) => prev.filter((l) => l.id !== labelId));
     if (activeObjectId !== null && doomed.has(activeObjectId)) setActiveObjectId(null);
@@ -1228,8 +1246,10 @@ export default function ViewerPage() {
   }
 
   function deleteObject(id: number) {
-    const volume = maskVolumeRef.current;
-    if (volume) for (let i = 0; i < volume.length; i++) if (volume[i] === id) volume[i] = 0;
+    const obj = objects.find((o) => o.id === id);
+    const name = obj ? `${labels.find((l) => l.id === obj.label_id)?.name ?? "Object"} ${obj.instance_number}` : "this object";
+    if (!window.confirm(`Delete ${name}? Its painting is removed, and this can't be undone.`)) return;
+    purgeObjectIds(new Set([id]));
     setObjects((prev) => prev.filter((o) => o.id !== id));
     if (activeObjectId === id) setActiveObjectId(null);
   }
@@ -1343,9 +1363,13 @@ export default function ViewerPage() {
    * or filled over -- matches CVAT's "locked = can't edit" semantics.
    * Undo/redo intentionally bypass this (they restore prior truth, not a
    * fresh edit). */
+  /** Locked AND hidden objects are left alone by every tool: a hidden
+   * object can't be seen, so painting or erasing over it would destroy
+   * it unnoticed (E-09). */
   function isVoxelProtected(existingValue: number): boolean {
     if (existingValue === 0) return false;
-    return objects.find((o) => o.id === existingValue)?.locked ?? false;
+    const obj = objects.find((o) => o.id === existingValue);
+    return Boolean(obj && (obj.locked || obj.hidden));
   }
 
   /** Renders one pane's overlay canvas from the shared volume's current
@@ -1593,7 +1617,7 @@ export default function ViewerPage() {
       }
     }
     renderAllPaneOverlays();
-    if (blocked) setError("This area belongs to a locked object -- unlock it first to edit it.");
+    if (blocked) setError("This area belongs to a locked or hidden object -- unlock or show it first to edit it.");
   }
 
   /** Drag a box around a structure; on release, fetches that box's raw
@@ -1663,8 +1687,13 @@ export default function ViewerPage() {
     setAutoHu(null);
     setShowAutoSegmentedHistogram(false);
     renderAllPaneOverlays();
-    if (blocked) setError("This area belongs to a locked object -- unlock it first to edit it.");
+    if (blocked) setError("This area belongs to a locked or hidden object -- unlock or show it first to edit it.");
   }
+
+  // The keyboard handler is bound less often than the preview changes, so
+  // Enter reaches applyAutoContour through this always-current reference.
+  const applyAutoContourRef = useRef(applyAutoContour);
+  applyAutoContourRef.current = applyAutoContour;
 
   function cancelAutoContour() {
     const pane = autoBox?.pane;
@@ -1760,7 +1789,7 @@ export default function ViewerPage() {
     strokeBlockedByLockRef.current = false;
     strokeSegment(pane, point, point);
     renderAllPaneOverlays();
-    if (strokeBlockedByLockRef.current) setError("This area belongs to a locked object -- unlock it first to edit it.");
+    if (strokeBlockedByLockRef.current) setError("This area belongs to a locked or hidden object -- unlock or show it first to edit it.");
     strokeBlockedByLockRef.current = false;
   }
 
@@ -1849,7 +1878,7 @@ export default function ViewerPage() {
     if (roiDragRef.current) finishRoiBox(event.clientX, event.clientY);
     if (drawingRef.current) {
       renderAllPaneOverlays();
-      if (strokeBlockedByLockRef.current) setError("This area belongs to a locked object -- unlock it first to edit it.");
+      if (strokeBlockedByLockRef.current) setError("This area belongs to a locked or hidden object -- unlock or show it first to edit it.");
     }
     drawingRef.current = false;
     lastPointRef.current = null;
@@ -3263,7 +3292,8 @@ export default function ViewerPage() {
       // Enter: apply a pending auto-contour preview.
       if (event.key === "Enter" && !typing && autoBox && autoHu) {
         event.preventDefault();
-        applyAutoContour();
+        // the latest render's version: its preview mask and active object (E-01)
+        applyAutoContourRef.current();
         return;
       }
 
