@@ -283,3 +283,33 @@ def test_a_reviewers_save_keeps_the_case_handed_in(client, db):
     assert annotator_case["status"] == "done"
     reviewer_case = _job(client, REVIEWER_SUBJECT, rev["id"])["cases"][0]
     assert reviewer_case["status"] == "pending" and reviewer_case["pending_annotation_id"] == str(review_draft)
+
+
+def test_split_ratios_must_be_usable(client, db):
+    """C-06: a negative ratio stole cases, text or null gave 500, huge
+    ratios overflowed and all-zero sent everything to the last part."""
+    sid = make_study(client)
+    for parts in (
+        [{"name": "a", "ratio": -1}, {"name": "b", "ratio": 2}],
+        [{"name": "a", "ratio": "abc"}, {"name": "b", "ratio": 1}],
+        [{"name": "a", "ratio": None}, {"name": "b", "ratio": 1}],
+        [{"name": "a", "ratio": 1e308}, {"name": "b", "ratio": 1e308}],
+        [{"name": "a", "ratio": 0}, {"name": "b", "ratio": 0}],
+    ):
+        r = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "split", "title": "S", "position_x": 0, "position_y": 0, "config": {"parts": parts}})
+        assert r.status_code == 422, (parts, r.text)
+    ok = _card(client, sid, "split", "S", {"parts": [{"name": "a", "ratio": 70}, {"name": "b", "ratio": 30}]})
+    bad = {"parts": [{"name": "a", "ratio": -5}, {"name": "b", "ratio": 1}]}
+    assert client.patch(f"/admin/workflow-cards/{ok['id']}", json={"config": bad}).status_code == 422
+
+
+def test_non_finite_numbers_are_refused(client, db):
+    """C-07: a NaN position was stored and then made every study autosave fail, silently."""
+    sid = make_study(client)
+    headers = {"content-type": "application/json"}
+    body = '{"type": "note", "title": "n", "position_x": NaN, "position_y": 0, "config": {}}'
+    assert client.post(f"/admin/studies/{sid}/workflow/cards", content=body, headers=headers).status_code == 422
+    body = '{"type": "note", "title": "n", "position_x": 0, "position_y": 0, "config": {"zoom": Infinity}}'
+    assert client.post(f"/admin/studies/{sid}/workflow/cards", content=body, headers=headers).status_code == 422
+    note = _card(client, sid, "note", "n")
+    assert client.patch(f"/admin/workflow-cards/{note['id']}", content='{"position_y": NaN}', headers=headers).status_code == 422

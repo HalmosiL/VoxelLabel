@@ -15,6 +15,7 @@ autosave's snapshot-read and its delayed write would silently clobber
 the just-computed output), so each mutation only ever touches its own
 row.
 """
+import math
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -158,6 +159,7 @@ def create_workflow_card(
 
     _validate_assignee(db, WorkflowCard(study_id=study_id, type=body.type), body.config)
     _validate_case_ids(db, study_id, body.config)
+    _validate_split_parts(body.type, body.config)
     card = WorkflowCard(
         id=body.id or uuid.uuid4(),
         study_id=study_id,
@@ -175,6 +177,24 @@ def create_workflow_card(
     db.refresh(card)
     autosave(db, card.study_id, user.subject)
     return _serialize_card(db, card, {card.id: card}, {})
+
+
+def _validate_split_parts(card_type, config: dict) -> None:
+    """A Split's parts need usable ratios: finite numbers >= 0 with a
+    positive total. A negative ratio took cases from the others, text or
+    null answered 500 at Run, and all-zero ratios sent every case to the
+    last part (C-06). Ratios are relative -- 70/30 and 0.7/0.3 are the
+    same split."""
+    if card_type != WorkflowCardType.SPLIT or "parts" not in config:
+        return
+    parts = config["parts"]
+    if not isinstance(parts, list) or not parts or not all(isinstance(p, dict) for p in parts):
+        raise HTTPException(status_code=422, detail="A Split needs a list of parts")
+    ratios = [p.get("ratio") for p in parts]
+    if not all(isinstance(r, (int, float)) and not isinstance(r, bool) and math.isfinite(r) and 0 <= r <= 1e6 for r in ratios):
+        raise HTTPException(status_code=422, detail="Every part's ratio must be a number from 0 to 1,000,000")
+    if sum(ratios) <= 0:
+        raise HTTPException(status_code=422, detail="At least one part needs a ratio above 0")
 
 
 def _validate_case_ids(db: Session, study_id, config: dict) -> None:
@@ -257,6 +277,7 @@ def update_workflow_card(
     if body.config is not None:
         _validate_assignee(db, card, body.config)
         _validate_case_ids(db, card.study_id, body.config)
+        _validate_split_parts(card.type, body.config)
         # A merge, not a replace: a caller that only knows about the one
         # field it's changing (e.g. ct-annotator's status-dropdown proxy,
         # which sends only {"status": ...} with no visibility into the
