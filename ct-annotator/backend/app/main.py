@@ -479,9 +479,20 @@ async def list_annotations(
     for annotation in annotations:
         annotation["type_name"] = type_names.get(annotation.get("type_id"))
         mask_key = (annotation.get("payload") or {}).get("mask_storage_key")
-        if mask_key:
+        if _is_mask_key(mask_key):
             annotation["mask_url"] = presigned_mask_url(mask_key)
     return annotations
+
+
+# Masks this viewer writes all live under this prefix (see storage.py).
+# A payload key anywhere else -- another study's DICOM, a document -- is
+# never read or signed: annotation-service refuses such keys on save, and
+# this guards rows written before it did.
+_MASK_KEY_PREFIX = "annotation-masks/"
+
+
+def _is_mask_key(key) -> bool:
+    return isinstance(key, str) and key.startswith(_MASK_KEY_PREFIX) and ".." not in key and "\\" not in key
 
 
 class SaveMaskVolumeBody(BaseModel):
@@ -514,7 +525,11 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
     type_names = {t["id"]: t["name"] for t in await _get_annotation_types(user)}
-    volume_annotations = [a for a in resp.json() if type_names.get(a.get("type_id")) == "segmentation_volume"]
+    volume_annotations = [
+        a
+        for a in resp.json()
+        if type_names.get(a.get("type_id")) == "segmentation_volume" and _is_mask_key((a.get("payload") or {}).get("mask_volume_key"))
+    ]
     if not volume_annotations:
         return {"mask_gzip_base64": None, "labels": [], "objects": []}
 

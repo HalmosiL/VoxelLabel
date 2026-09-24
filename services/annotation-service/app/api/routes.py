@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Annotation, AnnotationReview, AnnotationStatus, AnnotationType
+from shared_models.models import Annotation, AnnotationReview, AnnotationStatus, AnnotationType, Instance, Series
 from sqlalchemy.orm import Session
 
 from app.validation import PayloadValidationError, validate_payload
@@ -23,6 +23,41 @@ def _has_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles
 
 
 _CREATABLE_STATUSES = {AnnotationStatus.DRAFT, AnnotationStatus.SUBMITTED}
+
+# What an annotation can be attached to. The study a target belongs to is
+# always read from the target itself (series -> imaging study -> case ->
+# study), never taken from the caller: a role in one study must not let
+# anyone write onto, or read, another study's images.
+TARGET_TYPES = ("series", "instance")
+
+# Payload fields that point at an object in the shared bucket, and the
+# only place such an object may live: the viewer's own mask uploads. A
+# key anywhere else (another study's DICOM, a document) would be served
+# back to whoever can read this annotation.
+STORAGE_KEY_FIELDS = ("mask_volume_key", "mask_storage_key", "object_storage_key", "storage_key", "mask_key")
+MASK_KEY_PREFIX = "annotation-masks/"
+
+
+def _study_of_target(db: Session, target_type: str, target_id: uuid.UUID) -> str:
+    """The study that owns a target, or 404 when there is no such target."""
+    if target_type not in TARGET_TYPES:
+        raise HTTPException(status_code=422, detail=f"target_type must be one of: {', '.join(TARGET_TYPES)}")
+    series = db.get(Series, target_id) if target_type == "series" else None
+    if target_type == "instance":
+        instance = db.get(Instance, target_id)
+        series = instance.series if instance is not None else None
+    if series is None:
+        raise HTTPException(status_code=404, detail=f"No such {target_type}")
+    return str(series.imaging_study.case.study_id)
+
+
+def _check_storage_keys(payload: dict) -> None:
+    for field in STORAGE_KEY_FIELDS:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.startswith(MASK_KEY_PREFIX) or ".." in value or "\\" in value:
+            raise HTTPException(status_code=422, detail=f"{field} must be one of this viewer's own mask uploads")
 
 
 @router.post("/studies/{study_id}")
@@ -49,7 +84,13 @@ def create_annotation(
     # member could never actually finish a review -- their save was
     # refused with 403 one step before the decision. The decision itself
     # stays reviewer/admin-only (see review_annotation below).
+    try:
+        study_id = str(uuid.UUID(study_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="study_id must be a UUID") from None
     require_study_role(db, study_id, user, allowed_roles=["annotator", "reviewer", "admin"])
+    if _study_of_target(db, target_type, target_id) != study_id:
+        raise HTTPException(status_code=403, detail="That image doesn't belong to this study")
 
     if status not in _CREATABLE_STATUSES:
         raise HTTPException(status_code=422, detail=f"Cannot create an annotation with status '{status.value}'")
@@ -62,6 +103,7 @@ def create_annotation(
         validate_payload(payload, annotation_type.json_schema)
     except PayloadValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _check_storage_keys(payload)
 
     annotation = Annotation(
         target_type=target_type,
@@ -119,11 +161,16 @@ def list_annotations_for_target(
     take the last element, rather than relying on whatever order the
     database happens to return an otherwise-unordered query in (not
     guaranteed to match insertion order, and in practice doesn't always)."""
+    # Access follows the target's own study -- not whichever annotation
+    # happens to be first -- and only that study's annotations come back.
+    study_id = _study_of_target(db, target_type, target_id)
+    require_study_role(db, study_id, user, allowed_roles=_READ_ROLES)
     annotations = (
-        db.query(Annotation).filter_by(target_type=target_type, target_id=target_id).order_by(Annotation.created_at).all()
+        db.query(Annotation)
+        .filter_by(target_type=target_type, target_id=target_id, study_id=study_id)
+        .order_by(Annotation.created_at)
+        .all()
     )
-    if annotations:
-        require_study_role(db, str(annotations[0].study_id), user, allowed_roles=_READ_ROLES)
 
     return [
         {"id": str(a.id), "type_id": str(a.type_id), "payload": a.payload, "status": a.status.value}
