@@ -1,0 +1,455 @@
+<title>VoxelLabel átvizsgálási terv</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f3f5f7;
+  --paper: #ffffff;
+  --ink: #16202b;
+  --ink-2: #3c4a58;
+  --muted: #6b7885;
+  --rule: #d9dfe5;
+  --tint: #e8edf2;
+  --accent: #b86e0a;
+  --accent-soft: #fbf0df;
+  --s1: #b42318; --s1-bg: #fdecea;
+  --s2: #b54708; --s2-bg: #fef1e6;
+  --s3: #1d5fa8; --s3-bg: #e8f1fb;
+  --s4: #53606d; --s4-bg: #eef1f4;
+  --code-bg: #eef2f6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0f141a; --paper: #151c24; --ink: #e6ebf0; --ink-2: #bcc6d0; --muted: #8b98a5;
+    --rule: #26313c; --tint: #1b242e; --accent: #e3a246; --accent-soft: #2a2114;
+    --s1: #f97066; --s1-bg: #3a1714; --s2: #f3a45c; --s2-bg: #36220f; --s3: #7cb4f5; --s3-bg: #13263a; --s4: #a3afbb; --s4-bg: #1d2630;
+    --code-bg: #1b242e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0f141a; --paper: #151c24; --ink: #e6ebf0; --ink-2: #bcc6d0; --muted: #8b98a5;
+  --rule: #26313c; --tint: #1b242e; --accent: #e3a246; --accent-soft: #2a2114;
+  --s1: #f97066; --s1-bg: #3a1714; --s2: #f3a45c; --s2-bg: #36220f; --s3: #7cb4f5; --s3-bg: #13263a; --s4: #a3afbb; --s4-bg: #1d2630;
+  --code-bg: #1b242e; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font: 400 15.5px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding-inline: 16px; padding-block: 0 64px; }
+.wrap { max-width: 980px; margin: 0 auto; }
+header.top { padding-block: 44px 28px; border-bottom: 1px solid var(--rule); margin-bottom: 28px; }
+.eyebrow { font: 500 12px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1, h2, h3 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif; font-weight: 600; text-wrap: balance; letter-spacing: -.005em; }
+h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.1; margin: 12px 0 14px; }
+h2 { font-size: 25px; line-height: 1.2; margin: 48px 0 12px; }
+h3 { font-size: 18.5px; line-height: 1.3; margin: 26px 0 8px; }
+p { margin: 0 0 12px; max-width: 68ch; }
+.lede { font-size: 17px; color: var(--ink-2); max-width: 64ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 18px; font: 400 13px/1.4 "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); }
+.meta b { color: var(--ink-2); font-weight: 500; }
+code, kbd, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 400 13px/1.55 "IBM Plex Mono", ui-monospace, monospace; margin: 8px 0 16px; }
+ul, ol { margin: 0 0 14px; padding-left: 22px; max-width: 72ch; }
+li { margin: 4px 0; }
+a { color: var(--accent); }
+nav.toc { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 20px; }
+nav.toc ol { columns: 2 260px; column-gap: 32px; margin: 6px 0 0; }
+nav.toc li { break-inside: avoid; }
+.table-wrap { overflow-x: auto; margin: 10px 0 18px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 12px/1.3 "IBM Plex Sans Condensed", system-ui, sans-serif; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--tint); }
+tr:last-child td { border-bottom: none; }
+td.id { font: 500 13px/1.4 "IBM Plex Mono", monospace; color: var(--accent); white-space: nowrap; }
+.sev { display: inline-block; font: 600 11.5px/1 "IBM Plex Mono", monospace; padding: 4px 7px; border-radius: 5px; white-space: nowrap; }
+.sev.s1 { color: var(--s1); background: var(--s1-bg); } .sev.s2 { color: var(--s2); background: var(--s2-bg); }
+.sev.s3 { color: var(--s3); background: var(--s3-bg); } .sev.s4 { color: var(--s4); background: var(--s4-bg); }
+.rule-box { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 14px 0 18px; }
+.rule-box p:last-child, .rule-box ul:last-child { margin-bottom: 0; }
+details.ws { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; margin: 12px 0; }
+details.ws > summary { cursor: pointer; list-style: none; padding: 14px 18px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+details.ws > summary::-webkit-details-marker { display: none; }
+details.ws > summary .wid { font: 600 14px/1 "IBM Plex Mono", monospace; color: var(--accent); min-width: 2.2em; }
+details.ws > summary .wt { font: 600 18px/1.25 "IBM Plex Sans Condensed", system-ui, sans-serif; }
+details.ws > summary .ws-meta { margin-left: auto; font: 400 12.5px/1.3 "IBM Plex Mono", monospace; color: var(--muted); }
+details.ws > summary::after { content: "+"; font: 500 18px/1 "IBM Plex Mono", monospace; color: var(--muted); }
+details.ws[open] > summary::after { content: "–"; }
+details.ws > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+.ws-body { padding: 2px 20px 18px; border-top: 1px solid var(--rule); }
+.ws-body h4 { font: 600 12.5px/1.3 "IBM Plex Sans Condensed", system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; }
+.checks { list-style: none; padding-left: 0; }
+.checks li { position: relative; padding-left: 26px; }
+.checks li::before { content: ""; position: absolute; left: 2px; top: .45em; width: 12px; height: 12px; border: 1.5px solid var(--muted); border-radius: 3px; }
+.risk li::marker { color: var(--s2); }
+.brief { background: var(--code-bg); border: 1px dashed var(--rule); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--ink-2); }
+.brief .copy { float: right; font: 500 12px/1 "IBM Plex Sans", sans-serif; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); border-radius: 6px; padding: 6px 9px; cursor: pointer; margin: 0 0 6px 10px; }
+.brief .copy:focus-visible { outline: 2px solid var(--accent); }
+.phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 12px 0 18px; }
+.phase { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; }
+.phase .n { font: 600 12px/1 "IBM Plex Mono", monospace; color: var(--accent); }
+.phase h3 { margin: 8px 0 6px; font-size: 16.5px; }
+.phase p { font-size: 14px; color: var(--ink-2); margin: 0; }
+.tag { display: inline-block; font: 500 11.5px/1 "IBM Plex Mono", monospace; color: var(--ink-2); background: var(--tint); border-radius: 4px; padding: 3px 6px; margin: 1px 2px 1px 0; }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13px; }
+@media (max-width: 560px) { details.ws > summary .ws-meta { margin-left: 0; width: 100%; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">Tesztelési terv · teljes rendszer</div>
+  <h1>VoxelLabel átvizsgálási terv</h1>
+  <p class="lede">A teljes platform módszeres, feature-ről feature-re haladó átvizsgálása hibakeresés céljából: admin-ui, öt backend-szolgáltatás, a ct-annotator viewer és tutorial, az MCP-szerver, a telepítés. Tíz munkacsomagra bontva, hogy több ágens párhuzamosan dolgozhasson rajta, közös szabályokkal és egységes hibajelentéssel.</p>
+  <div class="meta">
+    <span><b>Kiindulás:</b> commit 100076d</span>
+    <span><b>Felület:</b> 18 admin-ui útvonal · ~130 végpont · 13 kártyatípus</span>
+    <span><b>Meglévő e2e:</b> 32 spec</span>
+    <span><b>Állapot:</b> terv, végrehajtás előtt</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Tartalom">
+  <div class="eyebrow">Tartalom</div>
+  <ol>
+    <li><a href="#cel">Cél és hatókör</a></li>
+    <li><a href="#szabalyok">Szabályok minden ágensnek</a></li>
+    <li><a href="#modszer">Módszer és súlyosság</a></li>
+    <li><a href="#csomagok">A tíz munkacsomag</a></li>
+    <li><a href="#reszletek">Munkacsomagok részletesen</a></li>
+    <li><a href="#utem">Fázisok és ütemezés</a></li>
+    <li><a href="#jelentes">Hibajelentés és javítás</a></li>
+    <li><a href="#kilepes">Kilépési feltételek</a></li>
+  </ol>
+</nav>
+
+<h2 id="cel">Cél és hatókör</h2>
+<p>A cél a hibák megtalálása, nem a már ismert működés újbóli igazolása. Minden funkciót három szinten nézünk meg: a kódot és a meglévő teszteket, az API-t szerepkörönként, és a valódi felületet böngészőben. Ahol egy terület eddig csak „boldog úton” volt tesztelve, ott a szélső esetekre és a hibautakra kerül a hangsúly.</p>
+<p><b>Benne van:</b> admin-ui, admin-service, data-service, ingestion-service (API és worker), annotation-service, mcp-server, ct-annotator backend, viewer, tutorial, a Keycloak-integráció, a migrációk, a telepítő szkript és az INSTALL.md, a clinician-app indulása.</p>
+<p><b>Nincs benne:</b> jogi és megfelelőségi keretek (tesztszoftver), terheléses teszt éles méretben, és a külső szolgáltatások saját hibái (Keycloak, MinIO, Ollama). Ezeket csak az integrációs pontjukon nézzük.</p>
+
+<h2 id="szabalyok">Szabályok minden ágensnek</h2>
+<div class="rule-box">
+  <p><b>Ezek kötelezőek, minden ágens briefjének része.</b></p>
+  <ul>
+    <li><b>Csak Dockerrel.</b> A gazdagépen nincs npm és pytest. Minden build és teszt konténerben fut, a lenti parancsokkal.</li>
+    <li><b>A gyökér <code>.env</code>-hez nem nyúlunk.</b> A helyi stack a scratchpad <code>local-preview.env</code> fájljával fut.</li>
+    <li><b>Nem stage-elünk és nem commitolunk</b> a <code>docs/</code> alatti docx-, zip- és html-fájlokból. Pusht csak a felhasználó csinál.</li>
+    <li><b>Hibakereső ágens nem javít.</b> Jelent, bizonyítékkal. A javítás a triázs után, központilag történik, hogy ne legyen ütközés.</li>
+    <li><b>Saját adatok.</b> Minden ágens saját studyt hoz létre <code>QA-&lt;csomag&gt;-</code> előtaggal, és csak azon dolgozik. A fixture-studyt (<span class="mono">LIDC-IDRI Real CT Sample</span>) és a TEST-PROJECT-et csak olvassa.</li>
+    <li><b>Globális, romboló műveletet csak az kizárólagos ablakban</b> szabad futtatni: usage-log törlése, backup-visszaállítás, felvételi beállítások, SMTP-beállítás, study-verzió visszaállítása. Ezek a <a href="#utem">3. fázis</a> végén, egyedül futnak.</li>
+    <li><b>Régi fül gyanúja.</b> Ha egy javított hiba „még mindig” jön elő, előbb teljes újratöltés (Ctrl+Shift+R), csak utána jelentés.</li>
+  </ul>
+</div>
+<h3>A helyi stack</h3>
+<div class="table-wrap"><table>
+  <thead><tr><th>Mi</th><th>Cím</th><th>Megjegyzés</th></tr></thead>
+  <tbody>
+    <tr><td>admin-ui</td><td class="mono">http://localhost:5173</td><td>platform-admin / platform-admin</td></tr>
+    <tr><td>viewer</td><td class="mono">http://localhost:5174</td><td>dr-test (annotátor), dr-review (reviewer), jelszó: Test1234!</td></tr>
+    <tr><td>Keycloak</td><td class="mono">http://localhost:8080</td><td>realm: ct-platform</td></tr>
+    <tr><td>admin / data / ingestion / annotation API</td><td class="mono">:8004 · :8002 · :8001 · :8003</td><td>viewer backend: :8010</td></tr>
+    <tr><td>Mailpit · MinIO</td><td class="mono">:8025 · :9000 (konzol :9001)</td><td>a kimenő levelek itt látszanak</td></tr>
+  </tbody>
+</table></div>
+<h3>Parancsok</h3>
+<pre>S=&lt;scratchpad&gt;
+# stack újraépítése egy szolgáltatásra
+docker compose --env-file "$S/local-preview.env" up -d --build admin-service
+(cd ct-annotator &amp;&amp; docker compose --env-file "$S/ct-annotator-local-preview.env" up -d --build backend frontend)
+
+# backend: ruff + pytest (unit + integráció, eldobható postgres:16-tal)
+$S/backend-tests.sh tests
+
+# frontend: típusellenőrzés, egységteszt, build
+docker run --rm -v "$PWD/admin-ui:/app" -w /app node:20-slim sh -c "npx tsc --noEmit &amp;&amp; npx vitest run &amp;&amp; npm run build"
+
+# e2e: egy spec vagy mind
+e2e/run.sh viewer usage
+e2e/run.sh</pre>
+
+<h2 id="modszer">Módszer és súlyosság</h2>
+<p>Minden munkacsomag ugyanazt a hat lépést járja végig. A sorrend számít: a kódolvasás mutatja meg, hol érdemes a felületen keresgélni.</p>
+<ol>
+  <li><b>Térkép.</b> A terület kódjának és meglévő tesztjeinek elolvasása. Lista a funkciókról, végpontokról és a tesztekből hiányzó esetekről.</li>
+  <li><b>Alapvonal.</b> A terület meglévő unit-, integrációs és e2e-tesztjeinek futtatása. Ami már itt bukik, az első jelentés.</li>
+  <li><b>API-szondázás.</b> Minden végpont minden szerepkörrel (admin, data_manager, annotátor, reviewer, viewer, nem tag, token nélkül). Érvénytelen, hiányzó, túl nagy és rossz típusú bemenet.</li>
+  <li><b>Felfedező böngészős teszt.</b> Playwright-szkript vagy kézi végigkattintás a valódi felületen, konzolhibák és sikertelen kérések rögzítésével, képernyőképekkel. Asztali és tablet nézetben is.</li>
+  <li><b>Szélső esetek.</b> Üres állapot, egy elem, sok elem (100+ eset, 300+ szelet), párhuzamos szerkesztés két fülön, megszakított művelet, lassú hálózat, újratöltés művelet közben.</li>
+  <li><b>Jelentés.</b> Minden talált hiba a <a href="#jelentes">sablon</a> szerint, reprodukciós lépésekkel és bizonyítékkal.</li>
+</ol>
+<div class="table-wrap"><table>
+  <thead><tr><th>Szint</th><th>Mit jelent</th><th>Példa</th></tr></thead>
+  <tbody>
+    <tr><td><span class="sev s1">S1 blokkoló</span></td><td>Adatvesztés, biztonsági rés, jogosultság megkerülése, összeomló szolgáltatás</td><td>Annotátor más study eseteit olvassa; mentés után eltűnik a maszk</td></tr>
+    <tr><td><span class="sev s2">S2 súlyos</span></td><td>Egy funkció nem működik, és nincs kerülőút</td><td>Reject 422-vel elbukik; az előnézet sosem jelenik meg</td></tr>
+    <tr><td><span class="sev s3">S3 kisebb</span></td><td>Működik, de rosszul, vagy van kerülőút</td><td>Rossz szám egy statisztikában; félrevezető hibaüzenet</td></tr>
+    <tr><td><span class="sev s4">S4 kozmetikai</span></td><td>Megjelenés, szöveg, apró UX</td><td>Levágott felirat; elcsúszott ikon tableten</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="csomagok">A tíz munkacsomag</h2>
+<p>Egy csomag egy ágensnek szól. A függőség azt jelzi, mire kell várni, mielőtt a csomag romboló részei futhatnak. A felfedező rész mindegyiknél azonnal indulhat.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>Terület</th><th>Fő felületek</th><th>Meglévő e2e</th><th>Függés</th></tr></thead>
+  <tbody>
+    <tr><td class="id">A</td><td>Hitelesítés, szerepkörök, jogosultság</td><td>Keycloak, AuthPage, Users, regisztráció, view-as, study-tagság</td><td><span class="tag">auth-page</span><span class="tag">roles</span><span class="tag">viewas</span><span class="tag">session-ended</span></td><td>—</td></tr>
+    <tr><td class="id">B</td><td>Adatbevitel és esetek</td><td>DICOM feltöltés, quick import, anonimizálás, betegek, esetek, dokumentumok, duplikálás, előnézetek</td><td><span class="tag">case-previews</span></td><td>—</td></tr>
+    <tr><td class="id">C</td><td>Workflow board és exportok</td><td>13 kártyatípus, élek, futtatás, sablonok, CONSORT, PyTorch, LLM, MCP</td><td><span class="tag">study-analytics</span> (részben)</td><td>B adatai</td></tr>
+    <tr><td class="id">D</td><td>Munkák és esetkiosztás</td><td>My Jobs, Jobs, Job detail, átadás a viewernek, státuszok, értesítés</td><td><span class="tag">viewer-handoff</span><span class="tag">tour</span></td><td>C</td></tr>
+    <tr><td class="id">E</td><td>Viewer: annotálás</td><td>Összes eszköz, objektumok, űrlapok, mentés, 3D, dokumentumok, radiológus-funkciók</td><td><span class="tag">viewer</span><span class="tag">viewer-radiology</span><span class="tag">tablet</span></td><td>D</td></tr>
+    <tr><td class="id">F</td><td>Viewer: review</td><td>Elfogadás, elutasítás okkal, beküldés, visszaküldés, review-felület</td><td><span class="tag">viewas-viewer</span><span class="tag">viewer</span></td><td>E</td></tr>
+    <tr><td class="id">G</td><td>Tutorial és bemutatók</td><td>Tutorial két fázisa, az összes tour, súgó, tablet-tutorial</td><td><span class="tag">tutorial-*</span> (14)<span class="tag">admin-tour*</span></td><td>—</td></tr>
+    <tr><td class="id">H</td><td>Analitika</td><td>Usage (összes fül), study-analitika, pipeline health, learning curve</td><td><span class="tag">usage</span><span class="tag">study-analytics</span></td><td>D–F adatai; romboló rész: kizárólagos</td></tr>
+    <tr><td class="id">I</td><td>Rendszer és üzemeltetés</td><td>System (backup, verziók), értesítések, audit, migrációk, telepítés</td><td><span class="tag">audit-log</span><span class="tag">notifications-page</span></td><td>romboló rész: kizárólagos</td></tr>
+    <tr><td class="id">J</td><td>Keresztmetszet: biztonság, teljesítmény, UX</td><td>Minden végpont jogosultsága, bemenet-validálás, erőforrások, reszponzivitás</td><td><span class="tag">tablet</span><span class="tag">sticky</span></td><td>A térképe</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="reszletek">Munkacsomagok részletesen</h2>
+<p>Minden csomag alján kész brief van, amelyet egy ágens egy az egyben megkaphat. A közös szabályokat mindig mellé kell tenni.</p>
+
+<details class="ws" open id="ws-a">
+  <summary><span class="wid">A</span><span class="wt">Hitelesítés, szerepkörök, jogosultság</span><span class="ws-meta">admin-service · Keycloak · minden szolgáltatás</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>Bejelentkezés, kijelentkezés, lejárt token, lejárt munkamenet („session ended” oldal), frissítő token a háttérben egy hosszú viewer-munka közben.</li>
+      <li>Regisztrációs kérelem: beküldés, jóváhagyás, elutasítás okkal, e-mail a Mailpitben, dupla beküldés, már létező felhasználónév.</li>
+      <li>Users oldal: létrehozás, szerepkör-váltás, jelszó-visszaállítás, tiltás; mi történik a tiltott felhasználó nyitott fülével.</li>
+      <li>Study-tagság: hozzáadás és eltávolítás szerepkörrel. A kivett tag azonnal elveszti-e a hozzáférést az API-n és a viewerben.</li>
+      <li>View-as (admin „nézet mint”): minden szerepkörben ugyanazt látja-e, amit a valódi felhasználó, és semmit sem ír a nevében.</li>
+      <li>Szerepkör-mátrix: minden admin-ui útvonal minden szerepkörrel. Ami a menüben rejtett, közvetlen URL-lel is tiltott-e.</li>
+    </ul>
+    <h4>Ismert kockázat</h4>
+    <ul class="risk">
+      <li>Korábban volt RBAC-javítás a boardon. Érdemes újra ellenőrizni, hogy minden workflow-végpont study-szerepkört néz-e.</li>
+      <li>A kiadóra (issuer) érzékeny: IP és hosztnév keveredése 401-et ad. Ez a J csomag telepítési részével közös.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te az A munkacsomag ágense vagy a VoxelLabel átvizsgálásában. Feladatod a hitelesítés és a jogosultság hibáinak felkutatása. Készíts szerepkör-mátrixot: minden admin-ui útvonal és minden backend-végpont (admin-service, data-service, ingestion, annotation, viewer backend), soronként a hat szerepkörrel és token nélkül. Hívd meg mindet, és jelents minden eltérést a várt jogosultságtól. Teszteld a regisztrációt, a Users oldalt, a study-tagság visszavonását nyitott viewerrel, és a view-as módot. Nem javítasz, csak jelentesz a sablon szerint.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-b">
+  <summary><span class="wid">B</span><span class="wt">Adatbevitel és esetek</span><span class="ws-meta">ingestion · data-service · admin-service</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>DICOM feltöltés egy esetre és quick import egy studyra: kicsi, nagy (300+ szelet), vegyes sorozatok, scout/lokalizáló sorozat, tömörített átviteli szintaxis (JPEG, JPEG 2000), sérült fájl, nem DICOM fájl.</li>
+      <li>Anonimizálási profilok és szabályok: minden szabálytípus, a profil hatása a tárolt fájlra (a tárolt DICOM-ban tényleg nincs meg a név), UID-leképezés, ugyanaz a beteg két importban.</li>
+      <li>Párhuzamos import ugyanabba a studyba (ismert versenyhelyzet volt): nincs dupla sorozat, dupla eset, félbemaradt rekord.</li>
+      <li>Betegek és esetek: létrehozás, szerkesztés, törlés; a törlés eltávolítja-e a tárolt objektumokat is, vagy árva fájlok maradnak.</li>
+      <li>Imaging study, sorozat és kép törlése és leírás-szerkesztése; az „Images” ablak, a DICOM letöltése.</li>
+      <li>Dokumentumok: feltöltés, címkék, hozzájárulások, megnyitás új fülön, nagy PDF, nem PDF fájl, fájl nélküli dokumentum.</li>
+      <li>Study-duplikálás: esetek, sorozatok, dokumentumok, bélyegképek és a board másolata; a másolat független-e az eredetitől.</li>
+      <li>Előnézetek: minden sorozatnak van-e bélyegképe az import után; a pótló parancs (<code>python -m app.thumbnail_backfill</code>) ismételt futása nem ír felül semmit.</li>
+    </ul>
+    <h4>Ismert kockázat</h4>
+    <ul class="risk">
+      <li>Helyben 1652 képből 1604-nek hiányzott a bélyegképe. A pótló parancs kijavította, de az okát (miért hiányzott a forrásban) nem sikerült egyértelműen visszakövetni.</li>
+      <li>Tömörített DICOM-hoz az importálóban nincs codec: az import sikeres, de a bélyegkép és valószínűleg a viewer-renderelés sem működik.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te a B munkacsomag ágense vagy. Feladatod az adatbevitel és az esetkezelés hibáinak felkutatása egy saját QA-B studyban. Importálj kicsi, nagy, scout, tömörített és hibás DICOM-okat, egyenként és quick importtal is, két importot párhuzamosan is. Minden import után nézd meg az adatbázisban és a MinIO-ban, hogy a sorozat, a képek, a bélyegképek és az anonimizálás rendben vannak-e. Teszteld a törlést (maradnak-e árva objektumok), a dokumentumokat és a study-duplikálást. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-c">
+  <summary><span class="wid">C</span><span class="wt">Workflow board és exportok</span><span class="ws-meta">admin-service/workflow · mcp-server · ingestion export</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>Mind a 13 kártyatípus létrehozása, beállítása, törlése: dataset, split, filter, annotation, review, union, note, milestone, annotation_surface, review_surface, llm, builder, criterion.</li>
+      <li>Élek és csatlakozási szabályok: tiltott kapcsolat valóban tiltott-e, körkörös gráf, egy bemenetre két forrás, surface-él a rossz kártyára.</li>
+      <li>Futtatás (Run): esetek tényleges áramlása split, filter és union mentén; újrafuttatás módosítás után; futtatás közben szerkesztett board.</li>
+      <li>Többlépéses folyamat: annotáció, review, visszaküldés, második review; a státuszok és az esetek helye minden lépésben.</li>
+      <li>Board-szerkesztés: visszavonás és újra, több kártya kijelölése, pásztázás és zoom, két admin egyszerre ugyanazon a boardon.</li>
+      <li>Pipeline-sablonok: mentés, betöltés másik studyba, a sablon nem visz át study-specifikus azonosítót.</li>
+      <li>CONSORT-export és PyTorch-export: helyes számok, a letöltés a szerveren is működik (a PyTorch-linkek még a MinIO-címre mutatnak).</li>
+      <li>LLM-kártya és MCP-eszközök: dokumentumolvasás, kritérium hozzáadása, hibakezelés, ha az Ollama nem fut.</li>
+    </ul>
+    <h4>Ismert kockázat</h4>
+    <ul class="risk">
+      <li>A PyTorch-export letöltései közvetlen MinIO-linkek. Szerveren, elérhetetlen 9000-es porttal nem töltődnek le.</li>
+      <li>Az egyetlen aktív felületkártya-szabály (annotation vs. review surface) csak akkor működik jól, ha a régi „surface” típusú kártyák nem élnek tovább.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te a C munkacsomag ágense vagy. Feladatod a workflow board hibáinak felkutatása egy saját QA-C studyban. Építs olyan boardot, amelyben mind a 13 kártyatípus előfordul. Próbálj ki minden megengedett és tiltott élt, futtasd a boardot, és ellenőrizd az esetek útját minden kártyán. Építs többkörös review-folyamatot. Teszteld a sablonokat, a CONSORT- és a PyTorch-exportot, az LLM-kártyát és az MCP-eszközöket. A számokat vesd össze az adatbázissal. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-d">
+  <summary><span class="wid">D</span><span class="wt">Munkák és esetkiosztás</span><span class="ws-meta">admin-ui · admin-service · viewer</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>My Jobs: csak a saját munkák látszanak, a számok (hány eset van hátra) egyeznek a boarddal.</li>
+      <li>Job detail és a case lap: az „Open in Viewer” a jó esetet, sorozatot és jobot nyitja meg; a visszalépés a jó helyre visz.</li>
+      <li>Esetek léptetése a viewerben (előző, következő nyitott eset); a kész és a visszaküldött esetek helyes kezelése.</li>
+      <li>Munkastátusz (To do, In progress, Done): automatikusan változik-e, és soha nem ragad be.</li>
+      <li>Értesítések: kiosztáskor, visszaküldéskor, beküldéskor; e-mail a Mailpitben; a felhasználói beállítások tiszteletben tartása.</li>
+      <li>Tablet: a job- és a case lap használhatósága érintéssel, a QR-kódos „Open on a tablet”.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te a D munkacsomag ágense vagy. Feladatod a munkakiosztás és az átadás hibáinak felkutatása. A C csomag boardjával vagy egy saját QA-D boarddal rendelj annotátort és reviewert, és kövesd végig egy eset teljes útját dr-test és dr-review nevében: My Jobs, case lap, viewer, beküldés, review, visszaküldés, újrabeküldés. Minden lépésben ellenőrizd a státuszt, a számlálókat és az értesítéseket, levelekkel együtt. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-e">
+  <summary><span class="wid">E</span><span class="wt">Viewer: annotálás</span><span class="ws-meta">ct-annotator frontend és backend</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>Minden eszköz mindhárom síkon: Paint, Eraser, Fill, Polygon, Auto, Histogram; jobb gombos radírozás, zárt objektum védelme, rejtett objektum.</li>
+      <li>Objektumok és címkék: új címke, új példány, átszínezés, törlés; attribútum-űrlap és megjegyzés; dupla kattintásos ugrás egy objektumra.</li>
+      <li>Mentés és újratöltés: a maszk bitre pontosan visszajön-e; mentés nélküli kilépés; két fül ugyanazon az eseten; nagy sorozat (300+ szelet) mentése.</li>
+      <li>Visszavonás és újra minden eszközzel, a 20 lépéses korláttal.</li>
+      <li>A radiológus-funkciók: görgő és Ctrl+görgő, oldalsó szeletsáv, egeres ablakolás és előnézet, slab (átlag, MIP, MinIP) mindhárom síkon, crosshair, Ctrl+kattintás bármely eszközzel, az Auto HU-tartománya valódi meszes nodulussal.</li>
+      <li>Felületkorlátozás (surface card): csak az engedélyezett eszközök és panelek látszanak, közvetlen billentyűvel sem érhető el a tiltott eszköz.</li>
+      <li>3D nézet, panel elrejtése és maximalizálása, teljes képernyő, dokumentumpanel (PDF, kép, tablet).</li>
+      <li>Nem szabályos sorozatok: scout (nincs sagittalis és coronalis), nem négyzetes kép, egyetlen szelet, eltérő szeletvastagság.</li>
+    </ul>
+    <h4>Ismert kockázat</h4>
+    <ul class="risk">
+      <li>A MIP-et és a HU-tartományt helyben csak szintetikus CT-n lehetett nézni. Valódi, meszes nodulusos esetet kell hozzá találni.</li>
+      <li>A reject_reason sémaváltozás miatt a szerveren az annotációtípus-regisztrációnak futnia kell. Ezt régi sémával is ellenőrizni kell.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te az E munkacsomag ágense vagy. Feladatod a viewer annotációs felületének hibáinak felkutatása dr-test nevében, egy saját QA-E jobon. Minden eszközt próbálj ki mindhárom síkon, nagyítva és normál méretben, egérrel és tablet nézetben. Minden mentés után töltsd újra az oldalt, és hasonlítsd össze a maszkot a mentés előtti állapottal. Teszteld a radiológus-funkciókat, a felületkorlátozást és a nem szabályos sorozatokat. Rögzítsd a konzolhibákat és a sikertelen kéréseket. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-f">
+  <summary><span class="wid">F</span><span class="wt">Viewer: review</span><span class="ws-meta">ct-annotator · annotation-service · admin-service</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>Objektumonkénti elfogadás és elutasítás, az ok-chipekkel és szabad megjegyzéssel; az annotátor pontosan ezt látja-e visszaküldés után.</li>
+      <li>Review beküldése: minden objektum eldöntése nélkül mi történik; beküldés után a státusz, az eset helye és az értesítés.</li>
+      <li>Visszaküldött eset újraannotálása és második review; az előző review-döntések láthatók-e és nem vesznek-e el.</li>
+      <li>A review-felület korlátai: nincs rajzoló eszköz, nincs 3D, csak a beállított panelek.</li>
+      <li>Admin view-as a viewerben (reviewer szemmel) és a kényszerített review-mód.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te az F munkacsomag ágense vagy. Feladatod a review-folyamat hibáinak felkutatása dr-review nevében, az E csomag által beküldött vagy egy saját QA-F esettel. Fogadj el és utasíts el objektumokat minden okkal, küldj be részleges és teljes reviewt, majd dr-test nevében nézd meg, mit lát az annotátor. Futtass két teljes kört. Ellenőrizd, hogy a review-felületen egyetlen rajzoló funkció sem érhető el, billentyűvel sem. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-g">
+  <summary><span class="wid">G</span><span class="wt">Tutorial és bemutatók</span><span class="ws-meta">ct-annotator tutorial · admin-ui guide</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>A tutorial annotálási és review-fázisa elejétől végéig, visszaállítással és újrakezdéssel.</li>
+      <li>A tutorial minden eszköze és új funkciója ugyanúgy viselkedik-e, mint a viewerben (eltérés-lista a két oldal között).</li>
+      <li>Minden tour minden lépése: a célelem létezik-e és látható-e, a szöveg a mostani működést írja-e le, tableten is.</li>
+      <li>Az admin-ui oldalak bemutatói: Studies, Study, Board, Case, Jobs, Users, System, Usage, Notifications; első látogatáskori megnyitás és a súgógomb.</li>
+      <li>A tutorial betöltése lassú hálózaton (a gyakorló CT-kötet kb. 12 MB) és aloldalas telepítésnél.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te a G munkacsomag ágense vagy. Feladatod a tutorial és a bemutatók hibáinak felkutatása. Végezd el a tutorial mindkét fázisát asztali és tablet nézetben. Minden tour minden lépésénél ellenőrizd, hogy a célelem létezik és látható-e, és a szöveg a mostani működést írja-e le. Készíts eltérés-listát a tutorial és a valódi viewer viselkedése között. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-h">
+  <summary><span class="wid">H</span><span class="wt">Analitika</span><span class="ws-meta">admin-service/usage · study_analytics · pipeline_health</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>A tracker mindkét appban: minden eseménytípus rögzül, a kapcsolók tényleg letiltják, amit kell, és gépelt szöveg soha nem kerül be.</li>
+      <li>Usage minden fül: Overview, Behaviour (heatmap, pillanatképek, esetképek), Friction, Cases, People (replay, teljes képernyő), Settings.</li>
+      <li>A számok ellenőrzése kézzel összeállított munkamenetekkel: időtartamok, szűrők (személy, study, időszak), admin- és tesztfiókok kizárása.</li>
+      <li>Exportok: CSV-k (képlet-injekció elleni védelem), nyers események, Markdown-riport, JSON-csomag.</li>
+      <li>Study-analitika: workflow-gráf, esetutak, problémás esetek, objektumszámok az első és az utolsó verzióban.</li>
+      <li><b>Kizárólagos ablakban:</b> a usage-log törlése, visszaállítása, végleges törlése és a megőrzési idő lejárta.</li>
+    </ul>
+    <h4>Ismert kockázat</h4>
+    <ul class="risk">
+      <li>A pillanatképek tárolása esetképekkel sok helyet foglal; a 300-as képernyőnkénti korlát és a megőrzés viselkedését terhelés mellett is meg kell nézni.</li>
+      <li>Időzítésre érzékeny e2e-ellenőrzések voltak már (replay, vágólap); a bizonytalan teszteket külön kell listázni.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te a H munkacsomag ágense vagy. Feladatod az analitika hibáinak felkutatása. Hozz létre ismert, kézzel kiszámolható munkameneteket a viewerben és az admin-ui-ban, és vesd össze a Usage és a study-analitika minden számát a várt értékkel. Ellenőrizd a szűrőket, a kizárásokat, az exportokat és a pillanatképek tisztítását. A log törlését és visszaállítását csak akkor futtasd, ha az irányító kizárólagos ablakot adott rá. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-i">
+  <summary><span class="wid">I</span><span class="wt">Rendszer és üzemeltetés</span><span class="ws-meta">System · notifications · migrációk · telepítés</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li>Audit log: minden adminművelet bekerül-e (study, tag, felhasználó, kártya, verzió, usage-törlés), a szűrők és a lapozás.</li>
+      <li>Study-verziók: pillanatkép, visszaállítás, és mi történik a visszaállítás után a folyamatban lévő munkákkal.</li>
+      <li>Backup: letöltés, a db-backup ciklus, a <code>restore-db.sh</code> egy eldobható stacken; a MinIO-tartalom nincs a backupban, ennek következményei.</li>
+      <li>Értesítések: SMTP-beállítás, tesztlevél, a poller hibatűrése elérhetetlen levelezőnél.</li>
+      <li>Migrációk: tiszta adatbázison az összes le- és felfelé futtatása; a modellek és a migrációk egyezése (hiányzó index, oszlop).</li>
+      <li>Telepítés: <code>setup-test-server.sh</code> friss gépen és ismételten; az INSTALL.md lépései szó szerint; reverse proxy és https; a clinician-app indulása.</li>
+    </ul>
+    <h4>Ismert kockázat</h4>
+    <ul class="risk">
+      <li>Az <span class="mono">ix_usage_snapshots_study</span> index a migrációban megvan, a modellben nincs: a teszt-adatbázis (create_all) és az éles séma eltérhet.</li>
+      <li>A backup csak az adatbázist menti. Egy visszaállítás a MinIO-ban nem létező objektumokra mutató sorokat hagyhat, ami hiányzó előnézetként jelentkezik.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te az I munkacsomag ágense vagy. Feladatod az üzemeltetési funkciók hibáinak felkutatása. Ellenőrizd az audit log teljességét a többi csomag műveletein. Futtasd le az összes migrációt le és fel egy eldobható postgres-en, és hasonlítsd össze a sémát a modellekkel. Teszteld az értesítéseket, a study-verziókat és a telepítő szkriptet egy különálló, eldobható stacken, az INSTALL.md-t szó szerint követve. A backup-visszaállítást csak az eldobható stacken végezd. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<details class="ws" id="ws-j">
+  <summary><span class="wid">J</span><span class="wt">Keresztmetszet: biztonság, teljesítmény, UX</span><span class="ws-meta">minden szolgáltatás · minden felület</span></summary>
+  <div class="ws-body">
+    <h4>Mit kell ellenőrizni</h4>
+    <ul class="checks">
+      <li><b>Biztonság:</b> az A csomag mátrixára építve minden végpont; aláírt objektumlinkek hamisítása és lejárata; útvonal-bejárás tárolókulcsban; XSS a pillanatképekben, a dokumentumnevekben és a megjegyzésekben; CORS; titkok a naplókban.</li>
+      <li><b>Bemenet-validálás:</b> óriási kérések, rossz típusok, Unicode, üres és szóközös nevek, egyedi nevek ütközése minden űrlapon.</li>
+      <li><b>Teljesítmény:</b> nagy sorozat a viewerben (volume-cache memóriakorlát), 90 napos usage-összesítés, sok esetes board futtatása, sok dokumentumos eset.</li>
+      <li><b>Megbízhatóság:</b> egy szolgáltatás újraindítása munka közben, Redis- vagy MinIO-kiesés, párhuzamos mentés két felhasználótól.</li>
+      <li><b>UX:</b> tablet álló és fekvő helyzetben, keskeny ablak, billentyűzetes használat, fókuszjelzés, hibaüzenetek érthetősége, üres állapotok.</li>
+    </ul>
+    <div class="brief"><button class="copy" type="button" data-copy>Másolás</button><span>Te a J munkacsomag ágense vagy. Feladatod a rendszer egészét érintő hibák felkutatása. Az A csomag végpont-mátrixát használva ellenőrizd a bemenet-validálást és a támadási felületet: aláírt linkek, tárolókulcsok, XSS, CORS. Mérj erőforrás-használatot nagy sorozattal és hosszú időszakkal. Indíts újra szolgáltatásokat munka közben. Nézd végig a felületeket tablet és keskeny ablak méretben. Nem javítasz, csak jelentesz.</span></div>
+  </div>
+</details>
+
+<h2 id="utem">Fázisok és ütemezés</h2>
+<div class="phases">
+  <div class="phase"><div class="n">0. fázis</div><h3>Alapvonal</h3><p>Friss seed, minden tesztcsomag lefut, eredmény rögzítve. Ami itt bukik, az első jelentés.</p></div>
+  <div class="phase"><div class="n">1. fázis</div><h3>Párhuzamos feltárás</h3><p>A, B, G, J azonnal; C a B adataival; D, E, F láncban; H és I nem romboló része. Egy ágens egy csomag.</p></div>
+  <div class="phase"><div class="n">2. fázis</div><h3>Triázs</h3><p>Az irányító összevonja a duplikátumokat, besorolja a súlyosságot, és javítási sorrendet állít fel.</p></div>
+  <div class="phase"><div class="n">3. fázis</div><h3>Javítás és kizárólagos ablak</h3><p>S1 és S2 javítása külön commitokban, mindegyik regressziós teszttel. Utána, egyedül: a romboló H és I tesztek.</p></div>
+  <div class="phase"><div class="n">4. fázis</div><h3>Teljes regresszió</h3><p>Minden tesztcsomag újra, majd telepítési próba a szerveren, és a nyitott S3–S4 lista átadása.</p></div>
+</div>
+<p><b>Párhuzamossági szabály.</b> Egyszerre legfeljebb négy ágens dolgozzon ugyanazon a helyi stacken, mert a viewer volume-cache-e és az adatbázis közös. Az e2e csomag a feltárással egy időben nem fut. Ha egy ágens globális beállítást módosítana, jelzi az irányítónak, és vár.</p>
+
+<h2 id="jelentes">Hibajelentés és javítás</h2>
+<p>Minden ágens egy fájlba gyűjt, a scratchpad <code>review/&lt;csomag&gt;.md</code> útvonalán. A fájl nem kerül a repóba. Egy hiba egy blokk, ebben a formában:</p>
+<pre>### [A-07] Kivett study-tag továbbra is olvassa az eseteket
+Súlyosság: S1
+Terület:   data-service /data/studies/{id}/cases
+Lépések:   1. dr-test tag a QA-A studyban  2. admin eltávolítja
+           3. dr-test token ugyanazzal a hívással
+Várt:      403
+Kapott:    200, a teljes esetlista
+Bizonyíték: curl kimenet, commit 100076d
+Gyanús ok: a tagság ellenőrzése cache-elt tokenadatot néz (sejtés)</pre>
+<p>A javítás rendje: minden S1 és S2 hibát egy regressziós teszt rögzít, mielőtt a javítás elkészül. Így a teszt előbb elbukik, a javítás után átmegy. Egy commit egy hibát javít, a hiba azonosítójával az üzenetben. Az S3–S4 hibák listája a felhasználóhoz kerül, ő dönti el a sorrendet.</p>
+
+<h2 id="kilepes">Kilépési feltételek</h2>
+<ul>
+  <li>Nincs nyitott S1 vagy S2 hiba, vagy a felhasználó kifejezetten elfogadta a nyitva maradót.</li>
+  <li>Minden munkacsomag ellenőrzőlistája végig ki van pipálva, a kihagyott pont indoklással.</li>
+  <li>Minden backend-végpontra van legalább egy jogosultsági teszt, és a szerepkör-mátrix a repóban van.</li>
+  <li>Minden tesztcsomag zöld: backend unit és integráció, mindkét frontend, a teljes e2e, és a javítások regressziós tesztjei.</li>
+  <li>A telepítő szkript egy friss, eldobható gépen hiba nélkül lefut, és utána a füstteszt (bejelentkezés, import, annotálás, review) átmegy.</li>
+</ul>
+
+<footer>Kiindulási állapot: commit 100076d, feature/clinical-trial-consort-and-store ág. A munkacsomagok briefjei a közös szabályokkal együtt adhatók ki.</footer>
+</div>
+
+<script>
+document.querySelectorAll("[data-copy]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var text = btn.parentElement.querySelector("span").textContent;
+    var done = function () { btn.textContent = "Másolva"; setTimeout(function () { btn.textContent = "Másolás"; }, 1600); };
+    try {
+      navigator.clipboard.writeText(text).then(done, function () { select(btn); });
+    } catch (e) { select(btn); }
+  });
+});
+function select(btn) {
+  var range = document.createRange();
+  range.selectNodeContents(btn.parentElement.querySelector("span"));
+  var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  btn.textContent = "Kijelölve, Ctrl+C";
+}
+</script>
