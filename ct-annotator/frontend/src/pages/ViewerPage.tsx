@@ -359,6 +359,7 @@ export default function ViewerPage() {
   const [caseNavPending, setCaseNavPending] = useState(false);
   async function goToCase(targetCaseId: string) {
     if (!studyId || caseNavPending) return;
+    if (!confirmLeavingUnsaved()) return;
     setCaseNavPending(true);
     setError(null);
     try {
@@ -902,6 +903,11 @@ export default function ViewerPage() {
   // saved; undefined = not loaded yet). Sent with every save, so a newer
   // save by another tab or person is refused rather than overwritten (J-11).
   const loadedVersionRef = useRef<string | null | undefined>(undefined);
+  // Unsaved work (E-04): any mask edit since the last load/save, or labels/
+  // objects that differ from what was loaded/saved. Leaving the case --
+  // arrows, Back, reload, closing the tab -- asks first.
+  const maskDirtyRef = useRef(false);
+  const savedDefsRef = useRef<string | null>(null);
   const drawingRef = useRef(false);
   // Right mouse button always erases for the duration of that one stroke,
   // regardless of which tool is selected -- lets the user fix a slip
@@ -1157,6 +1163,8 @@ export default function ViewerPage() {
       maskVolumeRef.current = volume;
       setLabels(loadedLabels);
       setObjects(loadedObjects);
+      maskDirtyRef.current = false;
+      savedDefsRef.current = JSON.stringify({ labels: loadedLabels, objects: loadedObjects });
       setActiveObjectId(loadedObjects[0]?.id ?? null);
       nextLabelIdRef.current = Math.max(0, ...loadedLabels.map((l) => l.id)) + 1;
       nextObjectIdRef.current = Math.max(0, ...loadedObjects.map((o) => o.id)) + 1;
@@ -1464,6 +1472,7 @@ export default function ViewerPage() {
     undoStackRef.current.push({ pane, index, slice: captureSlice(pane, index) });
     if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift();
     redoStackRef.current = []; // a fresh edit invalidates any prior redo history
+    maskDirtyRef.current = true; // every mask edit comes through here first
   }
 
   /** brushRadius is a *display*-space radius (local pre-transform pane
@@ -2254,6 +2263,7 @@ export default function ViewerPage() {
     const entry = undoStackRef.current.pop();
     if (!entry || !maskVolumeRef.current) return;
     trackAction("undo");
+    maskDirtyRef.current = true;
     redoStackRef.current.push({ ...entry, slice: captureSlice(entry.pane, entry.index) });
     if (redoStackRef.current.length > HISTORY_LIMIT) redoStackRef.current.shift();
     restoreSlice(entry.pane, entry.index, entry.slice);
@@ -2264,6 +2274,7 @@ export default function ViewerPage() {
     const entry = redoStackRef.current.pop();
     if (!entry || !maskVolumeRef.current) return;
     trackAction("redo");
+    maskDirtyRef.current = true;
     undoStackRef.current.push({ ...entry, slice: captureSlice(entry.pane, entry.index) });
     if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift();
     restoreSlice(entry.pane, entry.index, entry.slice);
@@ -2308,6 +2319,32 @@ export default function ViewerPage() {
     window.setTimeout(() => goToCase(next.id), 1400);
   }
 
+  function hasUnsavedWork(): boolean {
+    if (!maskReady || savedDefsRef.current === null) return false;
+    return maskDirtyRef.current || JSON.stringify({ labels, objects }) !== savedDefsRef.current;
+  }
+  function markSaved(savedLabels: SegLabel[], savedObjects: SegObject[]) {
+    maskDirtyRef.current = false;
+    savedDefsRef.current = JSON.stringify({ labels: savedLabels, objects: savedObjects });
+  }
+  /** True when it's fine to leave: nothing unsaved, or the user said so. */
+  function confirmLeavingUnsaved(): boolean {
+    if (!hasUnsavedWork()) return true;
+    return window.confirm("You have unsaved changes on this case. Leave without saving them?");
+  }
+  const hasUnsavedWorkRef = useRef(hasUnsavedWork);
+  hasUnsavedWorkRef.current = hasUnsavedWork;
+  useEffect(() => {
+    // Reload / close tab / typing another address: the browser's own prompt.
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      if (!hasUnsavedWorkRef.current()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
   function showSavedMessage(text: string) {
     if (savedMessageTimeoutRef.current) clearTimeout(savedMessageTimeoutRef.current);
     setSavedMessage(text);
@@ -2329,6 +2366,7 @@ export default function ViewerPage() {
       if (status === "submitted") setObjects(objectsToSave);
       const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current);
       loadedVersionRef.current = saved.id;
+      markSaved(labels, objectsToSave);
       trackAction(status === "submitted" ? "mark_annotated" : "save");
       refreshAnnotations();
 
@@ -2379,6 +2417,7 @@ export default function ViewerPage() {
       const gzipBytes = await gzipUint8Array(volume);
       const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current);
       loadedVersionRef.current = saved.id;
+      markSaved(labels, objects);
       const decision = reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve";
       // The per-object comments travel with the decision too (as the
       // AnnotationReview row's comment), so the annotator -- and the
@@ -3349,6 +3388,9 @@ export default function ViewerPage() {
           <Tip title="Back" description="Return to the case page in your job list. Save first -- leaving does not save.">
             <a
               href={withViewAs(returnUrl ?? "/", viewAs)}
+              onClick={(e) => {
+                if (!confirmLeavingUnsaved()) e.preventDefault();
+              }}
               data-guide="back"
               className="whitespace-nowrap rounded border border-[#444] px-3 py-1 text-xs text-gray-300 hover:bg-[#2a2a3e]"
             >
