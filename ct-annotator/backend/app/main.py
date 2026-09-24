@@ -112,7 +112,58 @@ async def _fetch_dicom_bytes(instance_id: str, user: CurrentUser) -> bytes:
     return dicom_resp.content
 
 
+# The pixel caches below are shared by every user, so a cache hit must
+# never be the access check: before anything is served from them, the
+# caller's own access to that instance/series is confirmed with
+# data-service (the RBAC checkpoint), and that answer -- per user -- is
+# remembered briefly so paging through slices doesn't ask on every
+# request. A removed member loses access within _ACCESS_TTL_SECONDS.
+_ACCESS_TTL_SECONDS = 30
+_MAX_ACCESS_ENTRIES = 50_000
+_access_cache: dict[tuple[str, str, str], float] = {}
+
+
+def _access_fresh(user: CurrentUser, kind: str, object_id: str) -> bool:
+    checked = _access_cache.get((user.subject, kind, object_id))
+    return checked is not None and time.monotonic() - checked < _ACCESS_TTL_SECONDS
+
+
+def _remember_access(user: CurrentUser, kind: str, object_id: str) -> None:
+    if len(_access_cache) >= _MAX_ACCESS_ENTRIES:
+        now = time.monotonic()
+        for key in [k for k, t in _access_cache.items() if now - t >= _ACCESS_TTL_SECONDS]:
+            _access_cache.pop(key, None)
+        if len(_access_cache) >= _MAX_ACCESS_ENTRIES:
+            _access_cache.clear()
+    _access_cache[(user.subject, kind, object_id)] = time.monotonic()
+
+
+async def _require_instance_access(instance_id: str, user: CurrentUser) -> None:
+    if _access_fresh(user, "instance", instance_id):
+        return
+    resp = await _http_client.get(f"{DATA_SERVICE_URL}/data/instances/{instance_id}/pixel-data-url", headers=_auth_headers(user))
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    _remember_access(user, "instance", instance_id)
+
+
+async def _series_instances_checked(series_id: str, user: CurrentUser) -> list[dict]:
+    """The series' instances -- which is also data-service's access check
+    for the series. Every instance listed is then known readable too."""
+    instances = await _proxy_get(f"{DATA_SERVICE_URL}/data/series/{series_id}/instances", user)
+    _remember_access(user, "series", series_id)
+    for instance in instances:
+        _remember_access(user, "instance", str(instance["id"]))
+    return instances
+
+
+async def _require_series_access(series_id: str, user: CurrentUser) -> None:
+    if not _access_fresh(user, "series", series_id):
+        await _series_instances_checked(series_id, user)
+
+
 async def _get_dataset(instance_id: str, user: CurrentUser):
+    await _require_instance_access(instance_id, user)
     cached = _dataset_cache.get(instance_id)
     now = time.monotonic()
     if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
@@ -157,12 +208,13 @@ _VOLUME_BUILD_CONCURRENCY = 16
 
 
 async def _get_volume(series_id: str, user: CurrentUser) -> np.ndarray:
+    await _require_series_access(series_id, user)
     cached = _volume_cache.get(series_id)
     now = time.monotonic()
     if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
         return cached[1]
 
-    instances = await _proxy_get(f"{DATA_SERVICE_URL}/data/series/{series_id}/instances", user)
+    instances = await _series_instances_checked(series_id, user)
     ordered = sorted(instances, key=lambda i: i.get("instance_number") or 0)
     if not ordered:
         raise HTTPException(status_code=404, detail="Series has no instances")
@@ -397,6 +449,7 @@ async def get_lung_mask(series_id: str, user: CurrentUser = Depends(get_current_
     payload -- the viewer's 3D pane runs the same client-side
     marching-cubes it already uses for painted objects against this,
     so no mesh-extraction work happens server-side."""
+    await _require_series_access(series_id, user)
     cached = _lung_mask_cache.get(series_id)
     now = time.monotonic()
     if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
