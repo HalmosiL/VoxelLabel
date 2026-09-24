@@ -8,6 +8,12 @@ pipeline you built is meant to be as easy as building it -- no special
 role gate, the same as e.g. adding a tag to a clinical data item);
 deleting one is restricted to its own author or a global admin, so one
 user can't remove another's contribution to the shared library.
+
+Because every user can read the Store, a template holds a pipeline's
+structure only. Card config keys that belong to one study -- pinned case
+ids, the assignee, an AI card's chat transcript, the derived job status
+-- are dropped on save, and dropped again when a template is served, so
+templates saved before this rule never hand them out either (C-12).
 """
 import uuid
 
@@ -46,12 +52,24 @@ class PipelineTemplateIn(BaseModel):
     edges: list[PipelineTemplateEdgeIn]
 
 
+# Card config keys that only mean something on the study they came from.
+STUDY_SPECIFIC_CONFIG_KEYS = frozenset({"case_ids", "assigned_user_id", "messages", "status"})
+
+
+def _structure_only(cards: list[dict]) -> list[dict]:
+    """The template's cards with every study-specific config key removed."""
+    return [
+        {**card, "config": {k: v for k, v in (card.get("config") or {}).items() if k not in STUDY_SPECIFIC_CONFIG_KEYS}}
+        for card in cards
+    ]
+
+
 def _serialize(template: PipelineTemplate) -> dict:
     return {
         "id": str(template.id),
         "title": template.title,
         "description": template.description,
-        "cards": template.cards,
+        "cards": _structure_only(template.cards),
         "edges": template.edges,
         "created_by": template.created_by,
         "created_at": template.created_at.isoformat(),
@@ -79,7 +97,7 @@ def create_pipeline_template(
     template = PipelineTemplate(
         title=body.title,
         description=body.description,
-        cards=[c.model_dump() for c in body.cards],
+        cards=_structure_only([c.model_dump() for c in body.cards]),
         edges=[e.model_dump() for e in body.edges],
         created_by=user.subject,
     )
