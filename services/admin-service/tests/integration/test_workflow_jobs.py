@@ -350,3 +350,87 @@ def test_an_edit_made_during_an_ai_run_survives_it(client, db, monkeypatch):
     assert client.post(f"/admin/workflow-cards/{llm['id']}/llm-chat", json={"message": "hi"}).status_code == 200
     db.expire_all()
     assert db.get(WorkflowCard, uuid.UUID(llm["id"])).config["criterion"] == "EDITED while running"
+
+
+def _edge_status(client, sid, src, dst, target_handle="input"):
+    return client.post(f"/admin/studies/{sid}/workflow/edges", json={"source_card_id": src, "source_handle": "output", "target_card_id": dst, "target_handle": target_handle}).status_code
+
+
+def test_the_board_refuses_shapes_it_cannot_run_or_show(client, db):
+    """C-02, C-03, C-04: the legacy "surface" type, an unknown target handle
+    (an invisible, undeletable input), a duplicate edge, a second input into
+    a one-input card, and a loop were all accepted -- the trouble only
+    surfaced at Run, as a misleading "has not been run yet" for a loop."""
+    sid = make_study(client)
+    r = client.post(f"/admin/studies/{sid}/workflow/cards", json={"type": "surface", "title": "legacy", "position_x": 0, "position_y": 0, "config": {}})
+    assert r.status_code == 422
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    ds2 = _card(client, sid, "dataset", "Other", {"mode": "all_cases"})
+    flt = _card(client, sid, "filter", "F", x=300)
+    union = _card(client, sid, "union", "U", x=600)
+    assert _edge_status(client, sid, ds["id"], union["id"], target_handle="bogus") == 422
+    assert _edge_status(client, sid, ds["id"], flt["id"]) == 201
+    assert _edge_status(client, sid, ds["id"], flt["id"]) == 409  # the same connection again
+    assert _edge_status(client, sid, ds2["id"], flt["id"]) == 422  # a filter takes one input
+    assert _edge_status(client, sid, flt["id"], union["id"]) == 201
+    assert _edge_status(client, sid, union["id"], flt["id"]) == 422  # a loop (and a second input)
+    union2 = _card(client, sid, "union", "U2", x=900)
+    assert _edge_status(client, sid, union["id"], union2["id"]) == 201
+    assert _edge_status(client, sid, union2["id"], union["id"]) == 422  # a loop between two multi-input cards
+
+
+def test_a_removed_split_part_keeps_no_cases(client, db):
+    """C-05: after going from 3 parts to 2, the old third part's Dataset
+    kept its cases, all of them now also in the live parts -- a
+    train/test split that is no longer disjoint."""
+    sid = make_study(client)
+    for i in range(11):
+        make_case(client, sid, external=f"s{i}")
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    parts3 = [{"name": "a", "ratio": 1}, {"name": "b", "ratio": 1}, {"name": "c", "ratio": 1}]
+    split = _card(client, sid, "split", "Split", {"parts": parts3, "seed": "7"}, x=300)
+    _edge(client, sid, ds["id"], split["id"])
+    assert client.post(f"/admin/workflow-cards/{split['id']}/run").status_code == 200
+    client.patch(f"/admin/workflow-cards/{split['id']}", json={"config": {"parts": parts3[:2]}})
+    assert client.post(f"/admin/workflow-cards/{split['id']}/run").status_code == 200
+    board = client.get(f"/admin/studies/{sid}/workflow").json()
+    children = {c["materialized_from"]["card_id"] and c["title"]: c["config"].get("case_ids", []) for c in board["cards"] if c.get("materialized_from")}
+    live = [ids for title, ids in children.items() if title in ("a", "b")]
+    removed = [(title, ids) for title, ids in children.items() if title not in ("a", "b")]
+    assert sum(len(ids) for ids in live) == 11
+    assert removed and all(ids == [] and "no longer a part" in title for title, ids in removed), removed
+
+
+def test_the_review_feedback_loop_carries_the_rejected_case_and_settles(client, db):
+    """C-09: the "(rejected)" branch of the Review -> Annotation feedback
+    loop was always empty -- a rejected case dropped out of "(annotated)",
+    and so out of the review's scope, in the same Run. C-10: one of the
+    two cards stayed "needs re-run" forever."""
+    sid = make_study(client)
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    add_member(client, sid, REVIEWER_SUBJECT, "reviewer")
+    cases = [make_case(client, sid, external=f"p{i}") for i in range(2)]
+    series = [make_series(db, c["id"]) for c in cases]
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    ann = _card(client, sid, "annotation", "Annotate", {"assigned_user_id": ANNOTATOR_SUBJECT, "materialize_dataset": True}, x=300)
+    _edge(client, sid, ds["id"], ann["id"])
+    assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
+    card = lambda title: next(c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"] if c["title"] == title)  # noqa: E731
+    rev = _card(client, sid, "review", "Review", {"assigned_user_id": REVIEWER_SUBJECT}, x=600)
+    _edge(client, sid, card("Annotate (annotated)")["id"], rev["id"])
+    assert client.post(f"/admin/workflow-cards/{rev['id']}/run").status_code == 200
+    _edge(client, sid, card("Review (rejected)")["id"], ann["id"])  # the feedback edge
+
+    for s in series:
+        make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")
+    assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
+    make_annotation(db, sid, series[0], REVIEWER_SUBJECT, "approved")
+    make_annotation(db, sid, series[1], REVIEWER_SUBJECT, "rejected")
+    assert client.post(f"/admin/workflow-cards/{rev['id']}/run").status_code == 200
+
+    assert card("Review (rejected)")["config"]["case_ids"] == [cases[1]["id"]]
+    assert card("Review (approved)")["config"]["case_ids"] == [cases[0]["id"]]
+    assert set(card("Review")["output_case_ids"]) == {c["id"] for c in cases}  # the reviewer keeps what they rejected
+    assert not card("Annotate")["stale"] and not card("Review")["stale"]
+    assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
+    assert not card("Annotate")["stale"] and not card("Review")["stale"]

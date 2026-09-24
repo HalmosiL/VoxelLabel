@@ -28,7 +28,10 @@ from .graph import (
     _resolve_output,
     _single_incoming_edge,
 )
-from .status import _annotated_case_ids, _case_ids_with_status
+from .status import _case_ids_with_status
+
+# Handed-in work, as a downstream Review sees it: awaiting a decision or decided.
+_HANDED_IN_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +121,8 @@ def _upsert_materialized_dataset(
     pinned to `case_ids`, placed to the right of its parent (stacked by
     `index`). An `existing` child is updated in place rather than
     replaced, so edges drawn from it survive re-Runs. A part removed
-    since the last Run leaves its old child in place, un-updated, rather
-    than deleting it -- board scratch space isn't garbage-collected (same
-    policy as delete_workflow_card having no "still has data" guard).
-    Stamped with the parent's own `now` so anything downstream of the
+    since the last Run keeps its child card (and its edges) but not its
+    cases -- see _retire_removed_parts. Stamped with the parent's own `now` so anything downstream of the
     child is correctly flagged stale (see _is_stale)."""
     if existing is None:
         db.add(
@@ -139,6 +140,12 @@ def _upsert_materialized_dataset(
                 last_run_at=now,
             )
         )
+        return
+    # Stamped only when something changed: "stale" downstream means "my
+    # input changed". Re-stamping an unchanged child on every Run kept one
+    # card of a Review -> Annotation feedback loop flagged "needs re-run"
+    # forever (C-10).
+    if existing.title == title and existing.config.get("mode") == "manual" and existing.config.get("case_ids") == case_ids:
         return
     existing.title = title
     existing.config = {**existing.config, "mode": "manual", "case_ids": case_ids}
@@ -190,8 +197,27 @@ def _run_split(db: Session, card: WorkflowCard, now: datetime) -> None:
             index=index,
         )
 
+    _retire_removed_parts(existing_children, output, now)
     card.config = {**card.config, "seed": seed}
     card.output_case_ids = output
+
+
+REMOVED_PART_SUFFIX = " (no longer a part)"
+
+
+def _retire_removed_parts(children: dict[str, WorkflowCard], live: dict[str, list[str]], now: datetime) -> None:
+    """Empties the Dataset of every part the Split no longer has. It kept
+    its old cases, which a re-Run then spread over the live parts too --
+    a train/test split that silently overlapped (C-05). The card and its
+    edges stay (board scratch space isn't garbage-collected), titled so
+    the change is visible."""
+    for handle, child in children.items():
+        if handle in live:
+            continue
+        child.config = {**child.config, "mode": "manual", "case_ids": []}
+        if not child.title.endswith(REMOVED_PART_SUFFIX):
+            child.title = f"{child.title}{REMOVED_PART_SUFFIX}"
+        child.last_run_at = now
 
 
 def _run_filter(db: Session, card: WorkflowCard, now: datetime) -> None:
@@ -241,12 +267,16 @@ def _run_annotation(db: Session, card: WorkflowCard, now: datetime) -> None:
     _record_case_stage_entries(db, card, card.output_case_ids, now)
 
     if card.config.get("materialize_dataset"):
-        # Only the subset with a real, submitted-or-approved Annotation
-        # record -- not every case the card happens to be assigned, which
-        # would include ones no one has actually annotated yet. `since`
-        # keeps a brand-new card from taking credit for older work on the
-        # same cases (see _latest_annotation_per_case).
-        case_ids = _annotated_case_ids(db, card.output_case_ids, review=False, since=card.created_at)
+        # The handed-in work: cases whose latest version was submitted
+        # for review, or has since been decided -- not every case the card
+        # happens to be assigned. A rejected case stays in until it is
+        # reworked: this child is what a downstream Review reads, and
+        # dropping the rejection emptied that Review's "(rejected)" branch
+        # -- the one a feedback loop carries back -- in the same Run
+        # (C-09). The job's own progress still counts a rejection as not
+        # done (_annotation_progress). `since` keeps a brand-new card from
+        # taking credit for older work on the same cases.
+        case_ids = _case_ids_with_status(db, card.output_case_ids, _HANDED_IN_STATUSES, since=card.created_at)
         children = _materialized_children(db, card.id)
         _upsert_materialized_dataset(
             db,

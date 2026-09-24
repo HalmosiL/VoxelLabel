@@ -156,6 +156,9 @@ def create_workflow_card(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     require_study_role(db, str(study_id), user, allowed_roles=_WRITE_ROLES)
+    if body.type == WorkflowCardType.SURFACE:
+        # the legacy generic type; Annotation/Review Surface replaced it (C-02)
+        raise HTTPException(status_code=422, detail="Use an Annotation Surface or Review Surface card instead")
 
     _validate_assignee(db, WorkflowCard(study_id=study_id, type=body.type), body.config)
     _validate_case_ids(db, study_id, body.config)
@@ -599,6 +602,7 @@ def create_workflow_edge(
         raise HTTPException(
             status_code=422, detail=f"Invalid source handle '{body.source_handle}' for a {source.type.value} card"
         )
+    _validate_data_edge(db, source, target, body.target_handle)
 
     edge = WorkflowEdge(
         id=body.id or uuid.uuid4(),
@@ -613,6 +617,38 @@ def create_workflow_edge(
     db.refresh(edge)
     autosave(db, study_id, user.subject)
     return _serialize_edge(edge)
+
+
+# Card types whose Run reads exactly one input (see graph._single_incoming_edge).
+_SINGLE_INPUT_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.SPLIT, WorkflowCardType.FILTER, WorkflowCardType.REVIEW}
+
+
+def _validate_data_edge(db: Session, source: WorkflowCard, target: WorkflowCard, target_handle: str) -> None:
+    """Refuses, at connect time, a data edge the board could not run or
+    even show (C-03, C-04): an unknown target handle (drawn nowhere, so
+    it could not be deleted, yet read as an input), the same connection
+    twice, a second input into a card that takes one, and a loop. These
+    used to be accepted and failed only at Run -- a loop as a misleading
+    "has not been run yet". The Review -> "(rejected)" -> Annotation
+    feedback loop is not an edge loop (the "(rejected)" Dataset is
+    materialized, not wired), so it stays possible."""
+    if target_handle != "input":
+        raise HTTPException(status_code=422, detail=f"A {target.type.value} card has no '{target_handle}' input")
+    incoming = db.query(WorkflowEdge).filter_by(target_card_id=target.id, target_handle="input").all()
+    if any(e.source_card_id == source.id for e in incoming):
+        raise HTTPException(status_code=409, detail="These two cards are already connected")
+    if incoming and target.type in _SINGLE_INPUT_TYPES:
+        raise HTTPException(
+            status_code=422, detail=f"A {target.type.value} card takes one input -- remove its current connection first"
+        )
+    # A loop: is the source already downstream of the target?
+    seen, frontier = {target.id}, [target.id]
+    while frontier:
+        next_ids = [row.target_card_id for row in db.query(WorkflowEdge.target_card_id).filter(WorkflowEdge.source_card_id.in_(frontier)).all()]
+        if source.id in next_ids:
+            raise HTTPException(status_code=422, detail="This connection would make a loop -- a card can't feed its own input")
+        frontier = [i for i in next_ids if i not in seen]
+        seen.update(frontier)
 
 
 @router.delete("/workflow-edges/{edge_id}", status_code=204)
