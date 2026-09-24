@@ -444,9 +444,12 @@ def list_my_jobs(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     """Every Annotation/Review card assigned to the calling user, across
-    every Study -- being the assignee is itself the access grant here,
-    the same carve-out update_workflow_card's self-service status PATCH
-    already relies on, so no separate per-study membership check."""
+    every Study the user still holds a role in. Being the assignee is the
+    access grant for the job itself (the same carve-out
+    update_workflow_card's self-service status PATCH relies on), but only
+    while the user is a member: someone removed from a study kept seeing
+    its cases and reviewer comments here (C-11). Platform admins see
+    every study anyway, so they keep all their jobs."""
     my_cards = (
         db.query(WorkflowCard)
         .filter(WorkflowCard.type.in_([WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW]))
@@ -459,6 +462,9 @@ def list_my_jobs(
         .order_by(WorkflowCard.created_at, WorkflowCard.id)
         .all()
     )
+    if "admin" not in user.realm_roles:
+        member_of = {m.study_id for m in db.query(StudyMembership.study_id).filter_by(user_id=user.subject).distinct()}
+        my_cards = [c for c in my_cards if c.study_id in member_of]
 
     studies_by_id = {s.id: s for s in db.query(Study).filter(Study.id.in_({c.study_id for c in my_cards})).all()}
 

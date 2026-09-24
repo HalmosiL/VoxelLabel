@@ -58,6 +58,16 @@ def test_my_jobs_lists_only_the_assignees_jobs(client, db):
     assert client.get("/admin/my-jobs").json() == []
 
 
+def test_a_removed_member_no_longer_sees_their_job(client, db):
+    """C-11/A-06: My Jobs listed the job, its cases and reviewer comments
+    to an assignee whose every role in the study was removed."""
+    sid, _, _, ann, _ = _pipeline(client, db)
+    client.as_admin()
+    assert client.delete(f"/admin/studies/{sid}/members/{ANNOTATOR_SUBJECT}", params={"role": "annotator"}).status_code == 204
+    client.as_user(ANNOTATOR_SUBJECT)
+    assert ann["id"] not in {j["card_id"] for j in client.get("/admin/my-jobs").json()}
+
+
 def test_list_all_jobs_is_admin_only_and_covers_every_studys_jobs(client, db):
     """GET /admin/jobs (the admin-only Jobs page's data source): every
     Annotation/Review card on the platform, its assignee (or none), and
