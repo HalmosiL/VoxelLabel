@@ -21,7 +21,7 @@ def test_deidentification_profiles_and_rules(client):
     r2 = client.post(f"/admin/deidentification-profiles/{p['id']}/rules", params={"dicom_tag": "(0008,0080)", "action": "replace_fixed", "replacement_value": "HOSPITAL"})
     assert r2.json()["replacement_value"] == "HOSPITAL"
     profiles = client.get("/admin/deidentification-profiles").json()
-    assert profiles[0]["is_default"] is True and [x["dicom_tag"] for x in profiles[0]["rules"]] == ["(0010,0010)", "(0008,0080)"]
+    assert profiles[0]["is_default"] is True and [x["dicom_tag"] for x in profiles[0]["rules"]] == ["(0008,0080)", "(0010,0010)"]  # listed by tag
 
 
 def test_versions_capture_changes_and_restore_them(client):

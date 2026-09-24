@@ -4,14 +4,13 @@ Rules are stored in the deidentification_profiles / deidentification_rules
 tables (see shared_models.models) and are editable via the admin service --
 this module never hardcodes tag-handling policy, since the exact
 de-identification requirements are a compliance decision, not a technical
-one (see ARCHITECTURE.md).
+one (see ARCHITECTURE.md). What each rule does is defined once, in
+shared_models.deid_rules, which admin-service also uses to refuse rules
+that couldn't be applied.
 """
-import hashlib
-
-from pydicom.datadict import keyword_for_tag
-from pydicom.tag import Tag
 from shared_models.database import SessionLocal
-from shared_models.models import DeidentificationAction, DeidentificationProfile, Study
+from shared_models.deid_rules import RuleError, apply_rules
+from shared_models.models import DeidentificationProfile, Study
 
 
 def profile_for_study(db, study_id: str) -> DeidentificationProfile | None:
@@ -34,41 +33,24 @@ def profile_for_study(db, study_id: str) -> DeidentificationProfile | None:
 
 
 def apply_deidentification_profile(dataset, study_id: str):
-    """Apply the study's de-identification profile (see profile_for_study).
+    """Apply the study's de-identification profile (see profile_for_study),
+    in place, and return the dataset.
 
     With neither a study profile nor a default profile the dataset is
     returned unchanged -- the tag policy is a compliance decision made by
     an admin, not hardcoded here; the admin-ui warns about such studies.
+    Raises RuleError (a DicomValidationError-style per-file failure) when
+    a rule of the profile can't be applied: nothing is imported
+    un-de-identified.
     """
     db = SessionLocal()
     try:
         profile = profile_for_study(db, study_id)
         if profile is None:
             return dataset
-        for rule in profile.rules:
-            _apply_rule(dataset, rule)
-        return dataset
+        return apply_rules(dataset, profile.rules, profile.hash_salt)
     finally:
         db.close()
 
 
-def _apply_rule(dataset, rule) -> None:
-    tag_keyword = _tag_to_keyword(rule.dicom_tag)
-    if tag_keyword is None or tag_keyword not in dataset:
-        return
-
-    if rule.action == DeidentificationAction.KEEP:
-        return
-    if rule.action == DeidentificationAction.REMOVE:
-        delattr(dataset, tag_keyword)
-    elif rule.action == DeidentificationAction.REPLACE_FIXED:
-        setattr(dataset, tag_keyword, rule.replacement_value or "")
-    elif rule.action == DeidentificationAction.HASH:
-        original = str(getattr(dataset, tag_keyword))
-        setattr(dataset, tag_keyword, hashlib.sha256(original.encode()).hexdigest()[:16])
-
-
-def _tag_to_keyword(dicom_tag: str) -> str | None:
-    """Resolve a "(gggg,eeee)" tag string to its pydicom keyword attribute name."""
-    group, element = dicom_tag.strip("()").split(",")
-    return keyword_for_tag(Tag(int(group, 16), int(element, 16))) or None
+__all__ = ["RuleError", "apply_deidentification_profile", "profile_for_study"]

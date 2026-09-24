@@ -72,7 +72,7 @@ def _parse_dicom_date(value: str | None) -> date_type | None:
         return None
 
 
-def _resolve_or_create_case(db: Session, study_id: str, dataset) -> tuple[Case, bool]:
+def _resolve_or_create_case(db: Session, study_id: str, dataset, external_patient_id: str) -> tuple[Case, bool]:
     """Returns (case, was_newly_created). Matches an existing Case by an
     ImagingStudy sharing this StudyInstanceUID *within this admin Study*
     (so quick-importing more slices for an already-known DICOM study
@@ -80,7 +80,11 @@ def _resolve_or_create_case(db: Session, study_id: str, dataset) -> tuple[Case, 
     StudyInstanceUID under a *different* admin Study, if that ever
     happens, correctly gets its own Case there) -- created fresh, titled
     from whatever StudyDescription/Modality/StudyDate the files carry, if
-    none exists yet.
+    none exists yet. `dataset` is already de-identified, so the match and
+    the title/date use the de-identified tags; `external_patient_id` is
+    the file's real PatientID, from before de-identification, since the
+    patient's pseudonym is derived from the real identifier (the same one
+    a manually created case uses).
 
     Serialised per (study, StudyInstanceUID) with a transaction-level
     advisory lock: two workers importing the same new DICOM study at once
@@ -99,7 +103,7 @@ def _resolve_or_create_case(db: Session, study_id: str, dataset) -> tuple[Case, 
     if existing_imaging_study is not None:
         return db.get(Case, existing_imaging_study.case_id), False
 
-    patient = _get_or_create_patient(db, dataset.PatientID)
+    patient = _get_or_create_patient(db, external_patient_id)
     modality = getattr(dataset, "Modality", None)
     description = getattr(dataset, "StudyDescription", None)
     title = description or (f"{modality} study" if modality else "Imported case")
@@ -169,6 +173,14 @@ def run_quick_import(
                 if missing:
                     raise DicomValidationError(f"Missing required DICOM tags: {missing}")
 
+                # De-identified before anything is looked up or created, so
+                # cases group by the de-identified UIDs and are titled from
+                # de-identified tags (B-08/B-09); a rule that can't be
+                # applied fails the file here, with nothing created yet.
+                # Only the patient's pseudonym still comes from the real ID.
+                external_patient_id = str(dataset.PatientID)
+                dataset = apply_deidentification_profile(dataset, study_id=study_id)
+
                 # Checked *before* resolving/creating a Case: SOPInstanceUID
                 # uniqueness is global (the same instance already ingested
                 # under any case, in any study, counts), and
@@ -189,14 +201,13 @@ def run_quick_import(
                 if reason:
                     raise ForeignImagingError(reason)
 
-                case, created = _resolve_or_create_case(db, study_id, dataset)
+                case, created = _resolve_or_create_case(db, study_id, dataset, external_patient_id)
                 # One commit for the case AND its first ImagingStudy: that
                 # releases the case lock only once another worker's lookup
                 # can find this case, and a file that fails below leaves
                 # no empty case behind (the rollback takes it too).
                 # _get_or_create_* conflicts are confined to savepoints,
                 # so they never undo the case.
-                dataset = apply_deidentification_profile(dataset, study_id=study_id)
                 result = _ingest_one_instance(db, case, dataset)
                 db.commit()
                 delete_staged_file(staging_key)

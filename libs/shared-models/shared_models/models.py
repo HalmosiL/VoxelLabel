@@ -7,6 +7,7 @@ infra/migrations. Do not duplicate table definitions in a service; import
 them from here instead.
 """
 import enum
+import secrets
 import uuid
 
 from sqlalchemy import (
@@ -189,6 +190,10 @@ class DeidentificationProfile(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Secret key of the profile's "hash" rules (see shared_models.deid_rules):
+    # without it, a short identifier's hash can be reversed by trying every
+    # candidate. Never returned by the API.
+    hash_salt: Mapped[str] = mapped_column(String(64), nullable=False, default=lambda: secrets.token_hex(32))
 
     rules: Mapped[list["DeidentificationRule"]] = relationship(back_populates="profile")
 

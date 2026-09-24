@@ -5,10 +5,8 @@ together -- the timing that produced a duplicate, empty case every time."""
 import threading
 
 import pydicom
-import pytest
+from app import quick_import
 from shared_models.models import Case, ImagingStudy, Instance, Study
-
-from app import pipeline, quick_import
 
 STUDY_UID = "1.2.826.0.1.3680043.99.1"
 
@@ -18,20 +16,6 @@ def _dataset(sop_uid, study_uid=STUDY_UID):
     ds.StudyInstanceUID, ds.SeriesInstanceUID, ds.SOPInstanceUID = study_uid, study_uid + ".1", sop_uid
     ds.PatientID, ds.Modality, ds.StudyDescription = "RACE-P1", "CT", "Race study"
     return ds
-
-
-@pytest.fixture
-def staged(monkeypatch):
-    """Staging keys resolve to in-memory datasets; nothing touches storage."""
-    datasets = {}
-    monkeypatch.setattr(quick_import, "download_staged_file", lambda key: key.encode())
-    monkeypatch.setattr(quick_import, "delete_staged_file", lambda key: None)
-    monkeypatch.setattr(quick_import.pydicom, "dcmread", lambda f, force=False: datasets[f.read().decode()])
-    monkeypatch.setattr(quick_import, "apply_deidentification_profile", lambda ds, study_id=None: ds)
-    monkeypatch.setattr(pipeline, "upload_pixel_data", lambda key, ds: None)
-    monkeypatch.setattr(pipeline, "upload_thumbnail", lambda key, png: None)
-    monkeypatch.setattr(pipeline, "generate_thumbnail", lambda ds: b"png")
-    return datasets
 
 
 def _race(study_id, monkeypatch):

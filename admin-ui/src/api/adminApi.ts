@@ -28,6 +28,8 @@ export interface DeidentificationRule {
   dicom_tag: string;
   action: "keep" | "remove" | "replace_fixed" | "hash";
   replacement_value: string | null;
+  // Why a rule saved before the checks existed can't be applied (it fails every import), or null.
+  problem: string | null;
 }
 
 export interface DeidentificationProfile {
@@ -186,6 +188,14 @@ export function listDeidentificationProfiles(): Promise<DeidentificationProfile[
 export function createDeidentificationProfile(name: string, isDefault: boolean): Promise<{ id: string; name: string }> {
   const qs = new URLSearchParams({ name, is_default: String(isDefault) });
   return apiFetch(base, `/admin/deidentification-profiles?${qs}`, { method: "POST" });
+}
+
+export function deleteDeidentificationProfile(profileId: string): Promise<void> {
+  return apiFetch(base, `/admin/deidentification-profiles/${profileId}`, { method: "DELETE" });
+}
+
+export function deleteDeidentificationRule(profileId: string, ruleId: string): Promise<void> {
+  return apiFetch(base, `/admin/deidentification-profiles/${profileId}/rules/${ruleId}`, { method: "DELETE" });
 }
 
 export function addDeidentificationRule(

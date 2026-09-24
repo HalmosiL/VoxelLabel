@@ -4,9 +4,12 @@ import {
   addDeidentificationRule,
   createDeidentificationProfile,
   DeidentificationProfile,
+  deleteDeidentificationProfile,
+  deleteDeidentificationRule,
   listDeidentificationProfiles,
 } from "../api/adminApi";
 import EmptyState from "../components/EmptyState";
+import { TrashIcon } from "../components/icons";
 import PageHeader from "../components/PageHeader";
 import { describeApiError } from "../api/client";
 import { DEID_STEPS } from "../guide/adminSteps";
@@ -49,7 +52,7 @@ export default function DeidentificationProfilesPage() {
 
       {profiles.length === 0 && <EmptyState message="No profiles yet -- create one below." />}
       {profiles.map((profile, i) => (
-        <ProfileCard key={profile.id} profile={profile} onRuleAdded={refresh} first={i === 0} />
+        <ProfileCard key={profile.id} profile={profile} onChanged={refresh} first={i === 0} />
       ))}
 
       <div className="card" data-guide="new-profile">
@@ -78,7 +81,7 @@ export default function DeidentificationProfilesPage() {
 }
 
 /** `first`: only the first profile carries the page tour's data-guide anchors. */
-function ProfileCard({ profile, onRuleAdded, first }: { profile: DeidentificationProfile; onRuleAdded: () => void; first: boolean }) {
+function ProfileCard({ profile, onChanged, first }: { profile: DeidentificationProfile; onChanged: () => void; first: boolean }) {
   const [dicomTag, setDicomTag] = useState("(0010,0010)");
   const [action, setAction] = useState("hash");
   const [replacementValue, setReplacementValue] = useState("");
@@ -89,10 +92,26 @@ function ProfileCard({ profile, onRuleAdded, first }: { profile: Deidentificatio
     try {
       await addDeidentificationRule(profile.id, dicomTag, action, replacementValue);
       setReplacementValue("");
-      onRuleAdded();
+      setError(null);
+      onChanged();
     } catch (err) {
       setError(describeApiError(err));
     }
+  }
+
+  async function run(change: () => Promise<void>) {
+    try {
+      await change();
+      setError(null);
+      onChanged();
+    } catch (err) {
+      setError(describeApiError(err));
+    }
+  }
+
+  function handleDeleteProfile() {
+    if (!window.confirm(`Delete the profile "${profile.name}" and its ${profile.rules.length} rule(s)?`)) return;
+    run(() => deleteDeidentificationProfile(profile.id));
   }
 
   return (
@@ -109,6 +128,15 @@ function ProfileCard({ profile, onRuleAdded, first }: { profile: Deidentificatio
         </span>
         <h3 className="section-title">{profile.name}</h3>
         {profile.is_default && <span className="badge-green">default</span>}
+        <button
+          type="button"
+          onClick={handleDeleteProfile}
+          className="ml-auto text-gray-400 hover:text-red-600"
+          title="Delete profile"
+          aria-label={`Delete profile ${profile.name}`}
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
       </div>
       {error && <p className="alert-error mb-3">{error}</p>}
 
@@ -119,23 +147,42 @@ function ProfileCard({ profile, onRuleAdded, first }: { profile: Deidentificatio
               <th>DICOM tag</th>
               <th>Action</th>
               <th>Replacement</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             {profile.rules.length === 0 && (
               <tr>
-                <td colSpan={3} className="py-4 text-center text-gray-400">
+                <td colSpan={4} className="py-4 text-center text-gray-400">
                   No rules yet.
                 </td>
               </tr>
             )}
             {profile.rules.map((r) => (
               <tr key={r.id}>
-                <td className="font-mono text-xs">{r.dicom_tag}</td>
+                <td className="font-mono text-xs">
+                  {r.dicom_tag}
+                  {r.problem && (
+                    <p className="mt-1 max-w-md whitespace-normal font-sans text-xs text-amber-700" data-testid="rule-problem">
+                      Every import with this profile fails until this rule is deleted: {r.problem}
+                    </p>
+                  )}
+                </td>
                 <td>
                   <span className="badge-gray">{r.action}</span>
                 </td>
                 <td>{r.replacement_value}</td>
+                <td className="text-right">
+                  <button
+                    type="button"
+                    onClick={() => run(() => deleteDeidentificationRule(profile.id, r.id))}
+                    className="text-gray-400 hover:text-red-600"
+                    title="Delete rule"
+                    aria-label={`Delete rule ${r.dicom_tag}`}
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -146,10 +193,11 @@ function ProfileCard({ profile, onRuleAdded, first }: { profile: Deidentificatio
         <label className="field">
           <span className="label">DICOM tag</span>
           <input
-            className="input w-40"
+            className="input w-56"
             value={dicomTag}
             onChange={(e) => setDicomTag(e.target.value)}
-            placeholder="(gggg,eeee)"
+            placeholder="(gggg,eeee), PatientName or PRIVATE"
+            title="A tag number such as (0010,0010), a keyword such as PatientName, or PRIVATE for every private tag (remove only)"
             required
           />
         </label>

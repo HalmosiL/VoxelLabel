@@ -8,6 +8,10 @@ dependencies = [
     "psycopg[binary]>=3.1",
 ]
 
+[project.optional-dependencies]
+# shared_models.deid_rules (admin-service and ingestion-service)
+dicom = ["pydicom>=3.0"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
