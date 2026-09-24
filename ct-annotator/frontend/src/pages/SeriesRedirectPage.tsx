@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 
 import { listInstances } from "../api/dataApi";
+import { safeReturnUrl } from "../lib/returnUrl";
 
 /** Entry point for deep links from the main platform's admin-ui, which
  * knows a Study/Case/Series but never fetches Instances itself (that's
@@ -14,7 +15,7 @@ export default function SeriesRedirectPage() {
   const jobId = searchParams.get("jobId");
   const caseId = searchParams.get("caseId");
   const viewAs = searchParams.get("viewAs");
-  const returnUrl = searchParams.get("returnUrl");
+  const returnUrl = safeReturnUrl(searchParams.get("returnUrl"));
 
   const [instanceId, setInstanceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

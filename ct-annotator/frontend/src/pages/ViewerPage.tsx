@@ -52,6 +52,7 @@ import { useGuide } from "../guide/useGuide";
 import { ANNOTATE_STEPS, REVIEW_STEPS } from "../guide/viewerSteps";
 import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
 import { polygonMask, scanlineFill } from "../lib/scanlineFill";
+import { safeReturnUrl } from "../lib/returnUrl";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -260,7 +261,8 @@ export default function ViewerPage() {
   // Viewer" link, which opens in a new tab with no browser history to go
   // back to) -- lets the header's Back arrow return there instead of to
   // this app's own picker, which a plain/standalone visit still uses.
-  const returnUrl = searchParams.get("returnUrl");
+  // Only ever one of our own pages -- see lib/returnUrl.ts (J-03).
+  const returnUrl = safeReturnUrl(searchParams.get("returnUrl"));
 
   const [error, setError] = useState<string | null>(null);
   // Set instead of the generic `error` banner specifically when the
