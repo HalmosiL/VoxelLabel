@@ -65,7 +65,7 @@ export const ANNOTATE_STEPS: GuideStep[] = [
         <p>
           <b>Scroll</b> changes slice (or drag the strip along the pane&apos;s right edge) · <kbd>Ctrl</kbd>+scroll zooms · <b>right- or middle-drag</b>{" "}
           windows the image (up/down level, left/right width) · <b>drag</b> pans when zoomed · <b>double-click</b> resets ·{" "}
-          <kbd>Ctrl</kbd>+click jumps every pane to that point · <kbd>Alt</kbd>+click reads the Hounsfield value. The coloured
+          <kbd>Ctrl</kbd>+click jumps every pane to that point, with any tool · <kbd>Alt</kbd>+click reads the Hounsfield value. The coloured
           crosshair shows where the other planes cut (<kbd>C</kbd> hides it).
         </p>
       </>

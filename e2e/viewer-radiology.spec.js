@@ -91,6 +91,16 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
   await page.mouse.up({ button: "middle" }); await page.waitForTimeout(300);
   const wm1 = await windowValues();
   check("middle-drag windows with any tool", wm1[0] < wm0[0] && wm1[1] < wm0[1], { wm0, wm1 });
+  // Ctrl+click jumps the other planes with a drawing tool too, and paints nothing
+  const painted = () => page.locator('[data-testid="pane-axial"] canvas').nth(1).evaluate((c) => { const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; });
+  const paintBefore = await painted();
+  const sag0 = await sliceOf("sagittal"), cor0 = await sliceOf("coronal");
+  await page.keyboard.down("Control"); await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.7); await page.keyboard.up("Control");
+  await page.waitForTimeout(300);
+  const sag1 = await sliceOf("sagittal"), cor1 = await sliceOf("coronal");
+  // the overlay redraws for the new crosshair position, not for paint: compare on the same slice
+  const paintAfter = await painted();
+  check("Ctrl+click with the Paint tool jumps the other planes and draws nothing", sag1 !== sag0 && cor1 !== cor0 && paintAfter === paintBefore, { sag0, sag1, cor0, cor1, paintBefore, paintAfter });
   await page.locator('[data-testid="tool-cursor"]').click();
 
   // 4. crosshair: on by default, open in the middle, C toggles

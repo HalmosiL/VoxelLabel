@@ -2988,6 +2988,18 @@ export default function ViewerPage() {
   // any tool (the right button erases while drawing). Registered in the
   // capture phase so a drawing tool never sees the drag.
 
+  /** Ctrl/Cmd+click jumps every pane to that point with any tool, not
+   * just the Cursor: a navigation gesture, never a drawing one, so it is
+   * taken in the capture phase before a tool can start a stroke. */
+  function startCtrlNavigate(event: ReactPointerEvent<HTMLDivElement>, pane: PaneKey): boolean {
+    if (event.pointerType === "touch" || event.button !== 0) return false;
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    handleCtrlClickNavigate(event, pane);
+    return true;
+  }
+
   function startWindowDrag(event: ReactPointerEvent<HTMLDivElement>, pane: PaneKey): boolean {
     if (event.pointerType !== "mouse") return false;
     if (!(event.button === 1 || (event.button === 2 && tab === "view"))) return false;
@@ -3670,7 +3682,7 @@ export default function ViewerPage() {
                           : "default",
                   }}
                   onPointerDownCapture={(e) => {
-                    if (!startWindowDrag(e, pane)) handleTouchDownCapture(e, pane);
+                    if (!startCtrlNavigate(e, pane) && !startWindowDrag(e, pane)) handleTouchDownCapture(e, pane);
                   }}
                   onPointerMoveCapture={(e) => {
                     if (!moveWindowDrag(e)) handleTouchMoveCapture(e, pane);
@@ -4037,14 +4049,14 @@ export default function ViewerPage() {
             : tab === "view"
             ? "View · Scroll=Slice · Ctrl/Cmd+Scroll=Zoom · Right/middle-drag=Window · Drag=Pan (zoomed) · Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset"
             : tool === "fill"
-              ? "Fill · Click inside a closed outline on any pane · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
+              ? "Fill · Click inside a closed outline on any pane · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
               : tool === "polygon"
-                ? "Polygon · Click to place points · Click the first (yellow) point to close · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
+                ? "Polygon · Click to place points · Click the first (yellow) point to close · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
                 : tool === "auto"
-                  ? "Auto · Drag a box around a structure · Adjust the HU range · Enter=Apply · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
+                  ? "Auto · Drag a box around a structure · Adjust the HU range · Enter=Apply · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
                   : tool === "histogram"
-                    ? "Histogram · Drag a box to see its HU distribution · Esc=Close · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
-                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw · Right-click drag=Erase · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window`}
+                    ? "Histogram · Drag a box to see its HU distribution · Esc=Close · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
+                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw · Right-click drag=Erase · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes`}
         </span>
         <span className="flex-shrink-0 whitespace-nowrap">{activeObjectName ? `Active: ${activeObjectName}` : tab === "annotate" ? "No object selected" : ""}</span>
       </div>
