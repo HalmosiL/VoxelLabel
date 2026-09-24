@@ -292,8 +292,9 @@ def duplicate_study_route(
 ) -> dict:
     """Creates a fully independent copy of a study: new Case/ImagingStudy/
     Series/Instance/ClinicalDataItem rows with fresh DICOM UIDs, a real
-    byte-for-byte copy of every object-storage payload (pixel data,
-    thumbnails, clinical data files, the cover image) under new keys.
+    copy of every object-storage payload (pixel data -- its DICOM UIDs
+    rewritten to the copy's --, thumbnails, clinical data files, the
+    cover image) under new keys.
     With `include_workflow` (default true), the same workflow board also
     comes along (cards/edges/config, case ids remapped, Run caches
     reset); with it false, only the raw case/imaging/document data is

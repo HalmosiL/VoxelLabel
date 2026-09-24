@@ -34,8 +34,10 @@ with no real re-identification link -- out of scope for what "duplicate
 this study's data" means.
 """
 import copy
+import io
 import uuid
 
+import pydicom
 from botocore.exceptions import ClientError
 from shared_auth import CurrentUser
 from shared_models.models import (
@@ -65,6 +67,24 @@ def _new_dicom_uid() -> str:
     leaf node under that root is a standards-legal way to get a
     guaranteed-unique UID without a DICOM UID generator dependency."""
     return f"2.25.{uuid.uuid4().int}"
+
+
+def _with_uids(study_uid: str, series_uid: str, sop_uid: str):
+    """A copy_object_bytes transform: the DICOM file with the copy's own
+    Study/Series/SOP Instance UIDs, so the file agrees with its database
+    rows. Copied verbatim, a downloaded or re-imported copy was the
+    original's exam, and new series for it landed in the original study
+    (B-12). Every stored instance parsed at ingest, so this one does too;
+    anything else aborts the duplication rather than copy it unchanged."""
+    def rewrite(data: bytes) -> bytes:
+        ds = pydicom.dcmread(io.BytesIO(data), force=True)
+        ds.StudyInstanceUID, ds.SeriesInstanceUID, ds.SOPInstanceUID = study_uid, series_uid, sop_uid
+        if "MediaStorageSOPInstanceUID" in getattr(ds, "file_meta", {}):
+            ds.file_meta.MediaStorageSOPInstanceUID = sop_uid
+        out = io.BytesIO()
+        ds.save_as(out)
+        return out.getvalue()
+    return rewrite
 
 
 def _copied_key(old_key: str | None, new_prefix: str) -> str | None:
@@ -240,7 +260,11 @@ def duplicate_study(
                     # Same key shape ingestion-service's pipeline.py uses:
                     # "{StudyInstanceUID}/{SeriesInstanceUID}/{SOPInstanceUID}.dcm".
                     new_pixel_key = f"{new_imaging_study.study_instance_uid}/{new_series.series_instance_uid}/{new_sop_uid}.dcm"
-                    copy_object_bytes(instance.object_storage_key, new_pixel_key)
+                    copy_object_bytes(
+                        instance.object_storage_key,
+                        new_pixel_key,
+                        _with_uids(new_imaging_study.study_instance_uid, new_series.series_instance_uid, new_sop_uid),
+                    )
 
                     new_thumbnail_key = None
                     if instance.thumbnail_key:

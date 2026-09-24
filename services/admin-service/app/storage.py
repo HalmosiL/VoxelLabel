@@ -7,6 +7,7 @@ the browser is shown (cover images) behind signed links to this API
 to reach MinIO itself.
 """
 import mimetypes
+from collections.abc import Callable
 
 import boto3
 from shared_auth.object_links import link_secret, sign_object_link
@@ -49,14 +50,18 @@ def download_object(storage_key: str) -> bytes:
     return _client.get_object(Bucket=settings.object_storage_bucket, Key=storage_key)["Body"].read()
 
 
-def copy_object_bytes(src_key: str, dst_key: str) -> None:
+def copy_object_bytes(src_key: str, dst_key: str, transform: Callable[[bytes], bytes] | None = None) -> None:
     """Duplicates one object under a new key with a real download+
     reupload -- not S3's own server-side copy_object, deliberately: the
     caller (see app/duplication.py) needs the result to behave exactly
     as if the bytes had been freshly uploaded, and a get+put roundtrip is
     the one approach that's unambiguously that regardless of how any
-    given S3-compatible backend implements CopySource under the hood."""
+    given S3-compatible backend implements CopySource under the hood.
+    `transform`, if given, rewrites the bytes on the way (a duplicated
+    DICOM file gets the copy's own UIDs)."""
     data = download_object(src_key)
+    if transform is not None:
+        data = transform(data)
     content_type, _ = mimetypes.guess_type(dst_key)
     extra_args = {"ContentType": content_type} if content_type else {}
     _client.put_object(Bucket=settings.object_storage_bucket, Key=dst_key, Body=data, **extra_args)
