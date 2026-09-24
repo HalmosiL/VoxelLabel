@@ -71,6 +71,7 @@ export const ANNOTATE_STEPS: GuideStep[] = [
       </>
     ),
     placement: "right",
+    tip: "Scroll on a pane to page through its slices, or press and drag the strip along its right edge; Ctrl+scroll zooms.",
   },
   {
     target: "objects",
@@ -117,8 +118,8 @@ export const ANNOTATE_STEPS: GuideStep[] = [
           <b>Cursor</b> -- navigate only, nothing is drawn. <b>Paint</b> -- brush; drag to paint, right-drag to erase.{" "}
           <b>Eraser</b> -- removes paint from any object. <b>Fill</b> -- click inside a closed outline to fill it.{" "}
           <b>Polygon</b> -- click points around a structure, click the first point to close. <b>Auto</b> -- drag a box and the
-          viewer segments by intensity; adjust the tolerance and press <kbd>Enter</kbd>. <b>Histogram</b> -- drag a box to see
-          its HU distribution (measurement only).
+          viewer segments by intensity, starting from a HU range it suggests from the box (a calcified core included); adjust
+          the range and press <kbd>Enter</kbd>. <b>Histogram</b> -- drag a box to see its HU distribution (measurement only).
         </p>
         <p>The job may show only some of these -- the workflow decides which tools each surface gets.</p>
       </>
@@ -148,14 +149,21 @@ export const ANNOTATE_STEPS: GuideStep[] = [
   },
   {
     target: "appearance",
-    title: "Overlay opacity",
-    body: "How strongly the coloured annotation overlay is drawn over the scan. Display only -- nothing about the annotation changes, just how visible it is while you work.",
+    title: "Overlay opacity and the crosshair",
+    body: "How strongly the coloured annotation overlay is drawn over the scan, and the crosshair: coloured lines where the other two planes cut each pane (the dot beside each pane's name is its colour), left open in the middle so they never cover what you're looking at. C switches the crosshair on and off. Display only.",
     placement: "left",
   },
   {
     target: "window",
     title: "Window / level",
-    body: "Presets (Soft tissue, Lung, Bone, Brain) set the greyscale mapping for the structure you're looking at; the sliders fine-tune it. This only changes how you see the image, never the data or your annotation. Reset to original puts the scan's own window back.",
+    body: "Presets (Soft tissue, Lung, Bone, Brain) set the greyscale mapping for the structure you're looking at; the sliders fine-tune it. Quicker still, on the image: drag with the right mouse button (Cursor tool) or the middle button (any tool) -- up/down moves the level, left/right the width. This only changes how you see the image, never the data or your annotation. Reset to original puts the scan's own window back.",
+    placement: "left",
+    tip: "Pick the Cursor tool and right-drag on a pane: down darkens, right widens.",
+  },
+  {
+    target: "slab",
+    title: "Thick slices (slab)",
+    body: "Makes every pane a thick slice: several neighbouring slices averaged, or their brightest voxel (MIP -- vessels and nodules stand out against the lung) or darkest (MinIP -- airways). Pick a thickness, then the projection; 1 is back to a single slice. Display only -- drawing still lands on the centre slice.",
     placement: "left",
   },
   {

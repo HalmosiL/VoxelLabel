@@ -96,3 +96,30 @@ describe("windowToGrey", () => {
     expect(windowToGrey(3000, 40, 400)).toBe(255);
   });
 });
+
+describe("slabView", () => {
+  // value = z, so a slab's projection is easy to predict on every pane
+  const n = TUTORIAL_SIZE * TUTORIAL_SIZE;
+  const volume = new Int16Array(TUTORIAL_SLICES * n);
+  for (let z = 0; z < TUTORIAL_SLICES; z++) volume.fill(z, z * n, (z + 1) * n);
+
+  it("projects neighbouring axial slices by mean, maximum or minimum", async () => {
+    const { slabView } = await import("./tutorialSlice");
+    expect(slabView(volume, "axial", 10, 5, "avg")[0]).toBe(10);
+    expect(slabView(volume, "axial", 10, 5, "mip")[0]).toBe(12);
+    expect(slabView(volume, "axial", 10, 5, "minip")[0]).toBe(8);
+    expect(slabView(volume, "axial", 10, 1, "mip")[0]).toBe(10);
+    // clipped at the first slice
+    expect(slabView(volume, "axial", 0, 5, "minip")[0]).toBe(0);
+    expect(slabView(volume, "axial", 0, 5, "mip")[0]).toBe(2);
+  });
+
+  it("on sagittal/coronal slabs across x/y, keeping each row's own slice", async () => {
+    const { slabView } = await import("./tutorialSlice");
+    const sag = slabView(volume, "sagittal", 100, 9, "mip");
+    expect(sag.length).toBe(TUTORIAL_SLICES * TUTORIAL_SIZE);
+    // row z of a sagittal view is slice z, whatever the x range
+    expect(sag[30 * TUTORIAL_SIZE + 5]).toBe(30);
+    expect(slabView(volume, "coronal", 50, 3, "avg")[7 * TUTORIAL_SIZE]).toBe(7);
+  });
+});

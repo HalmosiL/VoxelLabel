@@ -83,9 +83,9 @@ async function closeTour(page) {
   await page.mouse.move(corBox.x + corBox.width * 0.6, corBox.y + corBox.height * 0.6, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(250);
-  check("auto tolerance popup appears over CORONAL pane specifically", (await canvases.nth(1).locator("xpath=following-sibling::div[contains(text(),'Auto tolerance')]").count()) >= 0); // best-effort; real check below
-  const autoPopupVisible = await page.locator("text=Auto tolerance").isVisible().catch(() => false);
-  check("auto tolerance popup is visible after dragging on coronal", autoPopupVisible);
+  // the Auto panel: a HU range suggested from the box (was "Auto tolerance")
+  const autoPopupVisible = await page.locator('[data-testid="auto-range"]').isVisible().catch(() => false);
+  check("the Auto HU range panel is visible after dragging on coronal", autoPopupVisible);
   await page.keyboard.press("Escape");
 
   // --- Histogram tool on axial (regression: still works after refactor) ---
@@ -102,5 +102,5 @@ async function closeTour(page) {
   await browser.close();
   const fails = results.filter(r => !r.ok);
   console.log(`checks ${results.length}, fails ${fails.length}`);
-  for (const f of fails) console.log("FAIL", f.n, JSON.stringify(f.extra).slice(0, 300));
+  for (const f of fails) console.log("FAIL", f.n, JSON.stringify(f.extra ?? null).slice(0, 300));
 })().catch(e => { console.error("EXC", e.message, e.stack); process.exit(1); });

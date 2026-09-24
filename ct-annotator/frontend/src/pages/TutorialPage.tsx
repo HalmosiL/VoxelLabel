@@ -24,6 +24,7 @@ import {
   renderPlane,
   sagittalMaskView,
   sagittalView,
+  slabView,
   TARGET_SLICE,
   TARGET_X,
   TARGET_Y,
@@ -33,6 +34,8 @@ import {
   writeSagittalMaskView,
 } from "../lib/tutorialSlice";
 import { scanlineFill } from "../lib/scanlineFill";
+import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
+import type { SlabMode } from "../api/annotatorApi";
 
 type DrawTool = "cursor" | "paint" | "erase" | "fill" | "polygon" | "auto" | "histogram";
 type Phase = "annotate" | "review" | "done";
@@ -113,14 +116,28 @@ const WINDOW_PRESETS: { label: string; center: number; width: number }[] = [
 ];
 const DEFAULT_CENTER = 40;
 const DEFAULT_WIDTH = 400;
+// The same crosshair, slice strip, mouse window/level and slab settings
+// as the real viewer (see ViewerPage.tsx's constants of the same names).
+const PLANE_COLORS: Record<PaneKey, string> = { sagittal: "#f59e0b", coronal: "#22c55e", axial: "#38bdf8" };
+const CROSSHAIR_GAP_PX = 16;
+const SLICE_STRIP_PX = { mouse: 26, touch: 40 };
+const WINDOW_DRAG_HU_PER_PX = 1 / 300;
+const WINDOW_DRAG_THRESHOLD_PX = 4;
+const SLAB_THICKNESSES = [1, 3, 5, 9, 15, 25];
+const SLAB_LABEL: Record<SlabMode, string> = { avg: "Average", mip: "MIP", minip: "MinIP" };
+const SLAB_HELP: Record<SlabMode, string> = {
+  avg: "The mean of the slices: less noise, like a thicker reconstruction.",
+  mip: "Maximum intensity projection: the brightest voxel through the slab -- vessels and nodules stand out against the lung.",
+  minip: "Minimum intensity projection: the darkest voxel through the slab -- airways and air trapping.",
+};
 
 const TOOL_HELP: Record<DrawTool, string> = {
-  cursor: "Navigate only: scroll to change slice, Ctrl+scroll to zoom, drag to pan when zoomed. Nothing is drawn.",
+  cursor: "Navigate only: scroll to change slice, Ctrl+scroll to zoom, right-drag to window (up/down level, left/right width), drag to pan when zoomed. Nothing is drawn.",
   paint: "Brush into the active object. Drag to paint; right-drag to erase.",
   erase: "Remove paint from any object under the brush.",
   fill: "Click inside a closed outline to fill it into the active object -- paint or Polygon the boundary first.",
   polygon: "Click to place points; click the first (yellow) point again to close and fill.",
-  auto: "Drag a box; the tool segments by brightness inside it. Adjust the tolerance, then Enter to apply or Esc to cancel.",
+  auto: "Drag a box; the tool segments by brightness inside it, from a HU range suggested from the box (calcification included). Adjust the range, then Enter to apply or Esc to cancel.",
   histogram: "Drag a box to see the real brightness distribution inside it. Draws nothing.",
 };
 
@@ -204,6 +221,23 @@ export default function TutorialPage() {
   const [windowCenter, setWindowCenter] = useState(DEFAULT_CENTER);
   const [windowWidth, setWindowWidth] = useState(DEFAULT_WIDTH);
   const [sharpness, setSharpness] = useState(0);
+  const [slab, setSlab] = useState<{ thickness: number; mode: SlabMode }>({ thickness: 1, mode: "avg" });
+  // Shares the real viewer's remembered choice (same storage key).
+  const [showCrosshair, setShowCrosshair] = useState(() => {
+    try {
+      return localStorage.getItem("vl.viewer.crosshair") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("vl.viewer.crosshair", showCrosshair ? "1" : "0");
+    } catch {
+      // private mode: the choice just isn't remembered
+    }
+  }, [showCrosshair]);
+  const windowDragRef = useRef<{ pointerId: number; x0: number; y0: number; c0: number; w0: number; moved: boolean } | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(70);
   const [brushRadius, setBrushRadius] = useState(10);
   const [tool, setTool] = useState<DrawTool>("cursor");
@@ -237,7 +271,10 @@ export default function TutorialPage() {
   // zoomed (the corner is far from the box; the real viewer's approach
   // keeps the chrome right next to your cursor instead).
   const [autoPanel, setAutoPanel] = useState<{
-    tolerance: number;
+    // the HU range the region may contain -- suggested from the box while
+    // it's being dragged (see lib/autoContour), then the user's to adjust
+    range: { low: number; high: number };
+    fillHoles: boolean;
     box: [number, number, number, number];
     pane: PaneKey;
     panelClientX: number;
@@ -361,7 +398,11 @@ export default function TutorialPage() {
     // Taller under a coarse pointer: the touch stylesheet's range input
     // is a 2rem control, and on a compact layout each pane carries its
     // own slider (see the row below).
-    const CHROME_HEIGHT = window.matchMedia("(pointer: coarse)").matches ? 96 : 64;
+    // Just the label row now: each pane's slice control stands along its
+    // right edge (SLICE_STRIP_PX), which comes off the width instead.
+    const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    const CHROME_HEIGHT = coarsePointer ? 44 : 28;
+    const STRIP = coarsePointer ? SLICE_STRIP_PX.touch : SLICE_STRIP_PX.mouse;
     const GAP = 1; // the row's gap-px
     function recompute() {
       if (!el) return;
@@ -375,9 +416,9 @@ export default function TutorialPage() {
       // the gaps accounted for, or a fractional overshoot of a pixel or
       // two is exactly what makes flex-wrap break a pane onto its own row.
       const fit = (space: number, n: number) => Math.floor((space - GAP * (n - 1)) / n);
-      const single = Math.min(fit(rect.width, count), rect.height - CHROME_HEIGHT);
+      const single = Math.min(fit(rect.width, count) - STRIP, rect.height - CHROME_HEIGHT);
       const cols = 2;
-      const wrapped = count > 1 && rect.width < 900 ? Math.min(fit(rect.width, cols), fit(rect.height, Math.ceil(count / cols)) - CHROME_HEIGHT) : 0;
+      const wrapped = count > 1 && rect.width < 900 ? Math.min(fit(rect.width, cols) - STRIP, fit(rect.height, Math.ceil(count / cols)) - CHROME_HEIGHT) : 0;
       setPaneSize(Math.max(160, Math.max(single, wrapped)));
     }
     recompute();
@@ -488,11 +529,10 @@ export default function TutorialPage() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const hu = axialView(volumeRef.current, axialIndex);
+    const hu = slab.thickness > 1 ? slabView(volumeRef.current, "axial", axialIndex, slab.thickness, slab.mode) : axialView(volumeRef.current, axialIndex);
     renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SIZE, axialMaskView(maskRef.current, axialIndex), colorForObjectId, windowCenter, windowWidth, sharpness, overlayOpacity);
-    if (tool === "polygon" && polygonPaneRef.current === "axial" && polygonPointsRef.current.length > 0) drawPolygonDraft(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volumeLoaded, axialIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, tool, polygonDraftVersion, paneMountKey]);
+  }, [volumeLoaded, axialIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey]);
 
   // ── Real sagittal/coronal reconstructions, recomputed whenever their
   // own index or the window settings change -- genuine voxels from the
@@ -508,37 +548,103 @@ export default function TutorialPage() {
     const canvas = sagittalCanvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const hu = sagittalView(volumeRef.current, sagittalIndex);
+    const hu = slab.thickness > 1 ? slabView(volumeRef.current, "sagittal", sagittalIndex, slab.thickness, slab.mode) : sagittalView(volumeRef.current, sagittalIndex);
     renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SLICES, sagittalMaskView(maskRef.current, sagittalIndex), colorForObjectId, windowCenter, windowWidth, sharpness, overlayOpacity);
-    if (tool === "polygon" && polygonPaneRef.current === "sagittal" && polygonPointsRef.current.length > 0) drawPolygonDraft(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volumeLoaded, sagittalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, tool, polygonDraftVersion, paneMountKey]);
+  }, [volumeLoaded, sagittalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey]);
   useEffect(() => {
     if (!volumeLoaded || !volumeRef.current) return;
     const canvas = coronalCanvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const hu = coronalView(volumeRef.current, coronalIndex);
+    const hu = slab.thickness > 1 ? slabView(volumeRef.current, "coronal", coronalIndex, slab.thickness, slab.mode) : coronalView(volumeRef.current, coronalIndex);
     renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SLICES, coronalMaskView(maskRef.current, coronalIndex), colorForObjectId, windowCenter, windowWidth, sharpness, overlayOpacity);
-    if (tool === "polygon" && polygonPaneRef.current === "coronal" && polygonPointsRef.current.length > 0) drawPolygonDraft(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volumeLoaded, coronalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, tool, polygonDraftVersion, paneMountKey]);
+  }, [volumeLoaded, coronalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey]);
 
-  function drawPolygonDraft(ctx: CanvasRenderingContext2D) {
+  /** The polygon in progress as an SVG over the pane (like the real
+   * viewer's renderPolygonOverlay): zoomed with the image, but its points
+   * and lines keep one small screen size at any zoom -- drawn into the
+   * canvas they grew with the zoom, and stretched on sagittal/coronal. */
+  function renderPolygonOverlay(pane: PaneKey) {
     const pts = polygonPointsRef.current;
-    if (pts.length === 0) return;
-    ctx.strokeStyle = activeLabel?.color ?? "#60a5fa";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y);
-    ctx.stroke();
-    pts.forEach((p, i) => {
-      ctx.fillStyle = i === 0 ? "#fbbf24" : (activeLabel?.color ?? "#60a5fa");
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    if (tool !== "polygon" || polygonPaneRef.current !== pane || pts.length === 0) return null;
+    const { width, height } = paneDims(pane);
+    const sx = paneSize / width;
+    const sy = paneSize / height;
+    const k = 1 / zoom[pane].scale;
+    const color = activeLabel?.color ?? "#60a5fa";
+    return (
+      <svg width={paneSize} height={paneSize} style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }} data-polygon-version={polygonDraftVersion}>
+        <polyline points={pts.map((p) => `${p.x * sx},${p.y * sy}`).join(" ")} fill="none" stroke={color} strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
+        {pts.map((p, i) => (
+          <circle key={i} cx={p.x * sx} cy={p.y * sy} r={(i === 0 ? (coarse ? 5 : 3.5) : coarse ? 3 : 2) * k} fill={i === 0 ? "#fbbf24" : color} data-testid="polygon-point" />
+        ))}
+      </svg>
+    );
+  }
+
+  /** Where the other two planes cut this pane, broken around their
+   * meeting point -- the real viewer's renderCrosshair, on the practice
+   * volume's own dimensions (sagittal: width = y, height = z; coronal:
+   * width = x, height = z). */
+  function renderCrosshair(pane: PaneKey) {
+    if (!showCrosshair) return null;
+    const at = (i: number, n: number) => ((i + 0.5) / n) * paneSize;
+    const [vPlane, vx, hPlane, hy]: [PaneKey, number, PaneKey, number] =
+      pane === "axial"
+        ? ["sagittal", at(sagittalIndex, TUTORIAL_SIZE), "coronal", at(coronalIndex, TUTORIAL_SIZE)]
+        : pane === "sagittal"
+          ? ["coronal", at(coronalIndex, TUTORIAL_SIZE), "axial", at(axialIndex, TUTORIAL_SLICES)]
+          : ["sagittal", at(sagittalIndex, TUTORIAL_SIZE), "axial", at(axialIndex, TUTORIAL_SLICES)];
+    const gap = CROSSHAIR_GAP_PX / zoom[pane].scale;
+    const size = paneSize;
+    const line = (x1: number, y1: number, x2: number, y2: number, color: string, key: string) =>
+      (x2 - x1) ** 2 + (y2 - y1) ** 2 > 0 ? <line key={key} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1} strokeOpacity={0.8} vectorEffect="non-scaling-stroke" /> : null;
+    return (
+      <svg width={size} height={size} style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }} data-testid={`crosshair-${pane}`} aria-hidden="true">
+        {line(vx, 0, vx, Math.max(0, hy - gap), PLANE_COLORS[vPlane], "v1")}
+        {line(vx, Math.min(size, hy + gap), vx, size, PLANE_COLORS[vPlane], "v2")}
+        {line(0, hy, Math.max(0, vx - gap), hy, PLANE_COLORS[hPlane], "h1")}
+        {line(Math.min(size, vx + gap), hy, size, hy, PLANE_COLORS[hPlane], "h2")}
+      </svg>
+    );
+  }
+
+  // ── Mouse window/level drag -- the real viewer's gesture: right button
+  // with the Cursor tool, middle button with any tool; up/down moves the
+  // level, left/right the width. Rendering here is client-side, so the
+  // picture follows at once. Registered in the pane row's capture phase
+  // so a drawing tool never sees the drag. ─────────────────────────────
+  function startWindowDrag(e: ReactPointerEvent<HTMLDivElement>): boolean {
+    if (e.pointerType !== "mouse" || !paneFromEvent(e)) return false;
+    if (!(e.button === 1 || (e.button === 2 && tool === "cursor"))) return false;
+    if (e.altKey || e.ctrlKey || e.metaKey) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    windowDragRef.current = { pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, c0: windowCenter, w0: windowWidth, moved: false };
+    return true;
+  }
+  function moveWindowDrag(e: ReactPointerEvent<HTMLDivElement>): boolean {
+    const drag = windowDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return false;
+    e.stopPropagation();
+    const dx = e.clientX - drag.x0;
+    const dy = e.clientY - drag.y0;
+    if (!drag.moved && Math.hypot(dx, dy) < WINDOW_DRAG_THRESHOLD_PX) return true;
+    drag.moved = true;
+    const perPx = Math.max(0.5, drag.w0 * WINDOW_DRAG_HU_PER_PX);
+    setWindowCenter(Math.round(Math.max(-1000, Math.min(1000, drag.c0 + dy * perPx))));
+    setWindowWidth(Math.round(Math.max(1, Math.min(4000, drag.w0 + dx * perPx * 1.5))));
+    return true;
+  }
+  function endWindowDrag(e: ReactPointerEvent<HTMLDivElement>): boolean {
+    const drag = windowDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return false;
+    e.stopPropagation();
+    windowDragRef.current = null;
+    return true;
   }
 
   // ── Reopen the guide automatically at the start of each phase, once
@@ -831,8 +937,11 @@ export default function TutorialPage() {
       const start = dragStartRef.current;
       const { x, y } = toCanvasXY(e, start.pane);
       const box: [number, number, number, number] = [Math.min(start.x, x), Math.min(start.y, y), Math.max(start.x, x), Math.max(start.y, y)];
-      applyAuto(start.pane, box, autoPanel?.tolerance ?? 40);
-      setAutoPanel({ tolerance: autoPanel?.tolerance ?? 40, box, pane: start.pane, panelClientX: e.clientX, panelClientY: e.clientY });
+      // while the box is being drawn, the range follows what it holds
+      const range = suggestRange(autoPatch(start.pane, box));
+      const fillHoles = autoPanel?.fillHoles ?? true;
+      applyAuto(start.pane, box, range, fillHoles);
+      setAutoPanel({ range, fillHoles, box, pane: start.pane, panelClientX: e.clientX, panelClientY: e.clientY });
     } else if (dragStartRef.current && tool === "histogram") {
       const start = dragStartRef.current;
       const { x, y } = toCanvasXY(e, start.pane);
@@ -867,19 +976,35 @@ export default function TutorialPage() {
     };
   }
 
-  function applyAuto(pane: PaneKey, box: [number, number, number, number], tolerance: number) {
+  /** The box's own HU values, as the patch lib/autoContour works on. */
+  function autoPatch(pane: PaneKey, box: [number, number, number, number]) {
+    const hu = paneHuView(pane);
+    const { width } = paneDims(pane);
+    const x0 = Math.round(box[0]);
+    const y0 = Math.round(box[1]);
+    const w = Math.max(1, Math.round(box[2]) - x0 + 1);
+    const h = Math.max(1, Math.round(box[3]) - y0 + 1);
+    const data = new Int16Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) data[y * w + x] = hu[(y0 + y) * width + x0 + x] ?? HU_MIN;
+    return { data, width: w, height: h, x0, y0 };
+  }
+
+  /** The real viewer's Auto: a HU range (not "centre ± tolerance", which a
+   * calcified core throws off), grown from the in-range pixel nearest the
+   * box centre, holes filled when asked -- see lib/autoContour. */
+  function applyAuto(pane: PaneKey, box: [number, number, number, number], range: { low: number; high: number }, fillHoles: boolean) {
     if (!activeObjectId || !autoBaseRef.current || !volumeRef.current) return;
     maskRef.current.set(autoBaseRef.current);
-    const cx = Math.round((box[0] + box[2]) / 2);
-    const cy = Math.round((box[1] + box[3]) / 2);
-    const hu = paneHuView(pane);
-    withPaneMask(pane, (view, width, height) => {
-      floodFillMask(hu, view, width, height, cx, cy, activeObjectId, 10 + tolerance * 3, {
-        x0: Math.round(box[0]),
-        y0: Math.round(box[1]),
-        x1: Math.round(box[2]),
-        y1: Math.round(box[3]),
-      });
+    const patch = autoPatch(pane, box);
+    const region = growRegion(patch, range, { fillHoles });
+    withPaneMask(pane, (view, width) => {
+      for (let y = 0; y < patch.height; y++) {
+        for (let x = 0; x < patch.width; x++) {
+          if (!region[y * patch.width + x]) continue;
+          const i = (patch.y0 + y) * width + patch.x0 + x;
+          if (view[i] === 0) view[i] = activeObjectId;
+        }
+      }
     });
     setMaskVersion((v) => v + 1);
   }
@@ -1163,6 +1288,11 @@ export default function TutorialPage() {
           const dy = wasdKey === "w" ? PAN_STEP_PX : wasdKey === "s" ? -PAN_STEP_PX : 0;
           setZoom((z) => ({ ...z, [pane]: { ...z[pane], panX: z[pane].panX + dx, panY: z[pane].panY + dy } }));
         }
+        return;
+      }
+
+      if (e.key.toLowerCase() === "c" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        setShowCrosshair((v) => !v);
         return;
       }
 
@@ -1585,10 +1715,9 @@ export default function TutorialPage() {
                 <Tip key={t} title={t[0].toUpperCase() + t.slice(1)} description={disabled ? `${TOOL_HELP[t]} Select an object first.` : TOOL_HELP[t]} side="right">
                   <span className="flex" data-guide={`tool-${t}`}>
                     <button
-                      onClick={() => {
-                        setTool(t);
-                        if (t !== "cursor") setZoom((z) => ({ ...z, axial: IDLE_ZOOM }));
-                      }}
+                      // The zoom stays as it is, like the real viewer:
+                      // Ctrl+wheel zooms with every tool now.
+                      onClick={() => setTool(t)}
                       disabled={disabled}
                       className={`flex items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${coarse ? "h-11 w-11" : "h-9 w-9"} ${
                         tool === t ? "bg-amber-500/25 text-amber-300" : "text-gray-400 hover:bg-[#2a2a3e] hover:text-gray-200"
@@ -1626,10 +1755,19 @@ export default function TutorialPage() {
             ref={paneRowRef}
             data-guide="panes"
             className={`flex min-h-0 min-w-0 flex-1 bg-black ${only3d ? "" : "flex-wrap items-start justify-center gap-px overflow-auto [align-content:safe_center]"}`}
-            onPointerDownCapture={handleTouchDownCapture}
-            onPointerMoveCapture={handleTouchMoveCapture}
-            onPointerUpCapture={handleTouchUpCapture}
-            onPointerCancelCapture={handleTouchUpCapture}
+            onPointerDownCapture={(e) => {
+              if (!startWindowDrag(e)) handleTouchDownCapture(e);
+            }}
+            onPointerMoveCapture={(e) => {
+              if (!moveWindowDrag(e)) handleTouchMoveCapture(e);
+            }}
+            onPointerUpCapture={(e) => {
+              if (!endWindowDrag(e)) handleTouchUpCapture(e);
+            }}
+            onPointerCancelCapture={(e) => {
+              if (!endWindowDrag(e)) handleTouchUpCapture(e);
+            }}
+            onContextMenu={(e) => e.preventDefault()}
           >
             {PANE_ORDER.map((pane) => {
               if (!visiblePaneKeys.includes(pane)) return null;
@@ -1641,7 +1779,10 @@ export default function TutorialPage() {
                   maximized={maximizedPane === pane}
                   onMaximize={() => toggleMaximized(pane)}
                   onHide={() => togglePaneVisible(pane)}
-                  slider={compact ? <PaneSlider cfg={paneConfig[pane]} label={PANE_LABELS[pane]} guide={pane === PANE_ORDER[0] ? "pane-sliders" : undefined} /> : undefined}
+                  color={PLANE_COLORS[pane]}
+                  badge={slab.thickness > 1 ? `${slab.mode === "avg" ? "AVG" : SLAB_LABEL[slab.mode].toUpperCase()} ${slab.thickness}` : undefined}
+                  stripWidth={coarse ? SLICE_STRIP_PX.touch : SLICE_STRIP_PX.mouse}
+                  slider={<PaneSlider cfg={paneConfig[pane]} label={PANE_LABELS[pane]} guide="pane-sliders" />}
                 >
                   {/* The canvas and its drag-box overlay(s) share ONE
                       zoom/pan transform on a common wrapper, rather than
@@ -1711,6 +1852,8 @@ export default function TutorialPage() {
                     {/* Pixel math (sx/sy = paneSize / content dims), not
                         percentages -- exactly ViewerPage.tsx's own
                         renderAutoBoxOverlay/renderRoiBoxOutline. */}
+                    {renderCrosshair(pane)}
+                    {renderPolygonOverlay(pane)}
                     {autoPanel && autoPanel.pane === pane && (
                       <div
                         className="pointer-events-none absolute border-[1.5px] border-dashed border-amber-500"
@@ -1726,22 +1869,50 @@ export default function TutorialPage() {
                   </div>
                   {autoPanel && autoPanel.pane === pane && (
                     <div
-                      className="fixed z-30 flex w-48 flex-col gap-2 rounded border border-[#444] bg-[#20203a] p-2.5 shadow-lg"
-                      style={clampPopupPosition(autoPanel.panelClientX, autoPanel.panelClientY, 192, 140, 12)}
+                      className="fixed z-30 flex w-52 flex-col gap-2 rounded border border-[#444] bg-[#20203a] p-2.5 shadow-lg"
+                      style={clampPopupPosition(autoPanel.panelClientX, autoPanel.panelClientY, 208, 190, 12)}
                     >
-                      <p className="text-[11px] text-gray-300">Auto tolerance</p>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={autoPanel.tolerance}
-                        onChange={(e) => {
-                          const tolerance = Number(e.target.value);
-                          applyAuto(autoPanel.pane, autoPanel.box, tolerance);
-                          setAutoPanel({ ...autoPanel, tolerance });
-                        }}
-                        className="w-full accent-amber-500"
-                      />
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-gray-300" title="The HU values the region may contain. Suggested from the box: everything denser than the lung around it, calcification included.">
+                          HU range
+                        </span>
+                        <span className="font-mono text-amber-300" data-testid="auto-range">
+                          {autoPanel.range.low} … {autoPanel.range.high >= HU_MAX ? "max" : autoPanel.range.high}
+                        </span>
+                      </div>
+                      {(["low", "high"] as const).map((end) => (
+                        <label key={end} className="flex items-center gap-1.5">
+                          <span className="w-7 text-[10px] text-gray-500">{end === "low" ? "from" : "to"}</span>
+                          <input
+                            type="range"
+                            min={HU_MIN}
+                            max={HU_MAX}
+                            step={10}
+                            value={autoPanel.range[end]}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              const range = end === "low" ? { ...autoPanel.range, low: Math.min(v, autoPanel.range.high) } : { ...autoPanel.range, high: Math.max(v, autoPanel.range.low) };
+                              applyAuto(autoPanel.pane, autoPanel.box, range, autoPanel.fillHoles);
+                              setAutoPanel({ ...autoPanel, range });
+                            }}
+                            className="min-w-0 flex-1 accent-amber-500"
+                            aria-label={end === "low" ? "Lowest HU in the region" : "Highest HU in the region"}
+                            data-testid={`auto-range-${end}`}
+                          />
+                        </label>
+                      ))}
+                      <label className="flex items-center gap-1.5 text-[10px] text-gray-300" title="Also take whatever the region fully encloses -- a calcified core, an air bubble, a vessel seen end-on.">
+                        <input
+                          type="checkbox"
+                          checked={autoPanel.fillHoles}
+                          onChange={(e) => {
+                            applyAuto(autoPanel.pane, autoPanel.box, autoPanel.range, e.target.checked);
+                            setAutoPanel({ ...autoPanel, fillHoles: e.target.checked });
+                          }}
+                          data-testid="auto-fill-holes"
+                        />
+                        fill holes
+                      </label>
                       <div className="flex justify-end gap-1.5">
                         <button onClick={cancelAuto} className="rounded border border-[#444] px-2 py-0.5 text-[11px] text-gray-300 hover:bg-[#2a2a3e]">
                           Cancel (Esc)
@@ -1797,19 +1968,6 @@ export default function TutorialPage() {
             )}
           </div>
 
-          {!compact && (
-            <div data-guide="pane-sliders" className="flex flex-shrink-0 justify-center gap-px bg-[#111]">
-              {PANE_ORDER.map((pane) => {
-                if (!visiblePaneKeys.includes(pane)) return null;
-                return (
-                  <div key={pane} className="flex min-w-0" style={{ width: paneSize }}>
-                    <PaneSlider cfg={paneConfig[pane]} label={PANE_LABELS[pane]} />
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
           <div className="flex flex-shrink-0 items-center justify-between bg-black/60 px-3 py-1 text-[11px] text-gray-500" data-guide="footer">
             <span className="truncate">
               {coarse
@@ -1817,8 +1975,8 @@ export default function TutorialPage() {
                   ? "Review · look, decide, comment -- nothing here draws · Pinch=Zoom · Long-press=HU value · Two-finger tap=Jump all planes"
                   : `${TOOL_HELP[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Double-tap=Reset · Two-finger tap=Jump all planes`
                 : reviewMode
-                  ? "Review · look, decide, comment -- nothing here draws · Alt+click=HU value"
-                  : `${TOOL_HELP[tool]} · Alt+click=HU value`}
+                  ? "Review · look, decide, comment -- nothing here draws · Scroll=Slice · Ctrl+Scroll=Zoom · Right/middle-drag=Window · Alt+click=HU value"
+                  : `${TOOL_HELP[tool]} · Scroll=Slice · Ctrl+Scroll=Zoom · ${tool === "cursor" ? "Right" : "Middle"}-drag=Window · Ctrl+click=Jump all planes · Alt+click=HU value`}
             </span>
             <span className="flex-shrink-0 whitespace-nowrap">{activeLabel && activeObject ? `Active: ${activeLabel.name} ${activeObject.instanceNumber}` : ""}</span>
           </div>
@@ -2023,9 +2181,13 @@ export default function TutorialPage() {
               onChange={setOverlayOpacity}
               suffix="%"
             />
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-300" title="Coloured lines where the other two planes cut each pane, left open in the middle so they never cover the point you are looking at. Shortcut: C">
+              <input type="checkbox" checked={showCrosshair} onChange={(e) => setShowCrosshair(e.target.checked)} data-testid="crosshair-toggle" />
+              Crosshair <span className="text-gray-500">(C)</span>
+            </label>
           </SidebarSection>
 
-          <SidebarSection title="Window / level" guide="window" help="The greyscale mapping of Hounsfield units: pick the preset for the tissue you're looking at, or fine-tune with the sliders. Display only.">
+          <SidebarSection title="Window / level" guide="window" help="The greyscale mapping of Hounsfield units: pick the preset for the tissue you're looking at, fine-tune with the sliders, or drag on the image with the right mouse button (Cursor tool) or the middle button (any tool): up/down moves the level, left/right the width. Display only.">
             <div className="mb-3 flex flex-wrap gap-1.5">
               {WINDOW_PRESETS.map((preset) => (
                 <Tip key={preset.label} title={`${preset.label} window`} description={`${PRESET_HELP[preset.label] ?? ""} Center ${preset.center}, width ${preset.width}.`} side="left">
@@ -2047,6 +2209,43 @@ export default function TutorialPage() {
             <SliderRow label="Width" help="The HU range from black to white (window width): narrow = more contrast." value={windowWidth} min={1} max={4000} onChange={setWindowWidth} />
           </SidebarSection>
 
+          <SidebarSection title="Slab" guide="slab" help="Makes each pane a thick slice: several neighbouring slices averaged, or their brightest (MIP) or darkest (MinIP) voxel. Display only -- drawing still lands on the centre slice.">
+            <div className="mb-2 flex flex-wrap gap-1" role="group" aria-label="Slab thickness">
+              {SLAB_THICKNESSES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setSlab((prev) => ({ ...prev, thickness: t }))}
+                  className={`rounded border px-2 py-1 font-mono text-[11px] transition-colors ${
+                    slab.thickness === t ? "border-amber-500 bg-amber-500/20 text-amber-300" : "border-[#444] bg-[#2a2a3e] text-gray-300 hover:bg-[#333]"
+                  }`}
+                  aria-pressed={slab.thickness === t}
+                  data-testid={`slab-thickness-${t}`}
+                  title={t === 1 ? "A single slice" : `${t} slices`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1" role="group" aria-label="Slab projection">
+              {(Object.keys(SLAB_LABEL) as SlabMode[]).map((m) => (
+                <Tip key={m} title={SLAB_LABEL[m]} description={SLAB_HELP[m]} side="left">
+                  <button
+                    type="button"
+                    onClick={() => setSlab((prev) => ({ mode: m, thickness: prev.thickness > 1 ? prev.thickness : 5 }))}
+                    className={`flex-1 rounded border px-2 py-1 text-[11px] transition-colors ${
+                      slab.thickness > 1 && slab.mode === m ? "border-amber-500 bg-amber-500/20 text-amber-300" : "border-[#444] bg-[#2a2a3e] text-gray-300 hover:bg-[#333]"
+                    }`}
+                    aria-pressed={slab.thickness > 1 && slab.mode === m}
+                    data-testid={`slab-mode-${m}`}
+                  >
+                    {SLAB_LABEL[m]}
+                  </button>
+                </Tip>
+              ))}
+            </div>
+          </SidebarSection>
+
           <SidebarSection title="Sharpness" guide="sharpness" help="Enhances edges in the displayed image to make boundaries easier to follow. Display only.">
             <SliderRow label="Edge enhancement" help="0 is the original image; higher values sharpen boundaries." value={sharpness} min={0} max={5} step={0.1} onChange={setSharpness} />
           </SidebarSection>
@@ -2058,8 +2257,9 @@ export default function TutorialPage() {
                   setWindowCenter(DEFAULT_CENTER);
                   setWindowWidth(DEFAULT_WIDTH);
                   setSharpness(0);
+                  setSlab({ thickness: 1, mode: "avg" });
                 }}
-                disabled={originalAdjustment}
+                disabled={originalAdjustment && slab.thickness === 1}
                 className="rounded border border-[#444] px-2 py-1 text-[11px] text-gray-300 hover:bg-[#2a2a3e] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Reset to original
@@ -2118,32 +2318,35 @@ export default function TutorialPage() {
 
 /** One pane's slice control -- rendered inside the pane on a compact
  * layout and in the shared row below the panes otherwise. */
+/** A pane's slice control, standing along its right edge like the real
+ * viewer's (SliceControl's vertical variant). */
 function PaneSlider({ cfg, guide, label }: { cfg: { index: number; max: number; setIndex: (n: number) => void }; guide?: string; label: string }) {
   return (
-    <div className="flex min-w-0 flex-1 flex-shrink-0 items-center bg-[#111] px-2 py-1">
-      <SliceControl
-        index={cfg.index}
-        max={cfg.max}
-        onChange={cfg.setIndex}
-        label={label}
-        guide={guide}
-        accentClass="accent-amber-500"
-        counter={
-          <span className="w-14 flex-shrink-0 text-right text-[10px] text-gray-500">
-            {cfg.index + 1} / {cfg.max + 1}
-          </span>
-        }
-      />
-    </div>
+    <SliceControl
+      index={cfg.index}
+      max={cfg.max}
+      onChange={cfg.setIndex}
+      label={label}
+      guide={guide}
+      accentClass="accent-amber-500"
+      orientation="vertical"
+      counter={<span className="w-full text-center font-mono text-[10px] leading-tight text-gray-500">{cfg.index + 1}</span>}
+    />
   );
 }
 
 /** A pane's label row with the same Maximize/Restore and Hide buttons
  * the real viewer's panes carry. */
-function PaneHeader({ label, maximized, onMaximize, onHide }: { label: string; maximized: boolean; onMaximize: () => void; onHide: () => void }) {
+function PaneHeader({ label, maximized, onMaximize, onHide, color, badge }: { label: string; maximized: boolean; onMaximize: () => void; onHide: () => void; color?: string; badge?: string }) {
   return (
     <div className="flex flex-shrink-0 items-center justify-center gap-1.5 bg-[#111] py-1">
+      {color && <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} aria-hidden="true" />}
       <span className="text-center text-[11px] uppercase tracking-wider text-gray-400">{label}</span>
+      {badge && (
+        <span className="rounded bg-[#2a2a3e] px-1 font-mono text-[10px] text-amber-300" data-testid="pane-slab">
+          {badge}
+        </span>
+      )}
       <button onClick={onMaximize} className="text-gray-500 hover:text-white" title={maximized ? "Restore" : "Maximize"} data-testid="pane-maximize">
         {maximized ? <FullscreenExitIcon /> : <FullscreenIcon />}
       </button>
@@ -2158,6 +2361,9 @@ function PaneBox({
   label,
   size,
   slider,
+  stripWidth,
+  color,
+  badge,
   maximized,
   onMaximize,
   onHide,
@@ -2166,14 +2372,18 @@ function PaneBox({
   label: string;
   size: number;
   slider?: React.ReactNode;
+  stripWidth: number;
+  color?: string;
+  badge?: string;
   maximized: boolean;
   onMaximize: () => void;
   onHide: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-shrink-0 flex-col bg-black" style={{ width: size }}>
-      <PaneHeader label={label} maximized={maximized} onMaximize={onMaximize} onHide={onHide} />
+    <div className="flex flex-shrink-0 flex-col bg-black" style={{ width: size + stripWidth }}>
+      <PaneHeader label={label} maximized={maximized} onMaximize={onMaximize} onHide={onHide} color={color} badge={badge} />
+      <div className="flex min-h-0 flex-1">
       {/* A fixed size x size box, centred in whatever vertical space
           this pane got -- matches the real viewer's own pane container
           exactly (see ViewerPage.tsx's "flex flex-1 items-center
@@ -2182,10 +2392,12 @@ function PaneBox({
           same pixel coordinate space as the canvas instead of a CSS
           percentage that could drift from it once zoomed. */}
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">{children}</div>
-      {/* Only when the panes are laid out as a grid (see the row's own
-          comment): a shared slider row below a wrapped grid would no
-          longer sit under the pane it belongs to. */}
-      {slider}
+      {/* The slice control along the image's right edge, first slice at
+          the top -- the same as the real viewer. */}
+      <div className="flex flex-shrink-0 flex-col border-l border-[#333] bg-[#15152a]" style={{ width: stripWidth }}>
+        {slider}
+      </div>
+      </div>
     </div>
   );
 }

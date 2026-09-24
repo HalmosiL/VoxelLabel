@@ -99,6 +99,38 @@ export function coronalView(volume: Int16Array, y: number): Int16Array {
   return out;
 }
 
+/** A thick slice ("slab") on any pane, client-side -- the tutorial's
+ * counterpart of the backend's /series/{id}/slab.png: `thickness`
+ * neighbouring planes around `index` (an even number rounds up to stay
+ * centred; clipped at the volume's edges) projected by their mean, their
+ * maximum (MIP) or their minimum (MinIP). Laid out exactly like
+ * axialView/sagittalView/coronalView for the same pane. */
+export function slabView(volume: Int16Array, pane: PaneKey, index: number, thickness: number, mode: "avg" | "mip" | "minip"): Int16Array {
+  const half = Math.max(0, Math.floor(thickness / 2));
+  const size = pane === "axial" ? TUTORIAL_SLICES : TUTORIAL_SIZE;
+  const centre = Math.max(0, Math.min(Math.round(index), size - 1));
+  const lo = Math.max(0, centre - half);
+  const hi = Math.min(size - 1, centre + half);
+  const plane = (i: number) => (pane === "axial" ? axialView(volume, i) : pane === "sagittal" ? sagittalView(volume, i) : coronalView(volume, i));
+  const first = plane(lo);
+  const n = first.length;
+  const acc = new Float64Array(n);
+  for (let k = 0; k < n; k++) acc[k] = first[k];
+  for (let i = lo + 1; i <= hi; i++) {
+    const p = plane(i);
+    for (let k = 0; k < n; k++) {
+      const v = p[k];
+      if (mode === "mip") acc[k] = v > acc[k] ? v : acc[k];
+      else if (mode === "minip") acc[k] = v < acc[k] ? v : acc[k];
+      else acc[k] += v;
+    }
+  }
+  const out = new Int16Array(n);
+  const count = hi - lo + 1;
+  for (let k = 0; k < n; k++) out[k] = mode === "avg" ? Math.round(acc[k] / count) : acc[k];
+  return out;
+}
+
 /** A live, mutable view into one axial slice of the mask VOLUME -- a
  * subarray shares the same backing buffer, so painting into it commits
  * immediately, the same as axialView's own hu view. The mask volume is
