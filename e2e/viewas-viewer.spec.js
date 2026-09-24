@@ -112,7 +112,7 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
     // the count first so a transient empty render breaks out instead of
     // hanging a click() for 30s).
     let guard = 0;
-    while (await v.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 60) {
+    while (await v.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 200) {
       if ((await v.locator("aside button", { hasText: "Accept" }).count()) === 0) break;
       await v.locator("aside button", { hasText: "Accept" }).first().click(); await v.waitForTimeout(250);
     }

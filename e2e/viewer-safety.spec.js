@@ -11,6 +11,15 @@ async function token(user, pass) {
   return (await r.json()).access_token;
 }
 async function api(tok, url) { return (await fetch(url, { headers: { Authorization: `Bearer ${tok}` } })).json(); }
+// A fresh case has no labels yet: add one so there is an object to draw into.
+async function ensureObject(page) {
+  if ((await page.locator('[data-testid^="object-"]').count()) > 0) return;
+  await page.locator('input[placeholder="New label…"]').fill("QA structure");
+  await page.locator('input[placeholder="New label…"]').press("Enter");
+  await page.waitForTimeout(300);
+  await page.locator('[data-testid^="add-object-"]').first().click();
+  await page.waitForTimeout(300);
+}
 const results = [];
 const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra });
 
@@ -27,6 +36,7 @@ async function open(browser, url) {
 }
 
 async function paint(page) {
+  await ensureObject(page);
   await page.locator('[data-testid^="object-"]').first().click().catch(() => undefined);
   await page.locator('[data-testid="tool-paint"]').click();
   const box = await page.locator('[data-testid="pane-axial"]').boundingBox();
