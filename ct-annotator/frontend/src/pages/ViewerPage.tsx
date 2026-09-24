@@ -898,6 +898,10 @@ export default function ViewerPage() {
   // annotatorApi.ts), alongside the labels/objects that give the ids
   // meaning.
   const maskVolumeRef = useRef<Uint8Array | null>(null);
+  // The saved version the mask on screen started from (null = nothing was
+  // saved; undefined = not loaded yet). Sent with every save, so a newer
+  // save by another tab or person is refused rather than overwritten (J-11).
+  const loadedVersionRef = useRef<string | null | undefined>(undefined);
   const drawingRef = useRef(false);
   // Right mouse button always erases for the duration of that one stroke,
   // regardless of which tool is selected -- lets the user fix a slip
@@ -1112,7 +1116,9 @@ export default function ViewerPage() {
       let loadedLabels: SegLabel[] = [];
       let loadedObjects: SegObject[] = [];
       try {
-        const result = await fetchSegmentationVolume(seriesId);
+        const loaded = await fetchSegmentationVolume(seriesId);
+        loadedVersionRef.current = loaded.versionId;
+        const result = loaded.volume;
         if (result) {
           const unpacked = await gunzipToUint8Array(result.gzipBytes);
           if (unpacked.length === size) {
@@ -2321,7 +2327,8 @@ export default function ViewerPage() {
       const objectsToSave =
         status === "submitted" ? objects.map((o) => ({ ...o, review_status: undefined, reject_reason: undefined })) : objects;
       if (status === "submitted") setObjects(objectsToSave);
-      await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status);
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current);
+      loadedVersionRef.current = saved.id;
       trackAction(status === "submitted" ? "mark_annotated" : "save");
       refreshAnnotations();
 
@@ -2340,7 +2347,7 @@ export default function ViewerPage() {
         advanceToNextOpenCase();
       }
     } catch (err) {
-      setError(String(err));
+      setError(saveErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -2370,7 +2377,8 @@ export default function ViewerPage() {
     setError(null);
     try {
       const gzipBytes = await gzipUint8Array(volume);
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft");
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current);
+      loadedVersionRef.current = saved.id;
       const decision = reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve";
       // The per-object comments travel with the decision too (as the
       // AnnotationReview row's comment), so the annotator -- and the
@@ -2396,7 +2404,7 @@ export default function ViewerPage() {
       if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "review" });
       advanceToNextOpenCase();
     } catch (err) {
-      setError(String(err));
+      setError(saveErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -4072,6 +4080,15 @@ export default function ViewerPage() {
       {openDoc && <DocumentPanel doc={openDoc} onClose={() => setOpenDoc(null)} compact={compact} coarse={coarse} />}
     </div>
   );
+}
+
+/** A failed save, in words: a 409 means someone saved a newer version of
+ * this series after it was opened here (see loadedVersionRef). */
+function saveErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 409) {
+    return "Someone else saved a newer version of this series while you were working. Your changes were not saved -- reload to see their version before drawing again.";
+  }
+  return String(err);
 }
 
 // ── Objects sidebar (CVAT-style) ───────────────────────────────────────

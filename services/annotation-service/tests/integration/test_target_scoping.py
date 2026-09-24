@@ -58,3 +58,35 @@ def test_storage_keys_in_a_payload_must_be_the_viewers_own_masks(client, db):
         r = _create(client, study_a, series_a, {**MASK, "mask_volume_key": bad})
         assert r.status_code == 422, bad
     assert _create(client, study_a, series_a, {"mask_storage_key": "clinical-data/x.pdf"}).status_code == 422
+
+
+def test_a_save_based_on_an_old_version_is_refused_not_buried(client, db):
+    """J-11: two tabs/users saving the same series -- the second, still
+    based on what it loaded, gets 409 instead of silently winning."""
+    study_a, series_a, _ = make_study_with_series(db, "A", ALICE)
+    client.as_user(ALICE)
+
+    def save(base, key):
+        return client.post(
+            f"/annotations/studies/{study_a}",
+            params={"target_type": "series", "target_id": series_a, "type_name": "segmentation_volume", "base_version_id": base},
+            json={**MASK, "mask_volume_key": f"annotation-masks/{key}.gz"},
+        )
+
+    first = save("none", "one")
+    assert first.status_code == 200
+    v1 = first.json()["id"]
+    # a second "fresh" save (from a tab that also saw nothing) is refused
+    assert save("none", "stale").status_code == 409
+    second = save(v1, "two")
+    assert second.status_code == 200
+    # the tab still on v1 can't bury v2
+    assert save(v1, "three").status_code == 409
+    rows = client.get(f"/annotations/series/{series_a}").json()
+    assert [r["payload"]["mask_volume_key"] for r in rows] == ["annotation-masks/one.gz", "annotation-masks/two.gz"]
+    assert rows[-1]["created_at"] > rows[0]["created_at"]
+    from shared_models.models import Annotation
+
+    assert str(db.get(Annotation, second.json()["id"]).parent_version_id) == v1
+    # no base given: legacy callers still just append
+    assert _create(client, study_a, series_a).status_code == 200

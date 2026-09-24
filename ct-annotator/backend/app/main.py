@@ -32,7 +32,7 @@ from app.config import (
     RENDER_CACHE_TTL_SECONDS,
 )
 from app.dicom_render import SLAB_MODES, extract_metadata, parse_dataset, render_plane, render_png, rescaled_pixels, slab_plane
-from app.storage import download_bytes, download_object, presigned_mask_url, upload_mask, upload_mask_volume
+from app.storage import delete_mask_object, download_bytes, download_object, presigned_mask_url, upload_mask, upload_mask_volume
 
 app = FastAPI(title="CT Annotator Viewer -- thin backend")
 app.add_middleware(
@@ -559,6 +559,16 @@ class SaveMaskVolumeBody(BaseModel):
     # which rejects anything else (approved/rejected only ever come from
     # the reviewer-only /review endpoint).
     status: str = "draft"
+    # The version this save was edited from (get_mask_volume's version_id;
+    # "none" for a series that had nothing saved) -- a newer version saved
+    # meanwhile by another tab or person turns this save into a 409
+    # instead of silently burying it. Absent: no check (older clients).
+    base_version_id: str | None = None
+
+
+# A mask upload is gzip of one byte per voxel; generous for a 512x512x600
+# series, but a hard stop for anything absurd (E-13).
+_MAX_MASK_BASE64_CHARS = 128 * 1024 * 1024
 
 
 @app.get("/series/{series_id}/mask-volume")
@@ -584,18 +594,22 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         if type_names.get(a.get("type_id")) == "segmentation_volume" and _is_mask_key((a.get("payload") or {}).get("mask_volume_key"))
     ]
     if not volume_annotations:
-        return {"mask_gzip_base64": None, "labels": [], "objects": []}
+        return {"mask_gzip_base64": None, "labels": [], "objects": [], "version_id": None}
 
     # The list endpoint doesn't return created_at, so "latest" relies on
     # Postgres returning unindexed rows in roughly insertion order (true
     # in practice for this app's low write volume) -- the last element is
     # the best available approximation of "most recently saved".
-    payload = volume_annotations[-1]["payload"]
+    # annotation-service lists oldest-first by the save's own timestamp
+    # (then id), so the last one is the newest.
+    latest = volume_annotations[-1]
+    payload = latest["payload"]
     gzip_bytes = download_bytes(payload["mask_volume_key"])
     return {
         "mask_gzip_base64": base64.b64encode(gzip_bytes).decode(),
         "labels": payload["labels"],
         "objects": payload["objects"],
+        "version_id": latest["id"],
     }
 
 
@@ -603,21 +617,28 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
 async def save_mask_volume(
     series_id: str, body: SaveMaskVolumeBody, user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    gzip_bytes = base64.b64decode(body.mask_gzip_base64)
+    if len(body.mask_gzip_base64) > _MAX_MASK_BASE64_CHARS:
+        raise HTTPException(status_code=413, detail="That mask is far larger than any series could need")
+    try:
+        gzip_bytes = base64.b64decode(body.mask_gzip_base64, validate=True)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="mask_gzip_base64 is not valid base64") from None
+    # Can this caller see the series at all? Asked before anything is
+    # stored, so a refused save leaves no object behind (E-13).
+    await _require_series_access(series_id, user)
     storage_key = upload_mask_volume(gzip_bytes)
 
+    params = {"target_type": "series", "target_id": series_id, "type_name": "segmentation_volume", "status": body.status}
+    if body.base_version_id is not None:
+        params["base_version_id"] = body.base_version_id or "none"
     resp = await _http_client.post(
         f"{ANNOTATION_SERVICE_URL}/annotations/studies/{body.study_id}",
-        params={
-            "target_type": "series",
-            "target_id": series_id,
-            "type_name": "segmentation_volume",
-            "status": body.status,
-        },
+        params=params,
         json={"mask_volume_key": storage_key, "labels": body.labels, "objects": body.objects},
         headers=_auth_headers(user),
     )
     if resp.status_code >= 400:
+        delete_mask_object(storage_key)
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     return resp.json()
 

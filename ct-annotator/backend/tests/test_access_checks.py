@@ -131,3 +131,43 @@ def test_a_hungarian_filename_is_sent_in_a_header_safe_form():
     _, headers = main._safe_document_headers("lelet-ő-ű.pdf", "application/pdf")
     headers["Content-Disposition"].encode("latin-1")  # must not raise
     assert "filename*=UTF-8''lelet-%C5%91-%C5%B1.pdf" in headers["Content-Disposition"]
+
+
+def _save_body(base=None):
+    import base64 as b64
+
+    body = {"study_id": "st-1", "mask_gzip_base64": b64.b64encode(b"gz").decode(), "labels": [], "objects": []}
+    if base is not None:
+        body["base_version_id"] = base
+    return body
+
+
+def test_a_save_forwards_its_base_version_and_a_refused_one_leaves_no_object(api, monkeypatch):
+    uploaded, deleted, posted = [], [], []
+    monkeypatch.setattr(main, "upload_mask_volume", lambda data: uploaded.append(data) or "annotation-masks/new.gz")
+    monkeypatch.setattr(main, "delete_mask_object", lambda key: deleted.append(key))
+
+    async def post(url, params=None, json=None, headers=None):
+        posted.append(params)
+        return _Resp(409) if params.get("base_version_id") == "old" else _Resp(200, {"id": "v2", "status": "draft"})
+
+    api.fake.post = post
+    api.as_user(MEMBER)
+    assert api.post(f"/series/{SERIES}/mask-volume", json=_save_body("v1")).status_code == 201
+    assert posted[-1]["base_version_id"] == "v1"
+    assert api.post(f"/series/{SERIES}/mask-volume", json=_save_body("")).status_code == 201
+    assert posted[-1]["base_version_id"] == "none"
+    assert api.post(f"/series/{SERIES}/mask-volume", json=_save_body()).status_code == 201
+    assert "base_version_id" not in posted[-1]  # older clients: no check
+    r = api.post(f"/series/{SERIES}/mask-volume", json=_save_body("old"))
+    assert r.status_code == 409 and deleted == ["annotation-masks/new.gz"]
+
+
+def test_nothing_is_stored_for_someone_without_access_or_for_garbage(api, monkeypatch):
+    uploaded = []
+    monkeypatch.setattr(main, "upload_mask_volume", lambda data: uploaded.append(data) or "annotation-masks/x.gz")
+    api.as_user(OUTSIDER)
+    assert api.post(f"/series/{SERIES}/mask-volume", json=_save_body("v1")).status_code == 403
+    api.as_user(MEMBER)
+    assert api.post(f"/series/{SERIES}/mask-volume", json={**_save_body(), "mask_gzip_base64": "!!not base64!!"}).status_code == 422
+    assert uploaded == []

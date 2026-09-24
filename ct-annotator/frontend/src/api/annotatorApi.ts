@@ -368,6 +368,14 @@ export interface SegmentationVolume {
   objects: SegObject[];
 }
 
+/** What a series' saved segmentation is: the volume (null when nothing
+ * has been saved yet) and the id of that saved version -- sent back with
+ * the next save so a newer save by someone else is never overwritten. */
+export interface LoadedSegmentation {
+  volume: SegmentationVolume | null;
+  versionId: string | null;
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   const CHUNK_SIZE = 0x8000; // fromCharCode has an argument-count limit, so encode in chunks
@@ -389,15 +397,16 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
  * definitions), or null if none has been saved yet -- the caller
  * (ViewerPage) ungzips the volume into its own Uint8Array; this backend
  * never interprets voxel values or the label/object payload. */
-export async function fetchSegmentationVolume(seriesId: string): Promise<SegmentationVolume | null> {
-  const result = await apiFetch<{ mask_gzip_base64: string | null; labels: SegLabel[]; objects: SegObject[] }>(
+export async function fetchSegmentationVolume(seriesId: string): Promise<LoadedSegmentation> {
+  const result = await apiFetch<{ mask_gzip_base64: string | null; labels: SegLabel[]; objects: SegObject[]; version_id?: string | null }>(
     API.annotator,
     `/series/${seriesId}/mask-volume`
   );
-  // null = nothing saved for this series yet (a normal 200 answer, see
-  // the backend's get_mask_volume) -- start from an empty volume.
-  if (!result.mask_gzip_base64) return null;
-  return { gzipBytes: base64ToArrayBuffer(result.mask_gzip_base64), labels: result.labels, objects: result.objects };
+  const versionId = result.version_id ?? null;
+  // no volume = nothing saved for this series yet (a normal 200 answer,
+  // see the backend's get_mask_volume) -- start from an empty volume.
+  if (!result.mask_gzip_base64) return { volume: null, versionId };
+  return { volume: { gzipBytes: base64ToArrayBuffer(result.mask_gzip_base64), labels: result.labels, objects: result.objects }, versionId };
 }
 
 export function saveSegmentationVolume(
@@ -408,7 +417,10 @@ export function saveSegmentationVolume(
   objects: SegObject[],
   // "draft" (default) for a regular Save; "submitted" for "Mark as
   // Annotated" -- see ViewerPage's handleSave.
-  status: "draft" | "submitted" = "draft"
+  status: "draft" | "submitted" = "draft",
+  // The version this save was edited from (null = the series had nothing
+  // saved): a newer save made meanwhile makes this one fail with 409.
+  baseVersionId?: string | null
 ): Promise<{ id: string; status: string }> {
   return apiFetch(API.annotator, `/series/${seriesId}/mask-volume`, {
     method: "POST",
@@ -418,6 +430,7 @@ export function saveSegmentationVolume(
       labels,
       objects,
       status,
+      ...(baseVersionId !== undefined ? { base_version_id: baseVersionId ?? "" } : {}),
     }),
   });
 }

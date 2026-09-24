@@ -45,6 +45,16 @@ def upload_mask_volume(gzip_bytes: bytes) -> str:
     return key
 
 
+def delete_mask_object(storage_key: str) -> None:
+    """Best-effort removal of a mask upload whose save was then refused."""
+    if not storage_key.startswith(f"{_MASK_PREFIX}/"):
+        return
+    try:
+        _client.delete_object(Bucket=OBJECT_STORAGE_BUCKET, Key=storage_key)
+    except Exception:  # noqa: BLE001 -- an orphan is untidy, not an error for the user
+        pass
+
+
 def download_bytes(storage_key: str) -> bytes:
     return _client.get_object(Bucket=OBJECT_STORAGE_BUCKET, Key=storage_key)["Body"].read()
 

@@ -1,5 +1,6 @@
 """HTTP API for creating, listing and reviewing annotations."""
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from shared_auth import CurrentUser, get_current_user, require_study_role
@@ -51,6 +52,23 @@ def _study_of_target(db: Session, target_type: str, target_id: uuid.UUID) -> str
     return str(series.imaging_study.case.study_id)
 
 
+def _lock_target(db: Session, target_type: str, target_id: uuid.UUID) -> None:
+    """Serialises concurrent version-checked saves of one target."""
+    series_id = target_id
+    if target_type == "instance":
+        series_id = db.get(Instance, target_id).series_id
+    db.query(Series).filter(Series.id == series_id).with_for_update().one()
+
+
+def _latest_version(db: Session, target_type: str, target_id: uuid.UUID, study_id: str, type_id) -> Annotation | None:
+    return (
+        db.query(Annotation)
+        .filter_by(target_type=target_type, target_id=target_id, study_id=study_id, type_id=type_id)
+        .order_by(Annotation.created_at.desc(), Annotation.id.desc())
+        .first()
+    )
+
+
 def _check_storage_keys(payload: dict) -> None:
     for field in STORAGE_KEY_FIELDS:
         value = payload.get(field)
@@ -68,10 +86,16 @@ def create_annotation(
     type_name: str,
     payload: dict,
     status: AnnotationStatus = AnnotationStatus.DRAFT,
+    base_version_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Create a new annotation version, as draft (an in-progress save) or
+    """`base_version_id`: the version this save was edited from ("none"
+    when the target had no annotation of this type yet). When given, the
+    save is refused with 409 if someone saved a newer version meanwhile --
+    instead of silently burying their work (J-11). Omitted: no check.
+
+    Create a new annotation version, as draft (an in-progress save) or
     submitted (the annotator explicitly marking it done and ready for
     review -- ct-annotator's "Mark as annotated") -- never approved or
     rejected, which only the reviewer-only /review endpoint below can
@@ -105,6 +129,18 @@ def create_annotation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     _check_storage_keys(payload)
 
+    parent_id = None
+    if base_version_id is not None:
+        _lock_target(db, target_type, target_id)
+        latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id)
+        expected = None if base_version_id in ("", "none") else base_version_id
+        if (str(latest.id) if latest else None) != expected:
+            raise HTTPException(
+                status_code=409,
+                detail="Someone saved a newer version of this while you were working -- reload to see it before saving again.",
+            )
+        parent_id = latest.id if latest else None
+
     annotation = Annotation(
         target_type=target_type,
         target_id=target_id,
@@ -113,6 +149,11 @@ def create_annotation(
         type_id=annotation_type.id,
         payload=payload,
         status=status,
+        parent_version_id=parent_id,
+        # The wall-clock moment of this save, not the transaction start
+        # (server default now()): saves in quick succession must stay in
+        # the order they happened, so "the latest" is unambiguous.
+        created_at=datetime.now(timezone.utc),
     )
     db.add(annotation)
     db.commit()
@@ -168,12 +209,18 @@ def list_annotations_for_target(
     annotations = (
         db.query(Annotation)
         .filter_by(target_type=target_type, target_id=target_id, study_id=study_id)
-        .order_by(Annotation.created_at)
+        .order_by(Annotation.created_at, Annotation.id)
         .all()
     )
 
     return [
-        {"id": str(a.id), "type_id": str(a.type_id), "payload": a.payload, "status": a.status.value}
+        {
+            "id": str(a.id),
+            "type_id": str(a.type_id),
+            "payload": a.payload,
+            "status": a.status.value,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
         for a in annotations
     ]
 
