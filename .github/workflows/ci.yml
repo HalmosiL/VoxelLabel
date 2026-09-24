@@ -115,6 +115,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@localhost:5432/ctplatform_test
       NOTIFICATIONS_POLLER_ENABLED: "0"
+      NEW_CASES_POLLER_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

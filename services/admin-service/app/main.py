@@ -31,6 +31,7 @@ from app.notifications import start_poller
 from app.pipeline_health import router as pipeline_health_router
 from app.study_analytics import router as study_analytics_router
 from app.usage import router as usage_router
+from app.workflow_new_cases import start_new_cases_poller
 
 
 @asynccontextmanager
@@ -38,6 +39,8 @@ async def lifespan(_: FastAPI):
     # The notification service's observation loop runs inside this
     # process -- see app/notifications/poller.py.
     start_poller()
+    # Quick-imported cases reach the board -- see app/workflow_new_cases.py.
+    start_new_cases_poller()
     yield
 
 

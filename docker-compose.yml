@@ -226,6 +226,9 @@ services:
       # The notification service's background loop (app/notifications)
       # runs in this process; set to 0 on all but one replica.
       NOTIFICATIONS_POLLER_ENABLED: "1"
+      # Pushes quick-imported cases through the workflow board
+      # (app/workflow_new_cases.py); likewise 0 on all but one replica.
+      NEW_CASES_POLLER_ENABLED: "1"
     volumes:
       - db-backups:/backups
     ports:
