@@ -11,8 +11,10 @@ import json
 
 import httpx
 from mcp import Client
+from shared_models.database import SessionLocal
 
 from app.core.config import settings
+from app.llm_tool_scope import RefusedResult, ToolCallRefused, scope_tool_call
 
 _LLM_SYSTEM_PROMPT = (
     'You are the Clinical Trial Assistant for workflow card "{card_id}" on a CT '
@@ -491,7 +493,14 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
                     for index, call in enumerate(tool_calls):
                         name = call["function"]["name"]
                         args = call["function"]["arguments"]  # already a parsed dict, not a JSON string
-                        result = await mcp_client.call_tool(name, args)
+                        # Pinned to this card's study and tool set before
+                        # the MCP server ever sees it -- see llm_tool_scope.
+                        try:
+                            with SessionLocal() as scope_db:
+                                args = scope_tool_call(scope_db, card.study_id, allowed_tool_names, name, args)
+                            result = await mcp_client.call_tool(name, args)
+                        except ToolCallRefused as refused:
+                            result = RefusedResult(str(refused))
                         result_data = _tool_result_data(result)
                         if name in _BOARD_MUTATING_TOOLS and not result.is_error:
                             board_changed = True
