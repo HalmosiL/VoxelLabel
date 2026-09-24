@@ -24,10 +24,24 @@ MAX_CSS_BYTES = 3_000_000
 # only needs the latest, a replay falls back to the layout outline.
 KEEP_PER_SCREEN = 300
 
-_SCRIPT = re.compile(r"<(script|noscript|template)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+_SCRIPT = re.compile(r"<(script|noscript|template|style)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+# An opening tag with no closing one (<script src=...> cut short) -- the
+# element's content can't be trusted either, so the tag goes on its own.
+_SCRIPT_OPEN = re.compile(r"</?(script|noscript|template|style)\b[^>]*>", re.IGNORECASE)
+# SVG elements that fetch what they reference.
+_SVG_FETCH = re.compile(r"</?(image|use|feimage)\b[^>]*>", re.IGNORECASE)
+# Every attribute that makes a browser load or send something.
+_FETCH_ATTR = re.compile(
+    r"""[\s/](?:href|xlink:href|src|srcset|poster|background|action|formaction|data|ping|lowsrc|dynsrc|longdesc|manifest|codebase|archive|cite|srcdoc)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""",
+    re.IGNORECASE,
+)
+# CSS functions besides url() that load images.
+_CSS_FETCH_FUNC = re.compile(r"(?:-webkit-)?(?:image-set|cross-fade|element)\s*\((?:[^()]|\([^()]*\))*\)", re.IGNORECASE)
+_STYLE_BREAKOUT = re.compile(r"</?\s*style", re.IGNORECASE)
 _MEDIA_PAIRED = re.compile(r"<(canvas|video|audio|iframe|object|picture)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 _MEDIA_VOID = re.compile(r"<(img|embed|source|link|meta|base)\b[^>]*/?>", re.IGNORECASE)
-_EVENT_ATTR = re.compile(r"""\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.IGNORECASE)
+# `[\s/]`: in HTML "<img/src=x>" is an attribute just as "<img src=x>" is.
+_EVENT_ATTR = re.compile(r"""[\s/]on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.IGNORECASE)
 _VALUE_ATTR = re.compile(r"""(<input\b[^>]*?)\svalue\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.IGNORECASE)
 _TEXTAREA = re.compile(r"(<textarea\b[^>]*>).*?(</textarea\s*>)", re.IGNORECASE | re.DOTALL)
 _CSS_URL = re.compile(r"url\(\s*(['\"]?)[^)]*\1\s*\)", re.IGNORECASE)
@@ -40,6 +54,13 @@ SHOT_MARK = "data-vl-shot"
 _SHOT = re.compile(
     r'<img data-vl-shot="" (?:class="[^"<>]*" )?src="data:image/(?:webp|png|jpeg);base64,[A-Za-z0-9+/=]+" style="[^"<>()]*">'
 )
+
+# First thing in every snapshot document: nothing in it may load anything
+# from anywhere (images only as data: URIs, styles only inline), whatever
+# slipped past the cleaning below -- and old snapshots are covered too,
+# since the document is assembled on every read.
+_CSP = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:\">"
+_MAX_CLEAN_PASSES = 10
 
 # Makes the frozen page sit still and never scroll inside its frame.
 _FREEZE = "<style>html,body{overflow:hidden!important}*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}</style>"
@@ -76,13 +97,23 @@ def clean_html(html: str, *, keep_images: bool = False) -> str:
             return f"\x00shot{len(kept) - 1}\x00"
 
         html = _SHOT.sub(park, html.replace("\x00", ""))
-    html = _SCRIPT.sub("", html)
-    html = _MEDIA_PAIRED.sub('<span data-vl-image="">image</span>', html)
-    html = _MEDIA_VOID.sub("", html)
-    html = _EVENT_ATTR.sub("", html)
-    html = _VALUE_ATTR.sub(r"\1", html)
-    html = _TEXTAREA.sub(r"\1\2", html)
-    html = _STYLE_BG_URL.sub("none", html)
+    # Repeated until nothing changes: removing one tag can join the text
+    # around it into a new one (J-10), which the next pass then removes.
+    for _ in range(_MAX_CLEAN_PASSES):
+        before = html
+        html = _SCRIPT.sub("", html)
+        html = _SCRIPT_OPEN.sub("", html)
+        html = _MEDIA_PAIRED.sub('<span data-vl-image="">image</span>', html)
+        html = _MEDIA_VOID.sub("", html)
+        html = _SVG_FETCH.sub("", html)
+        html = _EVENT_ATTR.sub("", html)
+        html = _FETCH_ATTR.sub("", html)
+        html = _VALUE_ATTR.sub(r"\1", html)
+        html = _TEXTAREA.sub(r"\1\2", html)
+        html = _STYLE_BG_URL.sub("none", html)
+        html = _CSS_FETCH_FUNC.sub("none", html)
+        if html == before:
+            break
     for i, tag in enumerate(kept):
         html = html.replace(f"\x00shot{i}\x00", tag)
     return html.replace("\x00", "")
@@ -96,7 +127,12 @@ def has_images(cleaned_html: str) -> bool:
 
 def clean_css(css: str) -> str:
     """No background images, fonts or imports -- nothing fetched from anywhere."""
-    return _CSS_URL.sub("none", _CSS_IMPORT.sub("", css))
+    css = _CSS_URL.sub("none", _CSS_IMPORT.sub("", css))
+    css = _CSS_FETCH_FUNC.sub("none", css)
+    # It goes inside a <style> element: it must not be able to close it or
+    # form a tag there ("<" is escaped the CSS way, which keeps its meaning
+    # inside a CSS string).
+    return _STYLE_BREAKOUT.sub("", css).replace("<", "\\3c ")
 
 
 def placeholder_css() -> str:
@@ -108,13 +144,32 @@ def placeholder_css() -> str:
     )
 
 
+_BODY = re.compile(r"<body\b([^>]*)>(.*?)(?:</body\s*>|\Z)", re.IGNORECASE | re.DOTALL)
+_HEAD = re.compile(r"<head\b.*?(?:</head\s*>|\Z)", re.IGNORECASE | re.DOTALL)
+_HTML_TAG = re.compile(r"</?html\b[^>]*>|<!doctype[^>]*>", re.IGNORECASE)
+_HTML_OPEN = re.compile(r"<html\b([^>]*)>", re.IGNORECASE)
+_CLASS_ATTR = re.compile(r"""\sclass\s*=\s*("[^"<>]*"|'[^'<>]*')""", re.IGNORECASE)
+
+
+def _class_of(attrs: str | None) -> str:
+    m = _CLASS_ATTR.search(attrs or "")
+    return f" class={m.group(1)}" if m else ""
+
+
 def document(html: str, css: str | None) -> str:
-    """One self-contained HTML document for a sandboxed iframe's srcdoc."""
-    styles = f"<style>{css or ''}</style><style>{placeholder_css()}</style>{_FREEZE}"
-    head_end = re.search(r"</head\s*>", html, re.IGNORECASE)
-    if head_end:
-        return html[: head_end.start()] + styles + html[head_end.start() :]
-    return f"<!doctype html><html><head><meta charset='utf-8'>{styles}</head><body>{html}</body></html>"
+    """One self-contained HTML document for a sandboxed iframe's srcdoc.
+    Its head is always ours -- the no-fetch CSP first, then the styles --
+    and only the snapshot's <body> content (and the html/body classes the
+    page's CSS may hang off) comes from the stored snapshot."""
+    body_match = _BODY.search(html)
+    if body_match:
+        body_class, body = _class_of(body_match.group(1)), body_match.group(2)
+    else:
+        body_class, body = "", _HTML_TAG.sub("", _HEAD.sub("", html))
+    html_match = _HTML_OPEN.search(html)
+    html_class = _class_of(html_match.group(1)) if html_match else ""
+    styles = f"<style>{clean_css(css or '')}</style><style>{placeholder_css()}</style>{_FREEZE}"
+    return f"<!doctype html><html{html_class}><head><meta charset='utf-8'>{_CSP}{styles}</head><body{body_class}>{body}</body></html>"
 
 
 def gz(text: str) -> bytes:

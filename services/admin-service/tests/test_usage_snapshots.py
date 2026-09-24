@@ -79,3 +79,45 @@ def test_a_smuggled_placeholder_token_cannot_bring_back_a_dropped_tag():
     html = f"<body>\x00shot0\x00<script>x()</script>{SHOT}</body>"
     out = s.clean_html(html, keep_images=True)
     assert out.count("<img") == 1 and "<script" not in out and "\x00" not in out
+
+
+EVIL = "evil.example"
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        # a stripped inner tag joins its surroundings into a new one (J-10)
+        f"<body><im<script>x</script>g src=//{EVIL}/a.png></body>",
+        f"<body><im<noscript>x</noscript>g src=//{EVIL}/b.png></body>",
+        # "/" as the attribute separator
+        f"<body><img/src=//{EVIL}/c.png><div/onmouseover=x()>d</div></body>",
+        # SVG elements that fetch (J-09)
+        f'<body><svg><image href="//{EVIL}/d.png"/><use xlink:href="//{EVIL}/e.svg#x"/></svg></body>',
+        # inline <style> and CSS image functions
+        f"<body><style>@import 'https://{EVIL}/f.css'; .a{{background:url(//{EVIL}/g.png)}}</style>"
+        f'<div style="background-image: image-set(\'//{EVIL}/h.png\' 1x)">x</div></body>',
+        f'<body><a href="https://{EVIL}/i">link</a><form action="https://{EVIL}/j"><button formaction="//{EVIL}/k">b</button></form></body>',
+        f'<body><iframe srcdoc="<img src=//{EVIL}/l.png>"></iframe><object data="//{EVIL}/m"></object></body>',
+    ],
+)
+def test_nothing_that_could_fetch_from_elsewhere_survives_cleaning(html):
+    out = s.clean_html(html)
+    assert EVIL not in out, out
+    assert "<script" not in out.lower() and "onmouseover" not in out
+
+
+def test_a_style_breakout_is_neutralised_in_the_stylesheet():
+    css = f".a{{color:red}}</style><img src=//{EVIL}/x.png><style>.b{{}}"
+    doc = s.document("<body><p>x</p></body>", css)
+    head = doc.split("</head>")[0]
+    assert doc.count("</style>") == doc.count("<style>") and "<img" not in head
+
+
+def test_the_document_head_is_always_ours_with_a_no_fetch_policy_first():
+    stored = f'<html class="dark"><head><meta http-equiv="refresh" content="0;url=//{EVIL}"><link rel=stylesheet href=//{EVIL}/x.css></head><body class="app"><p>hi</p></body></html>'
+    doc = s.document(stored, ".p{color:red}")
+    head = doc.split("</head>")[0]
+    assert head.index("Content-Security-Policy") < head.index("<style>")
+    assert "default-src 'none'" in head and EVIL not in doc
+    assert '<html class="dark">' in doc and '<body class="app"><p>hi</p></body>' in doc
