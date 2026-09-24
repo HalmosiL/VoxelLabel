@@ -23,6 +23,37 @@ class DicomValidationError(Exception):
     """Raised when an uploaded file is missing required DICOM tags."""
 
 
+class ForeignImagingError(DicomValidationError):
+    """The file's DICOM study or series already belongs to another case
+    (possibly in another study). StudyInstanceUID/SeriesInstanceUID are
+    unique platform-wide, so ingesting it would attach the images to that
+    other case -- somewhere the uploader may not even have access to."""
+
+
+def foreign_imaging_owner(db: Session, dataset, case: Case | None = None, study_id: str | None = None) -> str | None:
+    """Why this file can't go into `case` (or, before a case is chosen, into
+    `study_id`), or None when it can: its StudyInstanceUID or
+    SeriesInstanceUID is already filed under a different case."""
+    imaging = db.query(ImagingStudy).filter_by(study_instance_uid=dataset.StudyInstanceUID).first()
+    if imaging is not None:
+        if case is not None and imaging.case_id != case.id:
+            return "This DICOM study is already filed under another case" + (
+                " in a different study" if imaging.case.study_id != case.study_id else ""
+            )
+        if case is None and study_id is not None and str(imaging.case.study_id) != str(study_id):
+            return "This DICOM study is already filed under a case in a different study"
+    series = db.query(Series).filter_by(series_instance_uid=dataset.SeriesInstanceUID).first()
+    if series is not None:
+        owner = series.imaging_study
+        if owner.study_instance_uid != dataset.StudyInstanceUID:
+            return "This DICOM series already belongs to a different DICOM study"
+        if case is not None and owner.case_id != case.id:
+            return "This DICOM series is already filed under another case"
+        if case is None and study_id is not None and str(owner.case.study_id) != str(study_id):
+            return "This DICOM series is already filed under a case in a different study"
+    return None
+
+
 def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
     """Process one staged DICOM file end to end. Idempotent: re-ingesting an
     already-known SOPInstanceUID is a no-op that reports "duplicate".
@@ -70,6 +101,10 @@ def _ingest_one_instance(db: Session, case: Case, dataset) -> dict:
     existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
     if existing is not None:
         return {"status": "duplicate", "instance_id": str(existing.id)}
+    # Before anything is stored: never attach the images to someone else's case.
+    reason = foreign_imaging_owner(db, dataset, case=case)
+    if reason:
+        raise ForeignImagingError(reason)
 
     storage_key = f"{dataset.StudyInstanceUID}/{dataset.SeriesInstanceUID}/{dataset.SOPInstanceUID}.dcm"
     upload_pixel_data(storage_key, dataset)

@@ -27,7 +27,7 @@ from shared_models.models import Case, ImagingStudy, Instance, Patient, PatientI
 from sqlalchemy.orm import Session
 
 from app.deidentify import apply_deidentification_profile
-from app.pipeline import REQUIRED_TAGS, DicomValidationError, _ingest_one_instance
+from app.pipeline import REQUIRED_TAGS, DicomValidationError, ForeignImagingError, _ingest_one_instance, foreign_imaging_owner
 from app.storage import delete_staged_file, download_staged_file
 
 
@@ -160,6 +160,12 @@ def run_quick_import(
                 if db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first() is not None:
                     delete_staged_file(staging_key)
                     continue
+
+                # A DICOM study already filed in another study: refuse it
+                # before a case is made for it here (it would stay empty).
+                reason = foreign_imaging_owner(db, dataset, study_id=study_id)
+                if reason:
+                    raise ForeignImagingError(reason)
 
                 case, created = _resolve_or_create_case(db, study_id, dataset)
                 # Committed immediately, independent of this file's own
