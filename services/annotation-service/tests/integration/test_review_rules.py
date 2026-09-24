@@ -106,3 +106,31 @@ def test_a_long_review_comment_travels_in_the_body(client, db):
     client.as_user(REVIEWER)
     r = client.post(f"/annotations/{again}/review", params={"decision": "approve"}, json={"comment": "x" * 200_001})
     assert r.status_code == 422 and "too long" in r.json()["detail"]
+
+
+def test_concurrent_decisions_record_one_review(client, db):
+    """J-12: six reviews fired at once gave four 200s and four review rows.
+    Three rounds, since a race only shows up some of the time."""
+    import threading
+
+    from shared_models.models import AnnotationReview
+
+    study, series = _setup(db)
+    for _ in range(3):
+        client.as_user(ALICE)
+        submitted = _save(client, study, series, status="submitted").json()["id"]
+        client.as_user(REVIEWER)
+        codes, barrier = [], threading.Barrier(8)
+
+        def decide(annotation_id=submitted):
+            barrier.wait()
+            codes.append(_decide(client, annotation_id).status_code)
+
+        threads = [threading.Thread(target=decide) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert sorted(codes) == [200] + [409] * 7, codes
+    db.expire_all()
+    assert db.query(AnnotationReview).count() == 3

@@ -317,7 +317,10 @@ def review_annotation(
         comment = body.comment
     if comment is not None and len(comment) > MAX_REVIEW_COMMENT_CHARS:
         raise HTTPException(status_code=422, detail=f"The review comment is too long (at most {MAX_REVIEW_COMMENT_CHARS:,} characters)")
-    annotation = db.get(Annotation, annotation_id)
+    # Row lock: concurrent decisions (a double click, two reviewers at
+    # once) are taken one after the other, so the second sees the first's
+    # decision and gets 409 instead of recording a duplicate review (J-12).
+    annotation = db.query(Annotation).filter(Annotation.id == annotation_id).with_for_update().first()
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found")
 
