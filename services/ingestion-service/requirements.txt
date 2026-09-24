@@ -4,6 +4,9 @@ python-multipart>=0.0.9
 celery>=5.3
 redis>=5.0
 pydicom>=3.0
+# JPEG Lossless / JPEG-LS decoder: the usual syntax of archived CT (B-20)
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
 numpy>=1.26
 Pillow>=10.0
 boto3>=1.34

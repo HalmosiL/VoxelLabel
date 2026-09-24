@@ -181,3 +181,16 @@ def test_slab_is_clipped_at_the_volume_edge_and_rejects_nonsense():
         slab_plane(vol, "oblique", 0, 3, "avg")
     with pytest.raises(ValueError):
         slab_plane(vol, "axial", 0, 3, "median")
+
+
+def test_jpeg_lossless_ct_renders() -> None:
+    """B-20: JPEG Lossless SV1 (1.2.840.10008.1.2.4.70) -- the usual syntax
+    of archived CT -- decodes and renders instead of a 500. The fixture is
+    a synthetic 64x64 gradient, (x + y) * 10."""
+    import pathlib
+
+    ds = pydicom.dcmread(pathlib.Path(__file__).parent / "fixtures" / "ct_jpeg_lossless.dcm")
+    assert ds.file_meta.TransferSyntaxUID == "1.2.840.10008.1.2.4.70"
+    yy, xx = np.mgrid[0:64, 0:64]
+    assert np.array_equal(ds.pixel_array, (xx + yy) * 10)
+    assert render_png(ds, None, None).startswith(_PNG_MAGIC)

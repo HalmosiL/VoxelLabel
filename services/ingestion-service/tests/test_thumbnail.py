@@ -51,3 +51,18 @@ def test_raises_thumbnail_generation_error_when_pixel_array_unavailable() -> Non
 
     with pytest.raises(ThumbnailGenerationError):
         generate_thumbnail(_BrokenDataset())
+
+
+def test_jpeg_lossless_ct_gets_a_thumbnail() -> None:
+    """B-20: JPEG Lossless SV1 (1.2.840.10008.1.2.4.70) -- the usual syntax
+    of archived CT -- decodes, so it gets a thumbnail like any other CT.
+    The fixture is a synthetic 64x64 gradient, (x + y) * 10."""
+    import pathlib
+
+    import pydicom
+
+    ds = pydicom.dcmread(pathlib.Path(__file__).parent / "fixtures" / "ct_jpeg_lossless.dcm")
+    assert ds.file_meta.TransferSyntaxUID == "1.2.840.10008.1.2.4.70"
+    yy, xx = np.mgrid[0:64, 0:64]
+    assert np.array_equal(ds.pixel_array, (xx + yy) * 10)
+    assert Image.open(io.BytesIO(generate_thumbnail(ds))).format == "PNG"
