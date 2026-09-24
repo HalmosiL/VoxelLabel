@@ -65,6 +65,18 @@ def download_object(storage_key: str) -> bytes:
     return _client.get_object(Bucket=settings.object_storage_bucket, Key=storage_key)["Body"].read()
 
 
+def object_exists(storage_key: str) -> bool:
+    """Whether a key is really in the bucket (a DB row can point at an
+    object that's gone -- see app/thumbnail_backfill.py)."""
+    try:
+        _client.head_object(Bucket=settings.object_storage_bucket, Key=storage_key)
+        return True
+    except _client.exceptions.ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
 def upload_export_object(storage_key: str, data: bytes) -> None:
     """Uploads one file (a Series' `.npy` array, or the export's own
     manifest.json) under an `exports/{export_id}/` prefix -- see app/

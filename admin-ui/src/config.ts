@@ -18,6 +18,18 @@ export const API = {
   admin: clinician?.adminApi ?? import.meta.env.VITE_ADMIN_API ?? "http://localhost:8004",
 };
 
+/** A stored object's URL as the browser should load it. The services now
+ * hand out signed links to their own API as a path ("/data/objects?...",
+ * "/admin/objects?...") -- served through the API the browser already
+ * reaches, not straight from MinIO -- so a path gets that API's base in
+ * front; anything absolute is left as it is. */
+export function assetUrl(base: string, url: string): string;
+export function assetUrl(base: string, url: string | null): string | null;
+export function assetUrl(base: string, url: string | null): string | null {
+  if (!url) return url;
+  return url.startsWith("/") ? `${base.replace(/\/$/, "")}${url}` : url;
+}
+
 /** The standalone ct-annotator repo's frontend -- a separate app/repo that
  * calls this platform's services under the caller's own Keycloak token
  * (see ~/Desktop/ct-annotator). Not one of this app's own backends. */

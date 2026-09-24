@@ -17,7 +17,7 @@ import time
 
 import httpx
 import numpy as np
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -615,7 +615,30 @@ async def list_series(imaging_study_id: str, user: CurrentUser = Depends(get_cur
 
 @app.get("/series/{series_id}/instances")
 async def list_instances(series_id: str, user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    return await _proxy_get(f"{DATA_SERVICE_URL}/data/series/{series_id}/instances", user)
+    instances = await _proxy_get(f"{DATA_SERVICE_URL}/data/series/{series_id}/instances", user)
+    # data-service's thumbnails are signed links to its own /data/objects,
+    # which this app's browser doesn't talk to -- point them at /objects
+    # below, which relays them.
+    for instance in instances:
+        url = instance.get("thumbnail_url")
+        if isinstance(url, str) and url.startswith("/data/objects?"):
+            instance["thumbnail_url"] = "/objects?" + url.split("?", 1)[1]
+    return instances
+
+
+@app.get("/objects")
+async def relay_object(request: Request) -> Response:
+    """A data-service signed object link (a thumbnail), relayed. The
+    signature is the access check -- data-service verifies it -- so no
+    token, and it works as a plain <img src>."""
+    resp = await _http_client.get(f"{DATA_SERVICE_URL}/data/objects", params=dict(request.query_params))
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("content-type", "application/octet-stream"),
+        headers={"Cache-Control": resp.headers.get("cache-control", "private, max-age=3600")},
+    )
 
 
 @app.get("/cases/{case_id}/documents")

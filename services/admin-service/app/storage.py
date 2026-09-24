@@ -1,16 +1,15 @@
 """Object storage access for generic (non-DICOM) files this service owns
 the write side of: clinical data files and study cover images.
 
-Two clients, deliberately: `_client` (internal hostname) performs real
-uploads from inside the container; `_public_client` (browser-reachable
-hostname) only ever signs presigned URLs handed back to the browser --
-signing needs no network call, so it's safe to point at a host this
-container itself can't reach. Same reasoning as data-service's
-OBJECT_STORAGE_ENDPOINT -- see services/data-service/app/storage.py.
+One client, on the internal hostname: it uploads, and it streams what
+the browser is shown (cover images) behind signed links to this API
+(study_cover_image_link, app/api/objects.py) -- the browser never needs
+to reach MinIO itself.
 """
 import mimetypes
 
 import boto3
+from shared_auth.object_links import link_secret, sign_object_link
 
 from app.core.config import settings
 
@@ -21,12 +20,6 @@ _client = boto3.client(
     aws_secret_access_key=settings.object_storage_secret_key,
 )
 
-_public_client = boto3.client(
-    "s3",
-    endpoint_url=settings.object_storage_public_endpoint,
-    aws_access_key_id=settings.object_storage_access_key,
-    aws_secret_access_key=settings.object_storage_secret_key,
-)
 
 
 def upload_clinical_data_file(storage_key: str, data: bytes) -> None:
@@ -83,9 +76,17 @@ def upload_study_cover_image(storage_key: str, data: bytes) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data)
 
 
-def presigned_study_cover_image_url(storage_key: str, expires_in: int = 300) -> str:
-    return _public_client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": settings.object_storage_bucket, "Key": storage_key},
-        ExpiresIn=expires_in,
-    )
+LINK_SECRET = link_secret(settings.object_storage_secret_key)
+
+
+def study_cover_image_link(storage_key: str) -> str:
+    """A signed link to /admin/objects (a path -- the browser prefixes the
+    admin API's base URL); see app/api/objects.py."""
+    return sign_object_link("/admin/objects", storage_key, LINK_SECRET)
+
+
+def read_object(storage_key: str):
+    """(streaming body, content type, length) of a stored object, over the internal endpoint."""
+    obj = _client.get_object(Bucket=settings.object_storage_bucket, Key=storage_key)
+    content_type = obj.get("ContentType") or mimetypes.guess_type(storage_key)[0] or "application/octet-stream"
+    return obj["Body"], content_type, obj.get("ContentLength")

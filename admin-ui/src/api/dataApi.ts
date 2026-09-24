@@ -1,4 +1,4 @@
-import { API } from "../config";
+import { API, assetUrl } from "../config";
 import { apiFetch, apiFetchWithTotal } from "./client";
 
 export interface CaseSummary {
@@ -128,16 +128,18 @@ export function listInstances(seriesId: string): Promise<Instance[]> {
   return apiFetch(base, `/data/series/${seriesId}/instances`);
 }
 
-export function getPixelDataUrl(instanceId: string): Promise<{ url: string }> {
-  return apiFetch(base, `/data/instances/${instanceId}/pixel-data-url`);
+export async function getPixelDataUrl(instanceId: string): Promise<{ url: string }> {
+  const r = await apiFetch<{ url: string }>(base, `/data/instances/${instanceId}/pixel-data-url`);
+  return { ...r, url: assetUrl(base, r.url) };
 }
 
 export function listClinicalDataItems(caseId: string): Promise<ClinicalDataItem[]> {
   return apiFetch(base, `/data/cases/${caseId}/clinical-data-items`);
 }
 
-export function getClinicalDataFileUrl(itemId: string): Promise<{ url: string }> {
-  return apiFetch(base, `/data/clinical-data-items/${itemId}/file-url`);
+export async function getClinicalDataFileUrl(itemId: string): Promise<{ url: string }> {
+  const r = await apiFetch<{ url: string }>(base, `/data/clinical-data-items/${itemId}/file-url`);
+  return { ...r, url: assetUrl(base, r.url) };
 }
 
 export function listPatients(): Promise<PatientSummary[]> {

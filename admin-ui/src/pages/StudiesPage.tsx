@@ -11,6 +11,7 @@ import {
   uploadStudyCoverImage,
 } from "../api/adminApi";
 import { ApiError, describeApiError } from "../api/client";
+import { API, assetUrl } from "../config";
 import { roleLabel, useMe } from "../auth/MeContext";
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
@@ -305,7 +306,7 @@ function StudyCard({
       <Link to={`/studies/${study.id}`} className="block">
         <div className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-gradient-to-br from-brand-100 to-brand-50">
           {study.cover_image_url ? (
-            <img src={study.cover_image_url} alt="" className="h-full w-full object-cover" />
+            <img src={assetUrl(API.admin, study.cover_image_url)} alt="" className="h-full w-full object-cover" />
           ) : (
             <FolderIcon className="h-12 w-12 text-brand-300" />
           )}

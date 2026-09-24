@@ -9,6 +9,10 @@ class Settings:
         "DATABASE_URL", "postgresql+psycopg://ctplatform:ctplatform@localhost:5432/ctplatform"
     )
     object_storage_endpoint: str = os.environ.get("OBJECT_STORAGE_ENDPOINT", "http://localhost:9000")
+    # Where this container itself reaches MinIO to stream objects to the
+    # browser (see app/storage.py's read_object); defaults to the endpoint
+    # above for setups where both are the same host.
+    object_storage_internal_endpoint: str = os.environ.get("OBJECT_STORAGE_INTERNAL_ENDPOINT", os.environ.get("OBJECT_STORAGE_ENDPOINT", "http://localhost:9000"))
     object_storage_bucket: str = os.environ.get("OBJECT_STORAGE_BUCKET", "ct-pixel-data")
     object_storage_access_key: str = os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
     object_storage_secret_key: str = os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin")

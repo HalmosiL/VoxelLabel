@@ -17,6 +17,7 @@ from app.api.cases import router as cases_router
 from app.api.clinical_data import router as clinical_data_router
 from app.api.deidentification import router as deidentification_router
 from app.api.imaging import router as imaging_router
+from app.api.objects import router as objects_router
 from app.api.pipeline_templates import router as pipeline_templates_router
 from app.api.registration import public_router as registration_public_router
 from app.api.registration import router as registration_router
@@ -64,6 +65,7 @@ app.include_router(registration_router)
 app.include_router(registration_public_router)
 app.include_router(audit_router)
 app.include_router(usage_router)
+app.include_router(objects_router)
 app.include_router(pipeline_health_router)
 app.include_router(study_analytics_router)
 

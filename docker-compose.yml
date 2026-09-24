@@ -145,11 +145,12 @@ services:
       dockerfile: services/data-service/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ctplatform}:${POSTGRES_PASSWORD:-ctplatform}@postgres:5432/${POSTGRES_DB:-ctplatform}
-      # Unlike ingestion-service, this is only ever used to *sign* presigned
-      # URLs (no real network call to MinIO happens) -- the signed URL must
-      # use the hostname the *browser* will actually fetch it from, which is
-      # the published port, not the internal docker-compose service name.
+      # Signs the (few remaining) direct MinIO URLs -- the browser-facing host.
       OBJECT_STORAGE_ENDPOINT: ${PUBLIC_MINIO_URL:-http://localhost:9000}
+      # Streams thumbnails, documents and DICOM files to the browser behind
+      # signed /data/objects links (see app/storage.py) -- the internal host,
+      # so none of it depends on the browser reaching MinIO.
+      OBJECT_STORAGE_INTERNAL_ENDPOINT: http://minio:9000
       OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform

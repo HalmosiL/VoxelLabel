@@ -140,3 +140,23 @@ def test_me_reports_memberships(client):
     me = client.get("/admin/me").json()
     assert me["is_admin"] is False
     assert me["memberships"] == [{"study_id": sid, "study_name": "Mine", "role": "annotator"}]
+
+
+def test_a_study_cover_image_is_served_behind_a_signed_admin_link(client, monkeypatch):
+    import io
+
+    from app.api import objects
+
+    class _Body(io.BytesIO):
+        def iter_chunks(self, size):
+            while chunk := self.read(size):
+                yield chunk
+
+    monkeypatch.setattr(objects, "read_object", lambda key: (_Body(b"img"), "image/png", 3))
+    from app.storage import study_cover_image_link
+
+    link = study_cover_image_link("study-covers/x.png")
+    assert link.startswith("/admin/objects?")
+    r = client.get(link)
+    assert r.status_code == 200 and r.content == b"img"
+    assert client.get(link.replace("x.png", "y.png")).status_code == 403

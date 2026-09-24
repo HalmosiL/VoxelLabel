@@ -108,6 +108,9 @@ else
   echo "    (ct-annotator checkout not found at $CT_ANNOTATOR_DIR -- run its scripts/ yourself, see INSTALL.md)"
 fi
 
+echo "==> Putting back any missing image previews (thumbnails) -- idempotent"
+"${COMPOSE[@]}" exec -T ingestion-service python -m app.thumbnail_backfill || echo "    (thumbnail backfill failed -- previews may stay blank; rerun: docker compose exec ingestion-service python -m app.thumbnail_backfill)"
+
 if [ "${SKIP_OLLAMA:-0}" != "1" ]; then
   echo "==> Pulling the local model ${OLLAMA_MODEL:-qwen3:1.7b} (skip with SKIP_OLLAMA=1)"
   "${COMPOSE[@]}" exec -T ollama ollama pull "${OLLAMA_MODEL:-qwen3:1.7b}" || echo "    (model pull failed -- the Clinical Trial Assistant card won't work until it's pulled)"

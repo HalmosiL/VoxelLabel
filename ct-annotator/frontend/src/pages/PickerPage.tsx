@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { getAnnotationCounts } from "../api/annotatorApi";
+import { API } from "../config";
 import ViewAsTabs from "../components/ViewAsTabs";
 import { isPlatformAdmin, readViewAs, writeViewAs, ViewAs } from "../viewAs";
 import {
@@ -196,7 +197,7 @@ export default function PickerPage() {
                     </span>
                   )}
                   {instance.thumbnail_url ? (
-                    <img src={instance.thumbnail_url} alt="" className="h-28 w-28 rounded object-cover" />
+                    <img src={instance.thumbnail_url.startsWith("/") ? `${API.annotator}${instance.thumbnail_url}` : instance.thumbnail_url} alt="" className="h-28 w-28 rounded object-cover" />
                   ) : (
                     <div className="flex h-28 w-28 items-center justify-center rounded bg-gray-100 text-gray-300">
                       no preview

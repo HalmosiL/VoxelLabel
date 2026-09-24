@@ -1,15 +1,45 @@
 """HTTP API for browsing cases, imaging studies/series/instances, and
 clinical data items."""
+import mimetypes
+
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from shared_auth import CurrentUser, get_current_user, require_study_role
+from shared_auth.object_links import verify_object_link
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance, Patient, Series, case_tags
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.storage import presigned_clinical_data_url, presigned_pixel_data_url, presigned_thumbnail_url
+from app.storage import LINK_SECRET, object_link, read_object
 
 router = APIRouter(prefix="/data", tags=["data"])
+
+
+@router.get("/objects")
+def get_object(key: str = Query(...), exp: int = Query(...), sig: str = Query(...)) -> StreamingResponse:
+    """A stored object (thumbnail, document, DICOM file) behind a signed
+    link from object_link -- the link's signature is the access check
+    (whoever issued it checked the caller's role), so this takes no
+    token and works as a plain <img src> or a new tab. Streamed from
+    MinIO over the internal network: the browser never needs MinIO."""
+    if not verify_object_link(key, exp, sig, LINK_SECRET):
+        raise HTTPException(status_code=403, detail="This link is invalid or has expired -- reload the page for a fresh one.")
+    try:
+        body, content_type, length = read_object(key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            raise HTTPException(status_code=404, detail="Object not found") from None
+        raise
+    if content_type == "application/octet-stream":
+        content_type = mimetypes.guess_type(key)[0] or content_type
+    filename = key.rsplit("/", 1)[-1]
+    disposition = "attachment" if filename.endswith(".dcm") else "inline"
+    headers = {"Content-Disposition": f'{disposition}; filename="{filename}"', "Cache-Control": "private, max-age=3600"}
+    if length is not None:
+        headers["Content-Length"] = str(length)
+    return StreamingResponse(body.iter_chunks(64 * 1024), media_type=content_type, headers=headers)
 
 _READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 
@@ -31,12 +61,12 @@ def _require_global_admin(user: CurrentUser) -> None:
 
 
 def _thumbnail_url_for_series(series: Series) -> str | None:
-    """The first instance in the series that has a thumbnail, presigned --
+    """The first instance in the series that has a thumbnail, as a signed link --
     used as the representative preview for a whole series (and, one level
     up, for the imaging study it belongs to)."""
     for instance in series.instances:
         if instance.thumbnail_key:
-            return presigned_thumbnail_url(instance.thumbnail_key)
+            return object_link(instance.thumbnail_key)
     return None
 
 
@@ -200,7 +230,7 @@ def list_instances(
             "id": str(i.id),
             "sop_instance_uid": i.sop_instance_uid,
             "instance_number": i.instance_number,
-            "thumbnail_url": presigned_thumbnail_url(i.thumbnail_key) if i.thumbnail_key else None,
+            "thumbnail_url": object_link(i.thumbnail_key) if i.thumbnail_key else None,
         }
         for i in instances
     ]
@@ -212,20 +242,17 @@ def get_pixel_data_url(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Return a short-lived presigned URL to fetch the raw DICOM file
-    directly from object storage."""
+    """A signed link (see app/storage.object_link) to download the raw
+    DICOM file through this service."""
     instance = db.get(Instance, instance_id)
     imaging_study = instance.series.imaging_study
     require_study_role(db, str(imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
-    # storage_key alongside the browser-facing presigned URL: a *server*
+    # storage_key alongside the browser-facing signed link: a *server*
     # (ct-annotator's backend building its MPR volume) that has its own
     # credentials for the same bucket reads the object over the internal
-    # endpoint instead -- the presigned URL is signed for the public host
-    # (PUBLIC_MINIO_URL), which behind a tunnel/proxy is the wrong way
-    # round for a server-to-server fetch and simply unreachable from
-    # inside the deployment in some setups.
-    return {"url": presigned_pixel_data_url(instance.object_storage_key), "storage_key": instance.object_storage_key}
+    # endpoint instead of going through the link.
+    return {"url": object_link(instance.object_storage_key), "storage_key": instance.object_storage_key}
 
 
 def _serialize_clinical_data_item(item: ClinicalDataItem) -> dict:
@@ -333,6 +360,5 @@ def get_clinical_data_file_url(
         raise HTTPException(status_code=404, detail="This item has no attached file")
     # The storage key rides along for the same reason as get_pixel_data_url's:
     # a server-side caller (ct-annotator's inline document preview) reads the
-    # object straight from the bucket, since the presigned URL is signed for
-    # the *browser-facing* host and isn't reachable from inside the network.
-    return {"url": presigned_clinical_data_url(item.object_storage_key), "storage_key": item.object_storage_key}
+    # object straight from the bucket instead of going through the link.
+    return {"url": object_link(item.object_storage_key), "storage_key": item.object_storage_key}

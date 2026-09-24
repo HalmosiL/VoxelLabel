@@ -213,9 +213,12 @@ Then in `.env` set every `PUBLIC_*` to the proxied `https://` URL, start
 with `docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d`
 (it tells Keycloak to trust the proxy's `X-Forwarded-*` headers so it
 generates the right issuer), rebuild, and re-run the setup script (it only adds
-origins to the Keycloak client that aren't there yet). MinIO presigned
-URLs also go through the proxy, so `PUBLIC_MINIO_URL` must be proxied
-too (path-style: `https://files.ct.example.org` → `minio:9000`).
+origins to the Keycloak client that aren't there yet). Thumbnails,
+documents, DICOM downloads and study cover images are served through the
+data/admin APIs themselves (signed links), so they need nothing extra;
+only the PyTorch export's download links still point at MinIO, so for
+those `PUBLIC_MINIO_URL` must be proxied too (path-style:
+`https://files.ct.example.org` → `minio:9000`).
 
 ## 9. Optional: the clinician desktop app
 
@@ -233,7 +236,8 @@ platforms.
 | Sign-in form says *Incorrect username or password* for a known-good login | Keycloak isn't reachable at `PUBLIC_KEYCLOAK_URL` from the browser (firewall/port 8080), or the realm wasn't provisioned -- re-run `scripts/setup-test-server.sh` |
 | Signed in, but every page shows *permission* / 401 errors | Token issuer mismatch: `PUBLIC_KEYCLOAK_URL` in `.env` differs from the URL in the browser's address bar (IP vs hostname, port). Fix `.env`, `docker compose build admin-ui && docker compose up -d` |
 | Browser console: *blocked by CORS policy* | The browser origin isn't in `ADMIN_UI_ORIGINS` (platform) / `CORS_ALLOWED_ORIGINS` (viewer). Add it, `docker compose up -d` |
-| Images/documents don't load (broken thumbnails) | `PUBLIC_MINIO_URL` isn't reachable from the browser (port 9000) |
+| A case's previews (thumbnails) stay blank | The thumbnail files are missing from storage, or were never made (a DICOM that couldn't be decoded at import): `docker compose exec ingestion-service python -m app.thumbnail_backfill` regenerates them (the setup script runs it on every deploy). Previews come through the data API, not MinIO -- if they fail with an error, check that `PUBLIC_DATA_API` is reachable |
+| PyTorch export links don't download | `PUBLIC_MINIO_URL` isn't reachable from where the export is read (port 9000) |
 | "Open in Viewer" shows Keycloak's own login page | The viewer's origin isn't on the Keycloak client -- re-run the setup script; or the viewer's `.env` `PUBLIC_KEYCLOAK_URL` differs from the platform's |
 | A page still shows an old bug after an update | Both UIs send `Cache-Control: no-store` on `index.html`, so a normal reload picks up a rebuild; if a tab was open across the update, reload it once (Ctrl+Shift+R) |
 | Emails "sent" but never arrive | They went to the Mailpit sandbox -- configure real SMTP under Notifications and use *Send test email* |

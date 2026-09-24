@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.api import audit
 from app.duplication import duplicate_study
 from app.keycloak_admin import list_realm_users
-from app.storage import presigned_study_cover_image_url, upload_study_cover_image
+from app.storage import study_cover_image_link, upload_study_cover_image
 from app.versioning import autosave
 
 router = APIRouter(prefix="/admin/studies", tags=["admin:studies"])
@@ -74,7 +74,7 @@ def _serialize_study(study: Study, my_role: str | None) -> dict:
         "name": study.name,
         "description": study.description,
         "deidentification_profile_id": str(study.deidentification_profile_id) if study.deidentification_profile_id else None,
-        "cover_image_url": presigned_study_cover_image_url(study.cover_image_key) if study.cover_image_key else None,
+        "cover_image_url": study_cover_image_link(study.cover_image_key) if study.cover_image_key else None,
         "my_role": my_role,
     }
 
@@ -303,7 +303,7 @@ async def upload_cover_image(
 
     study.cover_image_key = storage_key
     db.commit()
-    return {"id": str(study.id), "cover_image_url": presigned_study_cover_image_url(storage_key)}
+    return {"id": str(study.id), "cover_image_url": study_cover_image_link(storage_key)}
 
 
 @router.get("/{study_id}/members")
