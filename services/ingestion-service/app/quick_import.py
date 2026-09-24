@@ -24,6 +24,8 @@ from datetime import date as date_type
 import pydicom
 from shared_models.database import SessionLocal
 from shared_models.models import Case, ImagingStudy, Instance, Patient, PatientIdentityMap
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.deidentify import apply_deidentification_profile
@@ -42,11 +44,23 @@ def _get_or_create_patient(db: Session, external_patient_id: str) -> Patient:
     if mapping is not None:
         return db.get(Patient, mapping.patient_id)
 
-    patient = Patient(pseudonym_id=str(uuid.uuid4()))
-    db.add(patient)
-    db.flush()
-    db.add(PatientIdentityMap(patient_id=patient.id, external_id_hash=external_id_hash))
-    return patient
+    # Another worker importing the same new patient right now inserts the
+    # same hash: the loser's insert fails on the unique key (after the
+    # winner commits) inside this savepoint, and the winner's patient is
+    # used instead of failing the file (B-04).
+    try:
+        with db.begin_nested():
+            patient = Patient(pseudonym_id=str(uuid.uuid4()))
+            db.add(patient)
+            db.flush()
+            db.add(PatientIdentityMap(patient_id=patient.id, external_id_hash=external_id_hash))
+            db.flush()
+        return patient
+    except IntegrityError:
+        mapping = db.query(PatientIdentityMap).filter_by(external_id_hash=external_id_hash).first()
+        if mapping is None:
+            raise
+        return db.get(Patient, mapping.patient_id)
 
 
 def _parse_dicom_date(value: str | None) -> date_type | None:
@@ -67,7 +81,15 @@ def _resolve_or_create_case(db: Session, study_id: str, dataset) -> tuple[Case, 
     happens, correctly gets its own Case there) -- created fresh, titled
     from whatever StudyDescription/Modality/StudyDate the files carry, if
     none exists yet.
+
+    Serialised per (study, StudyInstanceUID) with a transaction-level
+    advisory lock: two workers importing the same new DICOM study at once
+    would otherwise both miss the lookup and each create a case (B-03).
+    The lock is held until the caller commits -- which it does only after
+    this file's ImagingStudy exists, so the next worker finds it.
     """
+    lock_key = f"quick-import-case:{study_id}:{dataset.StudyInstanceUID}"
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": lock_key})
     existing_imaging_study = (
         db.query(ImagingStudy)
         .join(Case, Case.id == ImagingStudy.case_id)
@@ -168,13 +190,12 @@ def run_quick_import(
                     raise ForeignImagingError(reason)
 
                 case, created = _resolve_or_create_case(db, study_id, dataset)
-                # Committed immediately, independent of this file's own
-                # instance-level outcome below -- so a later IntegrityError
-                # retry (see _ingest_one_instance -> _get_or_create_*,
-                # which rolls back on conflict) can never undo a
-                # patient/case that's already real.
-                db.commit()
-
+                # One commit for the case AND its first ImagingStudy: that
+                # releases the case lock only once another worker's lookup
+                # can find this case, and a file that fails below leaves
+                # no empty case behind (the rollback takes it too).
+                # _get_or_create_* conflicts are confined to savepoints,
+                # so they never undo the case.
                 dataset = apply_deidentification_profile(dataset, study_id=study_id)
                 result = _ingest_one_instance(db, case, dataset)
                 db.commit()
