@@ -1,6 +1,8 @@
 """The workflow board and the jobs it produces: cards, edges, Run,
 My Jobs, and the computed job status following the cases' real
 annotation state."""
+import uuid
+
 from .conftest import ANNOTATOR_SUBJECT, DM_SUBJECT, REVIEWER_SUBJECT, add_member, make_annotation, make_case, make_series, make_study
 
 
@@ -313,3 +315,38 @@ def test_non_finite_numbers_are_refused(client, db):
     assert client.post(f"/admin/studies/{sid}/workflow/cards", content=body, headers=headers).status_code == 422
     note = _card(client, sid, "note", "n")
     assert client.patch(f"/admin/workflow-cards/{note['id']}", content='{"position_y": NaN}', headers=headers).status_code == 422
+
+
+def test_an_edit_made_during_an_ai_run_survives_it(client, db, monkeypatch):
+    """C-15: a Criterion Run (or an AI chat turn) takes minutes; the config
+    was written back from the copy read before the model call, reverting
+    whatever was edited meanwhile."""
+    from app.api.workflow import engine, routes
+    from shared_models.database import SessionLocal
+    from shared_models.models import WorkflowCard
+
+    sid = make_study(client)
+    make_case(client, sid, external="p0")
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    crit = _card(client, sid, "criterion", "Crit", {"criterion": "Patient has a nodule"}, x=300)
+    _edge(client, sid, ds["id"], crit["id"])
+
+    async def model_turn(card, history, message):
+        other = SessionLocal()  # someone edits the card while the model is thinking
+        row = other.get(WorkflowCard, card.id)
+        row.config = {**row.config, "criterion": "EDITED while running"}
+        other.commit()
+        other.close()
+        return [{"role": "assistant", "content": "done"}], False
+
+    monkeypatch.setattr(engine, "run_llm_turn", model_turn)
+    monkeypatch.setattr(routes, "run_llm_turn", model_turn)
+    assert client.post(f"/admin/workflow-cards/{crit['id']}/run").status_code == 200
+    db.expire_all()
+    config = db.get(WorkflowCard, uuid.UUID(crit["id"])).config
+    assert config["criterion"] == "EDITED while running" and config["messages"][-1]["content"] == "done"
+
+    llm = _card(client, sid, "llm", "Assistant", {"note": "before"}, x=600)
+    assert client.post(f"/admin/workflow-cards/{llm['id']}/llm-chat", json={"message": "hi"}).status_code == 200
+    db.expire_all()
+    assert db.get(WorkflowCard, uuid.UUID(llm["id"])).config["criterion"] == "EDITED while running"

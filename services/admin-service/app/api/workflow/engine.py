@@ -310,7 +310,16 @@ def _run_criterion(db: Session, card: WorkflowCard, now: datetime) -> None:
     new_messages, _ = asyncio.run(
         run_llm_turn(card, history, "Look at every case connected to your input, and evaluate this criterion now.")
     )
-    card.config = {**card.config, "messages": history + new_messages}
+    _append_messages(db, card, new_messages)
+
+
+def _append_messages(db: Session, card: WorkflowCard, new_messages: list[dict]) -> None:
+    """Adds a model turn's messages to the card's transcript on top of the
+    card as it is *now*: the model call takes minutes, and writing back the
+    config read before it reverted every edit made meanwhile (C-15). The
+    row is locked from this re-read until the caller commits."""
+    db.refresh(card, with_for_update=True)
+    card.config = {**card.config, "messages": list(card.config.get("messages", [])) + new_messages}
 
 
 _RUNNERS = {

@@ -83,6 +83,7 @@ import {
   materializationEdges,
 } from "../components/workflow/boardGraph";
 import LlmChatModal from "../components/workflow/LlmChatModal";
+import { configChanges } from "../components/workflow/configChanges";
 import { trackAction } from "../usage/tracker";
 
 const NODE_TYPES = {
@@ -606,6 +607,12 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   }
 
   function handlePatch(cardId: string, patch: WorkflowCardPatchInput) {
+    // Only the config keys this edit changed -- never this tab's possibly
+    // stale copy of the others (see configChanges, C-13).
+    if (patch.config) {
+      const current = nodes.find((n) => n.id === cardId)?.data.card.config ?? {};
+      patch = { ...patch, config: configChanges(current, patch.config) };
+    }
     updateWorkflowCard(cardId, patch)
       .then((updated) => setNodes((nds) => nds.map((n) => (n.id === cardId ? { ...n, data: { card: updated } } : n))))
       .catch((err) => setError(describeApiError(err)));

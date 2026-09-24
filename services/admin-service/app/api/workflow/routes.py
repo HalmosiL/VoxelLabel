@@ -30,7 +30,7 @@ from app.llm_client import run_llm_turn
 from app.versioning import autosave
 
 from .constants import _NO_INPUT_TYPES, _NO_OUTPUT_TYPES, _READ_ROLES, _UNRESTRICTED_SURFACE_CONFIG, _WRITE_ROLES
-from .engine import run_card_with_ripple
+from .engine import _append_messages, run_card_with_ripple
 from .graph import _card_or_404, _dataset_output_ids, _has_study_role, _materialized_children
 from .schemas import LlmChatIn, WorkflowCardIn, WorkflowCardPatch, WorkflowEdgeIn
 from .serialize import _serialize_card, _serialize_edge
@@ -275,6 +275,9 @@ def update_workflow_card(
     if body.height is not None:
         card.height = body.height
     if body.config is not None:
+        # Merged into the config as stored *now*, row locked, so two edits
+        # of different fields at the same moment don't lose one (C-13).
+        db.refresh(card, with_for_update=True)
         _validate_assignee(db, card, body.config)
         _validate_case_ids(db, card.study_id, body.config)
         _validate_split_parts(card.type, body.config)
@@ -283,11 +286,9 @@ def update_workflow_card(
         # which sends only {"status": ...} with no visibility into the
         # card's other config) would otherwise silently wipe everything
         # else already in config -- assigned_user_id notably included.
-        # admin-ui's own callers already always send the full spread
-        # ({...card.config, field: value}), so a merge here behaves
-        # identically for them; it only changes behavior for a caller
-        # that was sending a partial config, where replace was never the
-        # intended outcome.
+        # admin-ui sends only the keys an edit changed (its configChanges),
+        # so a tab with a stale copy of the card never writes the other
+        # fields back over someone else's edit (C-13).
         card.config = {**card.config, **body.config}
 
     changed = [k for k, v in body.model_dump().items() if v is not None and k not in ("position_x", "position_y", "width", "height")]
@@ -685,7 +686,7 @@ async def llm_chat(
     history = list(card.config.get("messages", []))
     new_messages, board_changed = await run_llm_turn(card, history, body.message)
 
-    card.config = {**card.config, "messages": history + new_messages}
+    _append_messages(db, card, new_messages)  # on top of any edit made during the turn (C-15)
     db.commit()
     db.refresh(card)
     autosave(db, card.study_id, user.subject)
