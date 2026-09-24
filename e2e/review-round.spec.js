@@ -53,18 +53,18 @@ const transforms = (page) => page.evaluate(() => Array.from(document.querySelect
   const axBox = await ax.boundingBox();
   const cx = axBox.x + axBox.width / 2, cy = axBox.y + axBox.height / 2;
 
-  // B1 Ctrl+scroll steps the slice, not the zoom
+  // B1 the plain wheel steps the slice, not the zoom (radiologist convention)
   const s0 = await sliders(page); const t0 = await transforms(page);
-  await page.mouse.move(cx, cy); await page.keyboard.down("Control"); await page.mouse.wheel(0, 120); await page.keyboard.up("Control"); await page.waitForTimeout(150);
+  await page.mouse.move(cx, cy); await page.mouse.wheel(0, 120); await page.waitForTimeout(150);
   const s1 = await sliders(page); const t1 = await transforms(page);
-  check("Ctrl+scroll on axial steps its slice by 1", s1[2] === s0[2] + 1 && s1[0] === s0[0] && s1[1] === s0[1], { s0, s1 });
-  check("Ctrl+scroll does not zoom", t1[2] === t0[2], { t0: t0[2], t1: t1[2] });
+  check("scroll on axial steps its slice by 1", s1[2] === s0[2] + 1 && s1[0] === s0[0] && s1[1] === s0[1], { s0, s1 });
+  check("scroll does not zoom", t1[2] === t0[2], { t0: t0[2], t1: t1[2] });
 
-  // B2 plain scroll zooms even with Paint selected
+  // B2 Ctrl+scroll zooms, even with Paint selected
   await page.locator('[data-guide="tool-paint"]').click();
-  await page.mouse.move(cx, cy); await page.mouse.wheel(0, -120); await page.waitForTimeout(150);
+  await page.mouse.move(cx, cy); await page.keyboard.down("Control"); await page.mouse.wheel(0, -120); await page.keyboard.up("Control"); await page.waitForTimeout(150);
   const t2 = await transforms(page);
-  check("plain scroll zooms with the Paint tool active", t2[2] !== t1[2], { t1: t1[2], t2: t2[2] });
+  check("Ctrl+scroll zooms with the Paint tool active", t2[2] !== t1[2], { t1: t1[2], t2: t2[2] });
   await page.locator('[data-guide="tool-cursor"]').click(); await ax.dblclick(); await page.waitForTimeout(120);
 
   // B3 Ctrl+click jumps the other panes
@@ -104,7 +104,7 @@ const transforms = (page) => page.evaluate(() => Array.from(document.querySelect
   await page.mouse.click(cx, cy); await page.waitForTimeout(150);
   await page.locator("header button", { hasText: "Mark as Practice-Annotated" }).click(); await page.waitForTimeout(400);
   await closeTour(page);
-  await page.mouse.move(cx, cy); await page.mouse.wheel(0, -240); await page.waitForTimeout(150);
+  await page.mouse.move(cx, cy); await page.keyboard.down("Control"); await page.mouse.wheel(0, -240); await page.keyboard.up("Control"); await page.waitForTimeout(150);
   const r0 = await transforms(page);
   await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 40, cy + 30, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(150);
   const r1 = await transforms(page);

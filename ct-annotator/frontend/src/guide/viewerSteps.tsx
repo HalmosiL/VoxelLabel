@@ -63,9 +63,10 @@ export const ANNOTATE_STEPS: GuideStep[] = [
           set by the job.
         </p>
         <p>
-          <b>Scroll</b> zooms · <kbd>Ctrl</kbd>+scroll (or the arrows and slider under the pane) changes slice · <b>drag</b> pans when zoomed ·{" "}
-          <b>double-click</b> resets · <kbd>Ctrl</kbd>+click jumps every pane to that point · <kbd>Alt</kbd>+click reads the
-          Hounsfield value.
+          <b>Scroll</b> changes slice (or drag the strip along the pane&apos;s right edge) · <kbd>Ctrl</kbd>+scroll zooms · <b>right- or middle-drag</b>{" "}
+          windows the image (up/down level, left/right width) · <b>drag</b> pans when zoomed · <b>double-click</b> resets ·{" "}
+          <kbd>Ctrl</kbd>+click jumps every pane to that point · <kbd>Alt</kbd>+click reads the Hounsfield value. The coloured
+          crosshair shows where the other planes cut (<kbd>C</kbd> hides it).
         </p>
       </>
     ),
@@ -239,9 +240,10 @@ export const REVIEW_STEPS: GuideStep[] = [
     body: (
       <>
         <p>
-          The annotator's objects are drawn over the scan. <b>Scroll</b> zooms · <kbd>Ctrl</kbd>+scroll (or the arrows and slider under the pane) changes
-          slice · <b>drag</b> pans · <b>double-click</b> resets · <kbd>Alt</kbd>+click reads the HU value. Window/level presets
-          on the right change only how you see the image.
+          The annotator's objects are drawn over the scan. <b>Scroll</b> changes slice (or drag the strip along the pane&apos;s
+          right edge) · <kbd>Ctrl</kbd>+scroll zooms · <b>right-drag</b> windows the image · <b>drag</b> pans · <b>double-click</b>{" "}
+          resets · <kbd>Alt</kbd>+click reads the HU value. Window/level presets and the slab (MIP) on the right change only how
+          you see the image.
         </p>
       </>
     ),

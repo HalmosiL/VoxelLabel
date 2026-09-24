@@ -86,6 +86,25 @@ export function fetchCoronalBlobUrl(
   return fetchBlobUrl(`/series/${seriesId}/coronal.png`, { y, wc, ww, sharpen });
 }
 
+export type SlabMode = "avg" | "mip" | "minip";
+
+/** A thick slice on any plane: `thickness` neighbouring slices around
+ * `index` averaged, or projected by maximum (MIP) / minimum (MinIP)
+ * intensity -- see the backend's /series/{id}/slab.png. `index` is the
+ * slice for axial, the column for sagittal, the row for coronal. */
+export function fetchSlabBlobUrl(
+  seriesId: string,
+  plane: "axial" | "sagittal" | "coronal",
+  index: number,
+  thickness: number,
+  mode: SlabMode,
+  wc: number | null,
+  ww: number | null,
+  sharpen: number | null = null
+): Promise<string> {
+  return fetchBlobUrl(`/series/${seriesId}/slab.png`, { plane, index, thickness, mode, wc, ww, sharpen });
+}
+
 /** The Hounsfield-unit value at one voxel -- backs the viewer's Alt+click
  * readout. `x`/`y`/`z` are volume-space indices (columns/rows/slice),
  * same convention as the mask volume's own maskIndex in ViewerPage. */

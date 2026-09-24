@@ -128,9 +128,9 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     // auto contour
     await page.locator('[data-testid="tool-auto"]').click();
     await dragOn(page, axialPane, [0.3, 0.3], [0.6, 0.6]);
-    await page.waitForTimeout(1500);
-    const autoPanel = await page.getByText(/tolerance/i).count();
-    check("auto contour panel opens", autoPanel > 0, autoPanel);
+    await page.locator('[data-testid="auto-range"]').waitFor({ timeout: 15000 }).catch(() => undefined);
+    const autoPanel = await page.locator('[data-testid="auto-range"]').count();
+    check("auto contour panel opens with its HU range", autoPanel > 0, autoPanel);
     await page.keyboard.press("Escape");
     // histogram
     await page.locator('[data-testid="tool-histogram"]').click();

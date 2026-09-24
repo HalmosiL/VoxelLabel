@@ -31,7 +31,7 @@ from app.config import (
     DATA_SERVICE_URL,
     RENDER_CACHE_TTL_SECONDS,
 )
-from app.dicom_render import extract_metadata, parse_dataset, render_plane, render_png, rescaled_pixels
+from app.dicom_render import SLAB_MODES, extract_metadata, parse_dataset, render_plane, render_png, rescaled_pixels, slab_plane
 from app.storage import download_bytes, download_object, presigned_mask_url, upload_mask, upload_mask_volume
 
 app = FastAPI(title="CT Annotator Viewer -- thin backend")
@@ -233,6 +233,28 @@ async def get_coronal_render(
     volume = await _get_volume(series_id, user)
     y = max(0, min(y, volume.shape[1] - 1))
     png_bytes = render_plane(volume[:, y, :], wc, ww, sharpen)
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@app.get("/series/{series_id}/slab.png")
+async def get_slab_render(
+    series_id: str,
+    plane: str = Query(..., pattern="^(axial|sagittal|coronal)$"),
+    index: int = Query(...),
+    thickness: int = Query(default=1, ge=1, le=51),
+    mode: str = Query(default="avg", pattern="^(" + "|".join(SLAB_MODES) + ")$"),
+    wc: float | None = Query(default=None),
+    ww: float | None = Query(default=None),
+    sharpen: float | None = Query(default=None),
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """A thick slice ("slab") on any plane: `thickness` neighbouring
+    slices around `index` averaged, or projected by maximum (MIP) or
+    minimum (MinIP) intensity -- see dicom_render.slab_plane. `index` is
+    the slice for axial, the column (x) for sagittal, the row (y) for
+    coronal, the same indices the single-slice endpoints take."""
+    volume = await _get_volume(series_id, user)
+    png_bytes = render_plane(slab_plane(volume, plane, index, thickness, mode), wc, ww, sharpen)
     return Response(content=png_bytes, media_type="image/png")
 
 

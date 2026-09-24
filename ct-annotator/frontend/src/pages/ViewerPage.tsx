@@ -7,6 +7,7 @@ import {
   fetchAxialBlobUrl,
   fetchCoronalBlobUrl,
   fetchSagittalBlobUrl,
+  fetchSlabBlobUrl,
   fetchJobCases,
   fetchPlaneHU,
   fetchSegmentationVolume,
@@ -22,6 +23,7 @@ import {
   saveSegmentationVolume,
   SegLabel,
   SegObject,
+  SlabMode,
   SurfaceConfig,
 } from "../api/annotatorApi";
 import { ApiError } from "../api/client";
@@ -48,6 +50,7 @@ import Viewer3D from "../components/Viewer3D";
 import GuideTour from "../guide/GuideTour";
 import { useGuide } from "../guide/useGuide";
 import { ANNOTATE_STEPS, REVIEW_STEPS } from "../guide/viewerSteps";
+import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
 import { polygonMask, scanlineFill } from "../lib/scanlineFill";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
@@ -71,6 +74,26 @@ const MAX_OBJECT_ID = 255; // one byte per voxel; 0 is reserved for background
 type PaneKey = "sagittal" | "coronal" | "axial";
 const PANE_ORDER: PaneKey[] = ["sagittal", "coronal", "axial"];
 const PANE_LABELS: Record<PaneKey, string> = { sagittal: "Sagittal", coronal: "Coronal", axial: "Axial" };
+// Each plane's own colour: its crosshair line in the other panes, and
+// the dot beside its name, so "that orange line is the sagittal" reads.
+const PLANE_COLORS: Record<PaneKey, string> = { sagittal: "#f59e0b", coronal: "#22c55e", axial: "#38bdf8" };
+// Half the empty gap the crosshair leaves around the point where its
+// lines would meet (screen px) -- the middle is what's being looked at.
+const CROSSHAIR_GAP_PX = 16;
+// Width of the slice strip standing along each pane's right edge.
+const SLICE_STRIP_PX = { mouse: 26, touch: 40 };
+// Mouse window/level drag: HU per pixel of movement, relative to the
+// current width (a wide window moves faster), and the drag distance
+// that tells a drag from a click.
+const WINDOW_DRAG_HU_PER_PX = 1 / 300;
+const WINDOW_DRAG_THRESHOLD_PX = 4;
+const SLAB_THICKNESSES = [1, 3, 5, 9, 15, 25];
+const SLAB_LABEL: Record<SlabMode, string> = { avg: "Average", mip: "MIP", minip: "MinIP" };
+const SLAB_HELP: Record<SlabMode, string> = {
+  avg: "The mean of the slices: less noise, like a thicker reconstruction.",
+  mip: "Maximum intensity projection: the brightest voxel through the slab -- vessels and nodules stand out against the lung.",
+  minip: "Minimum intensity projection: the darkest voxel through the slab -- airways and air trapping.",
+};
 
 // The 3D pane is visually a 4th column alongside the three MPR panes,
 // but never participates in the drawing math (planeDims/readSliceValue/
@@ -429,6 +452,35 @@ export default function ViewerPage() {
   }, [effectiveSurface, tool]);
   const [windowCenter, setWindowCenter] = useState(DEFAULT_WINDOW_CENTER);
   const [windowWidth, setWindowWidth] = useState(DEFAULT_WINDOW_WIDTH);
+  // Thick slices on every pane (display only; drawing still lands on
+  // the centre slice): `thickness` neighbouring slices projected into
+  // one picture by `mode`.
+  const [slab, setSlab] = useState<{ thickness: number; mode: SlabMode }>({ thickness: 1, mode: "avg" });
+  // Where the other two planes cut each pane, as coloured lines that
+  // stop short of their meeting point. On by default; C toggles it.
+  const [showCrosshair, setShowCrosshair] = useState(() => {
+    try {
+      return localStorage.getItem("vl.viewer.crosshair") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("vl.viewer.crosshair", showCrosshair ? "1" : "0");
+    } catch {
+      // private mode: the choice just isn't remembered
+    }
+  }, [showCrosshair]);
+  // The window each pane's current picture was rendered with. While the
+  // window moves (a mouse drag, a slider) the picture on screen is
+  // re-mapped at once by a CSS filter (see windowFilterFor) until the
+  // server's exact rendering for the new window arrives.
+  const [renderedWindow, setRenderedWindow] = useState<Record<PaneKey, { c: number; w: number } | null>>({ sagittal: null, coronal: null, axial: null });
+  // A mouse window/level drag in progress: right button with the Cursor
+  // tool, middle button with any tool.
+  const windowDragRef = useRef<{ pane: PaneKey; pointerId: number; button: number; x0: number; y0: number; c0: number; w0: number; moved: boolean } | null>(null);
+  const suppressContextMenuUntilRef = useRef(0);
   // Unsharp-mask amount, applied server-side after windowing (see
   // backend/app/dicom_render.py's _unsharp_mask) -- 0 renders exactly
   // as before (no filter pass at all). Same slider-and-refetch pattern
@@ -518,7 +570,11 @@ export default function ViewerPage() {
     // The touch stylesheet makes the slice slider a 2rem-tall control
     // (see styles.css), so a pane column's chrome is taller under a
     // coarse pointer.
-    const CHROME_HEIGHT = window.matchMedia("(pointer: coarse)").matches ? 96 : 64;
+    // Only the label row now: the slice control stands along the pane's
+    // right edge (SLICE_STRIP_PX), which comes off the width instead.
+    const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    const CHROME_HEIGHT = coarsePointer ? 44 : 28;
+    const STRIP = coarsePointer ? SLICE_STRIP_PX.touch : SLICE_STRIP_PX.mouse;
     const GAP = 1; // the row's gap-px
     function recompute() {
       if (!el) return;
@@ -533,11 +589,12 @@ export default function ViewerPage() {
       // Floor, and account for the gaps: a fractional size that adds up
       // to 2px more than the row is exactly what makes flex-wrap push
       // the last pane onto a second row.
-      const fit = (space: number, n: number) => Math.floor((space - GAP * (n - 1)) / n);
+      const fit = (space: number, n: number) => Math.floor((space - GAP * (n - 1)) / n) - STRIP;
       const single = Math.min(fit(rect.width, count), rect.height - CHROME_HEIGHT);
       const cols = 2;
       const rowsWrapped = Math.ceil(count / cols);
-      const wrapped = count > 1 && rect.width < 900 ? Math.min(fit(rect.width, cols), fit(rect.height, rowsWrapped) - CHROME_HEIGHT) : 0;
+      const fitHeight = (space: number, n: number) => Math.floor((space - GAP * (n - 1)) / n);
+      const wrapped = count > 1 && rect.width < 900 ? Math.min(fit(rect.width, cols), fitHeight(rect.height, rowsWrapped) - CHROME_HEIGHT) : 0;
       setPaneSize(Math.max(160, Math.max(single, wrapped)));
     }
     recompute();
@@ -643,6 +700,7 @@ export default function ViewerPage() {
   const debouncedInstanceId = useThrottledValue(currentInstanceId, SLIDER_THROTTLE_MS);
   const debouncedSagittalIndex = useThrottledValue(sagittalIndex, SLIDER_THROTTLE_MS);
   const debouncedCoronalIndex = useThrottledValue(coronalIndex, SLIDER_THROTTLE_MS);
+  const debouncedSlab = useThrottledValue(slab, SLIDER_THROTTLE_MS);
 
   const [metadata, setMetadata] = useState<InstanceMetadata | null>(null);
   const [annotations, setAnnotations] = useState<AnnotationSummary[]>([]);
@@ -670,28 +728,29 @@ export default function ViewerPage() {
   // as the tolerance slider moves (no per-tick network round trip --
   // see the plan doc for why that matters here). autoBox is the
   // committed (post-drag) box; autoHu is the fetched data for it;
-  // autoTolerance drives the live preview.
+  // autoRange (a HU range, suggested from the box -- see
+  // lib/autoContour) and autoFillHoles drive the live preview.
   const [autoBox, setAutoBox] = useState<
     { pane: PaneKey; index: number; x0: number; y0: number; x1: number; y1: number; panelClientX: number; panelClientY: number } | null
   >(null);
   const [autoHu, setAutoHu] = useState<{ data: Int16Array; width: number; height: number; x0: number; y0: number } | null>(null);
-  const [autoTolerance, setAutoTolerance] = useState(60);
+  const [autoRange, setAutoRange] = useState<{ low: number; high: number }>({ low: -400, high: HU_MAX });
+  const [autoFillHoles, setAutoFillHoles] = useState(true);
   const [autoLoading, setAutoLoading] = useState(false);
   const autoDragRef = useRef<{ pane: PaneKey; index: number; x0: number; y0: number; x1: number; y1: number } | null>(null);
 
+  // A range, not "centre ± tolerance": a nodule's calcified core made
+  // the old centre seed useless (the grow stayed inside the
+  // calcification). Grown from the in-range pixel nearest the box
+  // centre; enclosed holes filled when asked.
   const autoPreviewMask = useMemo(() => {
     if (!autoHu) return null;
-    const seedX = Math.floor(autoHu.width / 2);
-    const seedY = Math.floor(autoHu.height / 2);
-    const seedValue = autoHu.data[seedY * autoHu.width + seedX];
-    return scanlineFill(
-      autoHu.width,
-      autoHu.height,
-      seedX,
-      seedY,
-      (x, y) => Math.abs(autoHu.data[y * autoHu.width + x] - seedValue) <= autoTolerance
-    );
-  }, [autoHu, autoTolerance]);
+    return growRegion(autoHu, autoRange, { fillHoles: autoFillHoles });
+  }, [autoHu, autoRange, autoFillHoles]);
+  // Each new box starts from the range its own content suggests.
+  useEffect(() => {
+    if (autoHu) setAutoRange(suggestRange(autoHu));
+  }, [autoHu]);
   const autoPreviewCount = autoPreviewMask ? autoPreviewMask.reduce((sum, v) => sum + v, 0) : 0;
 
   // "Histogram" button in the auto-contour panel: HU stats for just the
@@ -932,7 +991,7 @@ export default function ViewerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedInstanceId]);
 
-  function drawBlobUrlToCanvas(canvas: HTMLCanvasElement | null, blobUrl: string, width: number, height: number) {
+  function drawBlobUrlToCanvas(canvas: HTMLCanvasElement | null, blobUrl: string, width: number, height: number, pane?: PaneKey, win?: { c: number; w: number }) {
     if (!canvas) return;
     blobUrlsRef.current.push(blobUrl);
     const img = new Image();
@@ -940,30 +999,60 @@ export default function ViewerPage() {
       canvas.width = width;
       canvas.height = height;
       canvas.getContext("2d")?.drawImage(img, 0, 0, width, height);
+      if (pane && win) setRenderedWindow((prev) => (prev[pane]?.c === win.c && prev[pane]?.w === win.w ? prev : { ...prev, [pane]: win }));
     };
     img.src = blobUrl;
+  }
+
+  /** The CSS filter that re-maps a pane's picture, rendered for one
+   * window, to the window now chosen: grey level p of the old mapping is
+   * HU (c0 - w0/2 + p*w0), which the new window shows as a*p + b --
+   * an exact linear map (feComponentTransfer, see the <svg> filters in
+   * the page). Values the old window had clipped stay clipped until
+   * the server's own rendering arrives a moment later. */
+  function windowFilterFor(pane: PaneKey): string | undefined {
+    const r = renderedWindow[pane];
+    if (!r || (r.c === windowCenter && r.w === windowWidth) || windowWidth <= 0) return undefined;
+    return `url(#vl-window-${pane})`;
+  }
+  function windowFilterParams(pane: PaneKey): { slope: number; intercept: number } {
+    const r = renderedWindow[pane];
+    if (!r || windowWidth <= 0) return { slope: 1, intercept: 0 };
+    return { slope: r.w / windowWidth, intercept: (r.c - r.w / 2 - (windowCenter - windowWidth / 2)) / windowWidth };
   }
 
   useEffect(() => {
     if (!debouncedInstanceId || !rows || !columns) return;
     let cancelled = false;
-    fetchAxialBlobUrl(debouncedInstanceId, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness || null)
-      .then((url) => !cancelled && drawBlobUrlToCanvas(imageCanvasRefs.axial.current, url, columns, rows))
+    const win = { c: debouncedWindowCenter, w: debouncedWindowWidth };
+    // A thick slab needs the whole volume (the backend's slab.png); a
+    // single slice keeps the quick one-instance render.
+    const slabIndex = instances.findIndex((i) => i.id === debouncedInstanceId);
+    const thick = debouncedSlab.thickness > 1 && seriesId && slabIndex >= 0 && !volumeUnavailable;
+    (thick
+      ? fetchSlabBlobUrl(seriesId, "axial", slabIndex, debouncedSlab.thickness, debouncedSlab.mode, win.c, win.w, debouncedSharpness || null)
+      : fetchAxialBlobUrl(debouncedInstanceId, win.c, win.w, debouncedSharpness || null)
+    )
+      .then((url) => !cancelled && drawBlobUrlToCanvas(imageCanvasRefs.axial.current, url, columns, rows, "axial", win))
       .catch((err) => setError(String(err)));
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedInstanceId, rows, columns, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness, paneMountKey]);
+  }, [debouncedInstanceId, rows, columns, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness, debouncedSlab, paneMountKey]);
 
   useEffect(() => {
     if (!seriesId || debouncedSagittalIndex === null || !rows || !numSlices) return;
     let cancelled = false;
-    fetchSagittalBlobUrl(seriesId, debouncedSagittalIndex, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness || null)
+    const win = { c: debouncedWindowCenter, w: debouncedWindowWidth };
+    (debouncedSlab.thickness > 1
+      ? fetchSlabBlobUrl(seriesId, "sagittal", debouncedSagittalIndex, debouncedSlab.thickness, debouncedSlab.mode, win.c, win.w, debouncedSharpness || null)
+      : fetchSagittalBlobUrl(seriesId, debouncedSagittalIndex, win.c, win.w, debouncedSharpness || null)
+    )
       .then((url) => {
         if (cancelled) return;
         setVolumeUnavailable(null);
-        drawBlobUrlToCanvas(imageCanvasRefs.sagittal.current, url, rows, numSlices);
+        drawBlobUrlToCanvas(imageCanvasRefs.sagittal.current, url, rows, numSlices, "sagittal", win);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -974,16 +1063,20 @@ export default function ViewerPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesId, debouncedSagittalIndex, rows, numSlices, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness, paneMountKey]);
+  }, [seriesId, debouncedSagittalIndex, rows, numSlices, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness, debouncedSlab, paneMountKey]);
 
   useEffect(() => {
     if (!seriesId || debouncedCoronalIndex === null || !columns || !numSlices) return;
     let cancelled = false;
-    fetchCoronalBlobUrl(seriesId, debouncedCoronalIndex, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness || null)
+    const win = { c: debouncedWindowCenter, w: debouncedWindowWidth };
+    (debouncedSlab.thickness > 1
+      ? fetchSlabBlobUrl(seriesId, "coronal", debouncedCoronalIndex, debouncedSlab.thickness, debouncedSlab.mode, win.c, win.w, debouncedSharpness || null)
+      : fetchCoronalBlobUrl(seriesId, debouncedCoronalIndex, win.c, win.w, debouncedSharpness || null)
+    )
       .then((url) => {
         if (cancelled) return;
         setVolumeUnavailable(null);
-        drawBlobUrlToCanvas(imageCanvasRefs.coronal.current, url, columns, numSlices);
+        drawBlobUrlToCanvas(imageCanvasRefs.coronal.current, url, columns, numSlices, "coronal", win);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -994,7 +1087,7 @@ export default function ViewerPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesId, debouncedCoronalIndex, columns, numSlices, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness, paneMountKey]);
+  }, [seriesId, debouncedCoronalIndex, columns, numSlices, debouncedWindowCenter, debouncedWindowWidth, debouncedSharpness, debouncedSlab, paneMountKey]);
 
   useEffect(() => {
     const urls = blobUrlsRef.current;
@@ -1796,6 +1889,11 @@ export default function ViewerPage() {
    * overlay stays correctly placed under any zoom/pan. */
   function renderPolygonOverlay(pane: PaneKey) {
     if (!polygonDraft || polygonDraft.pane !== pane) return null;
+    // The overlay is zoomed with the image; the points and lines keep
+    // one screen size at any zoom (they used to grow with it).
+    const k = 1 / zoom[pane].scale;
+    const r0 = (coarse ? 5 : 3.5) * k;
+    const r = (coarse ? 3 : 2) * k;
     const dims = planeDims(pane);
     const sx = paneSize / dims.width;
     const sy = paneSize / dims.height;
@@ -1803,7 +1901,7 @@ export default function ViewerPage() {
     const last = polygonDraft.points[polygonDraft.points.length - 1];
     return (
       <svg width={paneSize} height={paneSize} style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}>
-        <polyline points={pts} fill="none" stroke="#60a5fa" strokeWidth={1.5} />
+        <polyline points={pts} fill="none" stroke="#60a5fa" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
         {polygonCursor && (
           <line
             x1={last.x * sx}
@@ -1813,11 +1911,43 @@ export default function ViewerPage() {
             stroke="#60a5fa"
             strokeWidth={1}
             strokeDasharray="4 3"
+            vectorEffect="non-scaling-stroke"
           />
         )}
         {polygonDraft.points.map((p, i) => (
-          <circle key={i} cx={p.x * sx} cy={p.y * sy} r={i === 0 ? 5 : 3} fill={i === 0 ? "#fbbf24" : "#60a5fa"} />
+          <circle key={i} cx={p.x * sx} cy={p.y * sy} r={i === 0 ? r0 : r} fill={i === 0 ? "#fbbf24" : "#60a5fa"} data-testid="polygon-point" />
         ))}
+      </svg>
+    );
+  }
+
+  /** Where the other two planes cut this pane: one coloured line per
+   * plane (PLANE_COLORS), in the zoomed wrapper so they follow the
+   * image, but broken around their meeting point -- CROSSHAIR_GAP_PX of
+   * screen space either side stays clear, because the middle is what
+   * is being looked at. Display coordinates: the pane is a paneSize
+   * square; a native index i of n sits at (i + 0.5) / n of it. */
+  function renderCrosshair(pane: PaneKey, width: number, height: number, scale: number) {
+    if (!showCrosshair || !rows || !columns || !numSlices) return null;
+    const at = (i: number | null, n: number, size: number) => (((i ?? 0) + 0.5) / n) * size;
+    // [plane drawn as a vertical line, its x] and [plane drawn horizontally, its y]
+    const [vPlane, vx, hPlane, hy]: [PaneKey, number, PaneKey, number] =
+      pane === "axial"
+        ? ["sagittal", at(sagittalIndex, columns, width), "coronal", at(coronalIndex, rows, height)]
+        : pane === "sagittal"
+          ? ["coronal", at(coronalIndex, rows, width), "axial", at(axialIndex, numSlices, height)]
+          : ["sagittal", at(sagittalIndex, columns, width), "axial", at(axialIndex, numSlices, height)];
+    const gap = CROSSHAIR_GAP_PX / scale;
+    const line = (x1: number, y1: number, x2: number, y2: number, color: string, key: string) =>
+      (x2 - x1) ** 2 + (y2 - y1) ** 2 > 0 ? (
+        <line key={key} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1} strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
+      ) : null;
+    return (
+      <svg width={width} height={height} style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }} data-testid={`crosshair-${pane}`} aria-hidden="true">
+        {line(vx, 0, vx, Math.max(0, hy - gap), PLANE_COLORS[vPlane], "v1")}
+        {line(vx, Math.min(height, hy + gap), vx, height, PLANE_COLORS[vPlane], "v2")}
+        {line(0, hy, Math.max(0, vx - gap), hy, PLANE_COLORS[hPlane], "h1")}
+        {line(Math.min(width, vx + gap), hy, width, hy, PLANE_COLORS[hPlane], "h2")}
       </svg>
     );
   }
@@ -1896,25 +2026,57 @@ export default function ViewerPage() {
       );
     }
     if (!autoHu) return null;
-    const { left, top } = clampPopupPosition(panelClientX, panelClientY, 190, 140, 10);
+    const { left, top } = clampPopupPosition(panelClientX, panelClientY, 210, 200, 10);
     return (
       <div
-        className="fixed z-30 flex w-[190px] flex-col gap-1.5 rounded border border-[#444] bg-[#1a1a2e]/95 p-2 text-[11px] text-gray-200 shadow-lg"
+        className="fixed z-30 flex w-[210px] flex-col gap-1.5 rounded border border-[#444] bg-[#1a1a2e]/95 p-2 text-[11px] text-gray-200 shadow-lg"
         style={{ left, top }}
       >
         <div className="flex items-center justify-between">
-          <span className="text-gray-400">Tolerance</span>
-          <span className="font-mono text-amber-300">±{autoTolerance} HU</span>
+          <span className="text-gray-400" title="The HU values the region may contain. Suggested from the box: everything denser than the lung around it, calcification included.">
+            HU range
+          </span>
+          <span className="font-mono text-amber-300" data-testid="auto-range">
+            {autoRange.low} … {autoRange.high >= HU_MAX ? "max" : autoRange.high}
+          </span>
         </div>
-        <input
-          type="range"
-          min={5}
-          max={300}
-          step={5}
-          value={autoTolerance}
-          onChange={(e) => setAutoTolerance(Number(e.target.value))}
-          className="h-1 accent-amber-500"
-        />
+        <label className="flex items-center gap-1.5">
+          <span className="w-7 text-[10px] text-gray-500">from</span>
+          <input
+            type="range"
+            min={HU_MIN}
+            max={HU_MAX}
+            step={10}
+            value={autoRange.low}
+            onChange={(e) => setAutoRange((r) => ({ ...r, low: Math.min(Number(e.target.value), r.high) }))}
+            className="h-1 min-w-0 flex-1 accent-amber-500"
+            aria-label="Lowest HU in the region"
+            data-testid="auto-range-low"
+          />
+        </label>
+        <label className="flex items-center gap-1.5">
+          <span className="w-7 text-[10px] text-gray-500">to</span>
+          <input
+            type="range"
+            min={HU_MIN}
+            max={HU_MAX}
+            step={10}
+            value={autoRange.high}
+            onChange={(e) => setAutoRange((r) => ({ ...r, high: Math.max(Number(e.target.value), r.low) }))}
+            className="h-1 min-w-0 flex-1 accent-amber-500"
+            aria-label="Highest HU in the region"
+            data-testid="auto-range-high"
+          />
+        </label>
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-1.5 text-[10px] text-gray-300" title="Also take whatever the region fully encloses -- a calcified core, an air bubble, a vessel seen end-on.">
+            <input type="checkbox" checked={autoFillHoles} onChange={(e) => setAutoFillHoles(e.target.checked)} data-testid="auto-fill-holes" />
+            fill holes
+          </label>
+          <button type="button" onClick={() => autoHu && setAutoRange(suggestRange(autoHu))} className="text-[10px] text-amber-300 hover:underline" title="Back to the range suggested from this box">
+            suggest
+          </button>
+        </div>
         <div className="text-[10px] text-gray-500">{autoPreviewCount} px selected</div>
         <button
           onClick={() => setShowAutoSegmentedHistogram((prev) => !prev)}
@@ -2267,10 +2429,11 @@ export default function ViewerPage() {
   function handleWheel(event: WheelEvent, pane: PaneKey, container: HTMLElement) {
     event.preventDefault();
 
-    // Plain scroll zooms; slice navigation moves to Ctrl/Cmd+scroll
-    // instead of owning the bare wheel (reversed from the original
-    // "most DICOM viewers" convention, per explicit user request).
-    if (event.ctrlKey || event.metaKey) {
+    // The plain wheel pages through slices, the way radiologists expect
+    // of a DICOM viewer; Ctrl/Cmd+wheel zooms (radiologist feedback,
+    // reversing the earlier zoom-first split). A trackpad pinch arrives
+    // as a wheel event with ctrlKey set, so it zooms too.
+    if (!(event.ctrlKey || event.metaKey)) {
       const dir = event.deltaY > 0 ? 1 : -1;
       if (pane === "axial") setAxialIndex((i) => Math.max(0, Math.min(numSlicesRef.current - 1, i + dir)));
       else if (pane === "sagittal") setSagittalIndex((i) => Math.max(0, Math.min(columnsRef.current - 1, (i ?? 0) + dir)));
@@ -2812,7 +2975,54 @@ export default function ViewerPage() {
   function handlePaneContextMenu(event: ReactMouseEvent<HTMLDivElement>, pane: PaneKey) {
     event.preventDefault();
     if (tab !== "view") return;
+    // A mouse right button is handled by the window/level drag: a click
+    // without a drag opens the comment on release (endWindowDrag).
+    if (windowDragRef.current || performance.now() < suppressContextMenuUntilRef.current) return;
     openCommentAt(pane, event.clientX, event.clientY);
+  }
+
+  // ── Mouse window/level drag ─────────────────────────────────────────
+  // Up/down moves the level (window centre), left/right the width --
+  // the gesture radiologists window with. Right button with the Cursor
+  // tool (a right *click* still opens a comment), middle button with
+  // any tool (the right button erases while drawing). Registered in the
+  // capture phase so a drawing tool never sees the drag.
+
+  function startWindowDrag(event: ReactPointerEvent<HTMLDivElement>, pane: PaneKey): boolean {
+    if (event.pointerType !== "mouse") return false;
+    if (!(event.button === 1 || (event.button === 2 && tab === "view"))) return false;
+    if (event.altKey || event.ctrlKey || event.metaKey) return false;
+    event.preventDefault(); // no middle-button autoscroll
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    windowDragRef.current = { pane, pointerId: event.pointerId, button: event.button, x0: event.clientX, y0: event.clientY, c0: windowCenter, w0: windowWidth, moved: false };
+    return true;
+  }
+
+  function moveWindowDrag(event: ReactPointerEvent<HTMLDivElement>): boolean {
+    const drag = windowDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return false;
+    event.stopPropagation();
+    const dx = event.clientX - drag.x0;
+    const dy = event.clientY - drag.y0;
+    if (!drag.moved && Math.hypot(dx, dy) < WINDOW_DRAG_THRESHOLD_PX) return true;
+    if (!drag.moved) trackAction("window.drag");
+    drag.moved = true;
+    const perPx = Math.max(0.5, drag.w0 * WINDOW_DRAG_HU_PER_PX);
+    setWindowCenter(Math.round(Math.max(-1000, Math.min(1000, drag.c0 + dy * perPx))));
+    setWindowWidth(Math.round(Math.max(1, Math.min(4000, drag.w0 + dx * perPx * 1.5))));
+    return true;
+  }
+
+  function endWindowDrag(event: ReactPointerEvent<HTMLDivElement>): boolean {
+    const drag = windowDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return false;
+    event.stopPropagation();
+    windowDragRef.current = null;
+    // the contextmenu event of this same press must not open a second comment
+    suppressContextMenuUntilRef.current = performance.now() + 400;
+    if (!drag.moved && drag.button === 2 && event.type === "pointerup") openCommentAt(drag.pane, event.clientX, event.clientY);
+    return true;
   }
 
   // Tracked on every pane mousemove (not just while dragging) so the
@@ -2998,6 +3208,10 @@ export default function ViewerPage() {
 
       // N: quick "new instance of the currently active label" -- see the
       // header button of the same name for the click-driven equivalent.
+      if (event.key.toLowerCase() === "c" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        setShowCrosshair((v) => !v);
+        return;
+      }
       if (event.key.toLowerCase() === "n" && !typing && !event.ctrlKey && !event.metaKey && activeLabel && !reviewMode) {
         event.preventDefault();
         createObjectInActiveLabel();
@@ -3037,12 +3251,8 @@ export default function ViewerPage() {
       if (typing) return;
       event.preventDefault();
       const pane = hoveredPaneRef.current;
-      // Left/Right step slices (same convention as before); Up/Down now
-      // step zoom instead -- keyboard mirrors of the plain-scroll-zooms/
-      // Ctrl+scroll-slices split the wheel already uses, just split
-      // across two different keys instead of a modifier, since there's
-      // no unmodified vs. modified "arrow key" distinction as natural as
-      // holding Ctrl already is for a wheel.
+      // Left/Right step slices; Up/Down step zoom -- the keyboard's
+      // counterparts of the wheel (slices) and Ctrl+wheel (zoom).
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         const dir = event.key === "ArrowLeft" ? -1 : 1;
         if (pane === "axial") setAxialIndex((i) => Math.max(0, Math.min(numSlices - 1, i + dir)));
@@ -3082,6 +3292,7 @@ export default function ViewerPage() {
   const isOriginalImageAdjustment =
     windowCenter === originalWindowCenter && windowWidth === originalWindowWidth && sharpness === 0;
 
+  const sliceStripPx = coarse ? SLICE_STRIP_PX.touch : SLICE_STRIP_PX.mouse;
   const paneConfig: Record<PaneKey, { index: number; max: number; setIndex: (n: number) => void; nativeW: number; nativeH: number }> = {
     sagittal: { index: sagittalIndex ?? 0, max: Math.max(columns - 1, 0), setIndex: setSagittalIndex, nativeW: columns, nativeH: numSlices },
     coronal: { index: coronalIndex ?? 0, max: Math.max(rows - 1, 0), setIndex: setCoronalIndex, nativeW: rows, nativeH: numSlices },
@@ -3090,6 +3301,25 @@ export default function ViewerPage() {
 
   return (
     <div ref={viewerRootRef} className="flex h-screen flex-col bg-[#1a1a2e] text-gray-200">
+      {/* One exact linear grey-level map per pane: the instant window
+          preview (see windowFilterFor). sRGB, not the default linearRGB,
+          or the map would bend. */}
+      <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+        <defs>
+          {PANE_ORDER.map((pane) => {
+            const { slope, intercept } = windowFilterParams(pane);
+            return (
+              <filter key={pane} id={`vl-window-${pane}`} colorInterpolationFilters="sRGB">
+                <feComponentTransfer>
+                  <feFuncR type="linear" slope={slope} intercept={intercept} />
+                  <feFuncG type="linear" slope={slope} intercept={intercept} />
+                  <feFuncB type="linear" slope={slope} intercept={intercept} />
+                </feComponentTransfer>
+              </filter>
+            );
+          })}
+        </defs>
+      </svg>
       <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-y-1.5 border-b border-[#333] bg-[#15152a] px-4 py-2">
         {/* Both groups wrap on their own too (a portrait tablet is narrower
             than either), and no control's label may break mid-phrase. */}
@@ -3395,9 +3625,15 @@ export default function ViewerPage() {
             const displayHeight = paneSize;
 
             return (
-              <div key={pane} className="flex flex-shrink-0 flex-col bg-black" style={{ width: paneSize }}>
+              <div key={pane} className="flex flex-shrink-0 flex-col bg-black" style={{ width: paneSize + sliceStripPx }}>
                 <div className="flex flex-shrink-0 items-center justify-center gap-1.5 bg-[#111] py-1">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ background: PLANE_COLORS[pane] }} aria-hidden="true" />
                   <span className="text-center text-[11px] uppercase tracking-wider text-gray-400">{PANE_LABELS[pane]}</span>
+                  {slab.thickness > 1 && (
+                    <span className="rounded bg-[#2a2a3e] px-1 font-mono text-[10px] text-amber-300" title={`${SLAB_LABEL[slab.mode]} of ${slab.thickness} slices`} data-testid={`pane-${pane}-slab`}>
+                      {slab.mode === "avg" ? "AVG" : SLAB_LABEL[slab.mode].toUpperCase()} {slab.thickness}
+                    </span>
+                  )}
                   <button
                     onClick={() => toggleMaximized(pane)}
                     className="text-gray-500 hover:text-white"
@@ -3415,6 +3651,7 @@ export default function ViewerPage() {
                     <EyeIcon visible={true} />
                   </button>
                 </div>
+                <div className="flex min-h-0 flex-1">
                 <div
                   ref={paneContainerRefs[pane]}
                   // names the pane for usage tracking: a click here is placed
@@ -3432,10 +3669,18 @@ export default function ViewerPage() {
                           ? "crosshair"
                           : "default",
                   }}
-                  onPointerDownCapture={(e) => handleTouchDownCapture(e, pane)}
-                  onPointerMoveCapture={(e) => handleTouchMoveCapture(e, pane)}
-                  onPointerUpCapture={(e) => handleTouchUpCapture(e, pane)}
-                  onPointerCancelCapture={(e) => handleTouchUpCapture(e, pane)}
+                  onPointerDownCapture={(e) => {
+                    if (!startWindowDrag(e, pane)) handleTouchDownCapture(e, pane);
+                  }}
+                  onPointerMoveCapture={(e) => {
+                    if (!moveWindowDrag(e)) handleTouchMoveCapture(e, pane);
+                  }}
+                  onPointerUpCapture={(e) => {
+                    if (!endWindowDrag(e)) handleTouchUpCapture(e, pane);
+                  }}
+                  onPointerCancelCapture={(e) => {
+                    if (!endWindowDrag(e)) handleTouchUpCapture(e, pane);
+                  }}
                   // Pointer events, not mouse events: a touch drag never
                   // produces mousemove, so the View tool's pan needs these.
                   onPointerDown={(e) => handlePaneMouseDown(e, pane)}
@@ -3462,7 +3707,7 @@ export default function ViewerPage() {
                       transformOrigin: "center center",
                     }}
                   >
-                    <canvas ref={imageCanvasRefs[pane]} style={{ width: displayWidth, height: displayHeight, display: "block" }} />
+                    <canvas ref={imageCanvasRefs[pane]} style={{ width: displayWidth, height: displayHeight, display: "block", filter: windowFilterFor(pane) }} data-testid={`pane-${pane}-image`} />
                     <canvas
                       ref={overlayRefs[pane]}
                       style={{
@@ -3502,21 +3747,27 @@ export default function ViewerPage() {
                       ref={brushCursorRefs[pane]}
                       style={{ display: "none", position: "absolute", borderRadius: "9999px", border: "1.5px solid #60a5fa", pointerEvents: "none" }}
                     />
+                    {renderCrosshair(pane, displayWidth, displayHeight, z.scale)}
                     {renderPolygonOverlay(pane)}
                     {renderAutoBoxOverlay(pane)}
                     {renderRoiBoxOutline(pane)}
                   </div>
                   )}
                 </div>
-                <div className="flex flex-shrink-0 items-center gap-1.5 border-t border-[#333] bg-[#15152a] px-2 py-1.5">
+                {/* The slice control stands along the image's right edge,
+                    first slice at the top (the same top-to-bottom order the
+                    other panes' crosshair lines move in). */}
+                <div className="flex flex-shrink-0 flex-col border-l border-[#333] bg-[#15152a]" style={{ width: sliceStripPx }}>
                   <SliceControl
                     index={cfg.index}
                     max={cfg.max}
                     onChange={cfg.setIndex}
                     label={PANE_LABELS[pane]}
                     accentClass="accent-blue-500"
-                    counter={<span className="w-9 flex-shrink-0 text-right font-mono text-[11px] text-gray-400">{cfg.index}</span>}
+                    orientation="vertical"
+                    counter={<span className="w-full text-center font-mono text-[10px] leading-tight text-gray-400">{cfg.index}</span>}
                   />
+                </div>
                 </div>
               </div>
             );
@@ -3612,11 +3863,15 @@ export default function ViewerPage() {
             />
           )}
 
-          <Section title="Appearance" guide="appearance" help="How strongly the coloured annotation overlay is drawn over the scan. Display only -- nothing about the annotation changes.">
+          <Section title="Appearance" guide="appearance" help="How strongly the coloured annotation overlay is drawn over the scan, and the crosshair showing where the other planes cut. Display only -- nothing about the annotation changes.">
             <SliderRow label="Overlay opacity" help="0% hides the annotation, 100% covers the scan completely." value={overlayOpacity} min={0} max={100} onChange={setOverlayOpacity} suffix="%" />
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-300" title="Coloured lines where the other two planes cut each pane, left open in the middle so they never cover the point you are looking at. Shortcut: C">
+              <input type="checkbox" checked={showCrosshair} onChange={(e) => setShowCrosshair(e.target.checked)} data-testid="crosshair-toggle" />
+              Crosshair <span className="text-gray-500">(C)</span>
+            </label>
           </Section>
 
-          <Section title="Window / level" guide="window" help="The greyscale mapping of Hounsfield units: pick the preset for the tissue you're looking at, or fine-tune with the sliders. Display only.">
+          <Section title="Window / level" guide="window" help="The greyscale mapping of Hounsfield units: pick the preset for the tissue you're looking at, fine-tune with the sliders, or drag on the image with the right mouse button (Cursor tool) or the middle button (any tool): up/down moves the level, left/right the width. Display only.">
             <div className="mb-3 flex flex-wrap gap-1.5">
               {WINDOW_PRESETS.map((preset) => (
                 <Tip key={preset.label} title={`${preset.label} window`} description={`${PRESET_HELP[preset.label] ?? ""} Center ${preset.center}, width ${preset.width}.`} side="left">
@@ -3641,6 +3896,51 @@ export default function ViewerPage() {
             <SliderRow label="Width" help="The HU range from black to white (window width): narrow = more contrast." value={windowWidth} min={1} max={4000} onChange={setWindowWidth} />
           </Section>
 
+          <Section title="Slab" guide="slab" help="Makes each pane a thick slice: several neighbouring slices averaged, or their brightest (MIP) or darkest (MinIP) voxel. Display only -- drawing still lands on the centre slice.">
+            <div className="mb-2 flex flex-wrap gap-1" role="group" aria-label="Slab thickness">
+              {SLAB_THICKNESSES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => {
+                    trackAction(`slab.${t}`);
+                    setSlab((prev) => ({ ...prev, thickness: t }));
+                  }}
+                  disabled={t > 1 && volumeUnavailable !== null}
+                  className={`rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    slab.thickness === t ? "border-blue-500 bg-blue-500/20 text-blue-300" : "border-[#444] bg-[#2a2a3e] text-gray-300 hover:bg-[#333]"
+                  }`}
+                  aria-pressed={slab.thickness === t}
+                  data-testid={`slab-thickness-${t}`}
+                  title={t === 1 ? "A single slice" : `${t} slices`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1" role="group" aria-label="Slab projection">
+              {(Object.keys(SLAB_LABEL) as SlabMode[]).map((m) => (
+                <Tip key={m} title={SLAB_LABEL[m]} description={SLAB_HELP[m]} side="left">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      trackAction(`slab.${m}`);
+                      setSlab((prev) => ({ mode: m, thickness: prev.thickness > 1 ? prev.thickness : 5 }));
+                    }}
+                    disabled={volumeUnavailable !== null}
+                    className={`flex-1 rounded border px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                      slab.thickness > 1 && slab.mode === m ? "border-blue-500 bg-blue-500/20 text-blue-300" : "border-[#444] bg-[#2a2a3e] text-gray-300 hover:bg-[#333]"
+                    }`}
+                    aria-pressed={slab.thickness > 1 && slab.mode === m}
+                    data-testid={`slab-mode-${m}`}
+                  >
+                    {SLAB_LABEL[m]}
+                  </button>
+                </Tip>
+              ))}
+            </div>
+          </Section>
+
           <Section title="Sharpness" guide="sharpness" help="Enhances edges in the displayed image to make boundaries easier to follow. Display only.">
             <SliderRow label="Edge enhancement" help="0 is the original image; higher values sharpen boundaries." value={sharpness} min={0} max={5} step={0.1} onChange={setSharpness} />
           </Section>
@@ -3653,8 +3953,9 @@ export default function ViewerPage() {
                   setWindowCenter(originalWindowCenter);
                   setWindowWidth(originalWindowWidth);
                   setSharpness(0);
+                  setSlab({ thickness: 1, mode: "avg" });
                 }}
-                disabled={isOriginalImageAdjustment}
+                disabled={isOriginalImageAdjustment && slab.thickness === 1}
                 className="rounded border border-[#444] px-2 py-1 text-[11px] text-gray-300 hover:bg-[#2a2a3e] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Reset to original
@@ -3734,16 +4035,16 @@ export default function ViewerPage() {
               ? "View · Pinch=Zoom · Two-finger drag=Pan · Arrows/slider=Slice · Long-press=HU value · Double-tap=Reset · Two-finger tap=Jump all planes"
               : `${TOOL_TOUCH_HINT[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Two-finger tap=Jump all planes`
             : tab === "view"
-            ? "View · Scroll=Zoom · Ctrl/Cmd+Scroll=Slice · Drag=Pan (zoomed) · Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset"
+            ? "View · Scroll=Slice · Ctrl/Cmd+Scroll=Zoom · Right/middle-drag=Window · Drag=Pan (zoomed) · Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset"
             : tool === "fill"
-              ? "Fill · Click inside a closed outline on any pane · Right-click (no drag)=Comment"
+              ? "Fill · Click inside a closed outline on any pane · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
               : tool === "polygon"
-                ? "Polygon · Click to place points · Click the first (yellow) point to close · Esc=Cancel · Right-click (no drag)=Comment"
+                ? "Polygon · Click to place points · Click the first (yellow) point to close · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
                 : tool === "auto"
-                  ? "Auto · Drag a box around a structure · Adjust tolerance · Enter=Apply · Esc=Cancel · Right-click (no drag)=Comment"
+                  ? "Auto · Drag a box around a structure · Adjust the HU range · Enter=Apply · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
                   : tool === "histogram"
-                    ? "Histogram · Drag a box to see its HU distribution · Esc=Close · Right-click (no drag)=Comment"
-                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw · Right-click drag=Erase · Right-click (no drag)=Comment`}
+                    ? "Histogram · Drag a box to see its HU distribution · Esc=Close · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window"
+                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw · Right-click drag=Erase · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window`}
         </span>
         <span className="flex-shrink-0 whitespace-nowrap">{activeObjectName ? `Active: ${activeObjectName}` : tab === "annotate" ? "No object selected" : ""}</span>
       </div>
@@ -4048,17 +4349,17 @@ const TOOL_TOUCH_HINT: Record<DrawTool, string> = {
   erase: "Eraser · Drag=Erase",
   fill: "Fill · Tap inside a closed outline",
   polygon: "Polygon · Tap to place points · Tap the first (yellow) point to close",
-  auto: "Auto · Drag a box · Adjust tolerance · Apply",
+  auto: "Auto · Drag a box · Adjust the HU range · Apply",
   histogram: "Histogram · Drag a box",
 };
 
 const TOOL_HELP: Record<DrawTool, string> = {
-  cursor: "Navigate only: scroll to zoom, Ctrl+scroll to change slice, drag to pan when zoomed, double-click to reset. Nothing is drawn.",
+  cursor: "Navigate only: scroll to change slice, Ctrl+scroll to zoom, right- or middle-drag to window (up/down = level, left/right = width), drag to pan when zoomed, double-click to reset. Nothing is drawn.",
   paint: "Brush into the active object. Drag to paint; right-click and drag to erase; Brush size is in the Draw panel.",
   erase: "Remove paint from any object under the brush, regardless of which object is active.",
   fill: "Click inside a closed outline on the current slice to fill the whole enclosed area into the active object.",
   polygon: "Click to place points around a structure; click the first (yellow) point to close and fill it. Esc cancels.",
-  auto: "Drag a box around a structure; the viewer segments it by intensity. Adjust the tolerance, then Enter to apply or Esc to cancel.",
+  auto: "Drag a box around a structure; the viewer segments it by intensity, starting from a HU range suggested from the box (calcification included). Adjust the range, then Enter to apply or Esc to cancel.",
   histogram: "Drag a box to see the distribution of Hounsfield values inside it. A measurement only -- it draws nothing.",
 };
 

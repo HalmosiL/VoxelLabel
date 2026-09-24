@@ -76,13 +76,13 @@ function paneTransforms(page) {
   const t5 = await paneTransforms(page);
   check("ArrowUp on hovered coronal zooms ONLY coronal", t5[1] !== t4[1] && t5[0] === t4[0] && t5[2] === t4[2], { t4, t5 });
 
-  // Wheel-zoom on sagittal
+  // Ctrl+wheel zooms the sagittal pane (the plain wheel pages slices)
   await canvases.nth(0).hover();
   const t6 = await paneTransforms(page);
-  await page.mouse.wheel(0, -200);
+  await page.keyboard.down("Control"); await page.mouse.wheel(0, -200); await page.keyboard.up("Control");
   await page.waitForTimeout(200);
   const t7 = await paneTransforms(page);
-  check("wheel zooms hovered sagittal pane", t7[0] !== t6[0], { t6: t6[0], t7: t7[0] });
+  check("Ctrl+wheel zooms hovered sagittal pane", t7[0] !== t6[0], { t6: t6[0], t7: t7[0] });
 
   // Undo/redo keyboard shortcuts: paint something (an instance is
   // pre-seeded and active by default), Ctrl+Z should undo (Mark button disables)

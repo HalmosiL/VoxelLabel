@@ -115,7 +115,7 @@ const DEFAULT_CENTER = 40;
 const DEFAULT_WIDTH = 400;
 
 const TOOL_HELP: Record<DrawTool, string> = {
-  cursor: "Navigate only: scroll to zoom, drag to pan when zoomed. Nothing is drawn.",
+  cursor: "Navigate only: scroll to change slice, Ctrl+scroll to zoom, drag to pan when zoomed. Nothing is drawn.",
   paint: "Brush into the active object. Drag to paint; right-drag to erase.",
   erase: "Remove paint from any object under the brush.",
   fill: "Click inside a closed outline to fill it into the active object -- paint or Polygon the boundary first.",
@@ -591,7 +591,7 @@ export default function TutorialPage() {
     });
   }
 
-  // One slice forward/back on a pane -- shared by Ctrl+scroll and the
+  // One slice forward/back on a pane -- shared by the wheel and the
   // Left/Right arrow keys, with each pane's own index range.
   function stepPaneIndex(pane: PaneKey, dir: number) {
     if (pane === "axial") setAxialIndex((i) => Math.max(0, Math.min(TUTORIAL_SLICES - 1, i + dir)));
@@ -619,9 +619,9 @@ export default function TutorialPage() {
   }
 
   // ── Wheel on every pane, matching the real viewer's handleWheel: a
-  // plain scroll zooms with any tool active (the wheel is never a
-  // drawing gesture, so it can't fight one), Ctrl/Cmd+scroll steps that
-  // pane's slice instead. Zoom is anchored at the cursor -- the point
+  // plain scroll steps that pane's slice with any tool active (the
+  // wheel is never a drawing gesture, so it can't fight one),
+  // Ctrl/Cmd+scroll zooms instead. Zoom is anchored at the cursor -- the point
   // under the mouse stays put while everything scales around it (see
   // zoomAt). Native listeners (not React's onWheel) so preventDefault
   // actually stops the page from scrolling, same reason the real viewer
@@ -637,7 +637,7 @@ export default function TutorialPage() {
       if (!el) continue;
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
-        if (e.ctrlKey || e.metaKey) {
+        if (!(e.ctrlKey || e.metaKey)) {
           stepPaneIndex(pane, e.deltaY > 0 ? 1 : -1);
           return;
         }

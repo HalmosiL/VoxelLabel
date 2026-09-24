@@ -121,3 +121,35 @@ def render_plane(
     since a reconstructed plane is built from many instances at once; a
     missing window still falls back to min-max on that plane's own data."""
     return _window_and_encode(plane, window_center, window_width, sharpen)
+
+
+# How a thick slab is projected onto one plane: the mean of its slices
+# (quieter, like a thicker reconstruction), the maximum (MIP -- vessels
+# and nodules stand out against lung), or the minimum (MinIP -- airways).
+SLAB_MODES = ("avg", "mip", "minip")
+MAX_SLAB_SLICES = 51
+# plane -> the volume axis the plane cuts across (volume is z, y, x)
+_PLANE_AXIS = {"axial": 0, "coronal": 1, "sagittal": 2}
+
+
+def slab_plane(volume: np.ndarray, plane: str, index: int, thickness: int, mode: str) -> np.ndarray:
+    """One plane of `volume` (num_slices, rows, columns) made thick:
+    `thickness` neighbouring slices centred on `index` (an even number
+    is rounded up to the next odd one so the slab stays centred),
+    clipped at the volume's edges, projected by `mode`. thickness 1 is
+    just the plane itself."""
+    if plane not in _PLANE_AXIS:
+        raise ValueError(f"unknown plane {plane!r}")
+    if mode not in SLAB_MODES:
+        raise ValueError(f"unknown slab mode {mode!r}")
+    axis = _PLANE_AXIS[plane]
+    size = volume.shape[axis]
+    index = max(0, min(int(index), size - 1))
+    half = max(0, min(int(thickness), MAX_SLAB_SLICES)) // 2
+    lo, hi = max(0, index - half), min(size, index + half + 1)
+    slab = np.take(volume, range(lo, hi), axis=axis)
+    if mode == "mip":
+        return slab.max(axis=axis)
+    if mode == "minip":
+        return slab.min(axis=axis)
+    return slab.mean(axis=axis, dtype=np.float32)

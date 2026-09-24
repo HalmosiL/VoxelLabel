@@ -175,6 +175,25 @@
   select {
     min-height: 2.5rem;
   }
+  /* The viewer's slice control stands along the pane's edge (see
+     SliceControl's vertical variant): the same finger-sized thumb, on a
+     track that runs top to bottom. */
+  input[type="range"].slice-vertical {
+    height: 100%;
+    width: 1.5rem;
+  }
+  input[type="range"].slice-vertical::-webkit-slider-runnable-track {
+    width: 6px;
+    height: 100%;
+  }
+  input[type="range"].slice-vertical::-moz-range-track {
+    width: 6px;
+    height: 100%;
+  }
+  input[type="range"].slice-vertical::-webkit-slider-thumb {
+    margin-top: 0;
+    margin-left: -9px;
+  }
 }
 @media (pointer: coarse) {
   /* Every button becomes at least a finger wide/tall (min-, so the

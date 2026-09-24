@@ -137,3 +137,47 @@ def test_render_plane_falls_back_to_min_max_when_no_window_given():
     plane = np.array([[0, 500], [1000, 1500]], dtype=np.float32)
     png_bytes = render_plane(plane, window_center=None, window_width=None)
     assert png_bytes[:8] == _PNG_MAGIC
+
+
+def _ramp_volume():
+    # value = 100*z + 10*y + x, so every projection is easy to predict
+    z, y, x = np.meshgrid(np.arange(5), np.arange(4), np.arange(3), indexing="ij")
+    return (100 * z + 10 * y + x).astype(np.float32)
+
+
+def test_slab_of_thickness_one_is_the_plane_itself():
+    from app.dicom_render import slab_plane
+
+    vol = _ramp_volume()
+    assert np.array_equal(slab_plane(vol, "axial", 2, 1, "avg"), vol[2])
+    assert np.array_equal(slab_plane(vol, "coronal", 1, 1, "mip"), vol[:, 1, :])
+    assert np.array_equal(slab_plane(vol, "sagittal", 0, 1, "minip"), vol[:, :, 0])
+
+
+def test_slab_projects_neighbouring_slices_by_mode():
+    from app.dicom_render import slab_plane
+
+    vol = _ramp_volume()
+    # axial slices 1..3 around 2
+    assert np.allclose(slab_plane(vol, "axial", 2, 3, "avg"), vol[2])
+    assert np.array_equal(slab_plane(vol, "axial", 2, 3, "mip"), vol[3])
+    assert np.array_equal(slab_plane(vol, "axial", 2, 3, "minip"), vol[1])
+    # an even thickness rounds up to stay centred: 4 -> slices 0..4
+    assert np.array_equal(slab_plane(vol, "axial", 2, 4, "mip"), vol[4])
+    # sagittal/coronal cut across x / y
+    assert np.array_equal(slab_plane(vol, "sagittal", 1, 3, "mip"), vol[:, :, 2])
+    assert np.array_equal(slab_plane(vol, "coronal", 1, 3, "minip"), vol[:, 0, :])
+
+
+def test_slab_is_clipped_at_the_volume_edge_and_rejects_nonsense():
+    import pytest
+    from app.dicom_render import slab_plane
+
+    vol = _ramp_volume()
+    # slice 0 with thickness 5 -> only slices 0..2 exist on that side
+    assert np.allclose(slab_plane(vol, "axial", 0, 5, "avg"), vol[1])
+    assert np.array_equal(slab_plane(vol, "axial", 99, 3, "mip"), vol[4])
+    with pytest.raises(ValueError):
+        slab_plane(vol, "oblique", 0, 3, "avg")
+    with pytest.raises(ValueError):
+        slab_plane(vol, "axial", 0, 3, "median")
