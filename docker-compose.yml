@@ -151,6 +151,10 @@ services:
       # signed /data/objects links (see app/storage.py) -- the internal host,
       # so none of it depends on the browser reaching MinIO.
       OBJECT_STORAGE_INTERNAL_ENDPOINT: http://minio:9000
+      # Signs the /data/objects links (see libs/shared-auth object_links.py);
+      # empty = derived from MINIO_ROOT_PASSWORD (random per process when
+      # that is still the public default).
+      OBJECT_LINK_SECRET: ${OBJECT_LINK_SECRET:-}
       OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
@@ -196,6 +200,7 @@ services:
       OBJECT_STORAGE_PUBLIC_ENDPOINT: ${PUBLIC_MINIO_URL:-http://localhost:9000}
       OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      OBJECT_LINK_SECRET: ${OBJECT_LINK_SECRET:-}
       KEYCLOAK_ISSUER: ${PUBLIC_KEYCLOAK_URL:-http://localhost:8080}/realms/ct-platform
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/ct-platform/protocol/openid-connect/certs
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080

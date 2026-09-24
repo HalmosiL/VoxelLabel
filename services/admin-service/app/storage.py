@@ -77,12 +77,13 @@ def upload_study_cover_image(storage_key: str, data: bytes) -> None:
 
 
 LINK_SECRET = link_secret(settings.object_storage_secret_key)
+OBJECTS_PATH = "/admin/objects"
 
 
 def study_cover_image_link(storage_key: str) -> str:
     """A signed link to /admin/objects (a path -- the browser prefixes the
     admin API's base URL); see app/api/objects.py."""
-    return sign_object_link("/admin/objects", storage_key, LINK_SECRET)
+    return sign_object_link(OBJECTS_PATH, storage_key, LINK_SECRET)
 
 
 def read_object(storage_key: str):

@@ -12,7 +12,7 @@ from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance,
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.storage import LINK_SECRET, object_link, read_object
+from app.storage import LINK_SECRET, OBJECTS_PATH, object_link, read_object
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -24,7 +24,7 @@ def get_object(key: str = Query(...), exp: int = Query(...), sig: str = Query(..
     (whoever issued it checked the caller's role), so this takes no
     token and works as a plain <img src> or a new tab. Streamed from
     MinIO over the internal network: the browser never needs MinIO."""
-    if not verify_object_link(key, exp, sig, LINK_SECRET):
+    if not verify_object_link(OBJECTS_PATH, key, exp, sig, LINK_SECRET):
         raise HTTPException(status_code=403, detail="This link is invalid or has expired -- reload the page for a fresh one.")
     try:
         body, content_type, length = read_object(key)

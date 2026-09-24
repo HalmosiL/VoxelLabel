@@ -85,6 +85,7 @@ POSTGRES_PASSWORD=<long random>
 MINIO_ROOT_PASSWORD=<long random>
 KEYCLOAK_ADMIN_PASSWORD=<long random>
 KEYCLOAK_ADMIN_CLIENT_SECRET=<long random>
+OBJECT_LINK_SECRET=<long random>   # optional: signs image/document links; defaults to one derived from MINIO_ROOT_PASSWORD
 ```
 
 Rules that will bite if ignored:

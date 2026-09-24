@@ -8,14 +8,14 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from shared_auth.object_links import verify_object_link
 
-from app.storage import LINK_SECRET, read_object
+from app.storage import LINK_SECRET, OBJECTS_PATH, read_object
 
 router = APIRouter(prefix="/admin", tags=["admin:objects"])
 
 
 @router.get("/objects")
 def get_object(key: str = Query(...), exp: int = Query(...), sig: str = Query(...)) -> StreamingResponse:
-    if not verify_object_link(key, exp, sig, LINK_SECRET):
+    if not verify_object_link(OBJECTS_PATH, key, exp, sig, LINK_SECRET):
         raise HTTPException(status_code=403, detail="This link is invalid or has expired -- reload the page for a fresh one.")
     try:
         body, content_type, length = read_object(key)
