@@ -154,3 +154,20 @@ def _llm_connected_case_ids(db: Session, card: WorkflowCard) -> list[str]:
     Criterion sub-agent. Resolved on demand (neither type is ever Run --
     see _NO_RUN_TYPES -- so there's no cached `output_case_ids`)."""
     return _incoming_case_ids(db, card, target_handle="input")
+
+
+def _llm_connected_summary(db: Session, card: WorkflowCard) -> tuple[int, list[str]]:
+    """The board's "N cases connected" line for an LLM/Criterion card:
+    (cases reachable through the inputs that can be resolved, titles of
+    the inputs that can't yet -- a source card never Run). Unlike
+    _llm_connected_case_ids this never raises: one unrun source used to
+    make the whole board fail to load (C-01)."""
+    ids: list[str] = []
+    unrun: list[str] = []
+    for edge in db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="input").all():
+        source = _card_or_404(db, edge.source_card_id)
+        try:
+            ids.extend(_resolve_output(db, source, set()))
+        except HTTPException:
+            unrun.append(source.title)
+    return len(_dedupe_sorted(ids)), sorted(unrun)

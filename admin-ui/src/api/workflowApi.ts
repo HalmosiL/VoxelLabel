@@ -63,6 +63,8 @@ export interface WorkflowCard {
   // LLM/Criterion only: how many cases are currently wired into its
   // input, computed fresh on every read (neither card type is ever Run).
   llm_connected_case_count?: number;
+  // LLM/Criterion only: titles of input cards not Run yet (their cases aren't counted).
+  llm_unrun_sources?: string[];
 }
 
 /** One turn of an LLM card's chat transcript (config.messages). A

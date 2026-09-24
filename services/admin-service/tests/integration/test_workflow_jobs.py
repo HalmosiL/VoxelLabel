@@ -233,3 +233,24 @@ def test_a_dataset_can_only_pin_cases_of_its_own_study(client, db):
     assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
     ids = [c["id"] for c in client.get(f"/admin/workflow-cards/{ann['id']}/cases").json()]
     assert ids == [own["id"]]
+
+
+def test_board_loads_when_an_ai_card_is_fed_by_a_card_not_run_yet(client, db):
+    """C-01: an LLM/Criterion card wired to a never-run Filter used to make
+    GET /workflow 409 for everyone -- an empty canvas, no way to fix it
+    from the UI. The board loads; the card counts what it can and names
+    what still needs a Run."""
+    sid = make_study(client)
+    make_case(client, sid, external="p0")
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    flt = _card(client, sid, "filter", "Adults only", x=300)
+    llm = _card(client, sid, "llm", "Assistant", x=600)
+    _edge(client, sid, ds["id"], flt["id"])
+    _edge(client, sid, flt["id"], llm["id"])
+    _edge(client, sid, ds["id"], llm["id"])
+
+    r = client.get(f"/admin/studies/{sid}/workflow")
+    assert r.status_code == 200, r.text
+    card = next(c for c in r.json()["cards"] if c["id"] == llm["id"])
+    assert card["llm_connected_case_count"] == 1  # the Dataset's case still counts
+    assert card["llm_unrun_sources"] == ["Adults only"]

@@ -8,6 +8,7 @@ import { RUNNABLE_TYPES } from "./handleRules";
 import LabelFormModal, { LabelField } from "./LabelFormModal";
 import PytorchExportModal from "./PytorchExportModal";
 import { TASK_STATUS_STYLE } from "./statusStyle";
+import UnrunSourcesHint from "./UnrunSourcesHint";
 
 export interface Assignee {
   id: string;
@@ -649,6 +650,11 @@ function AiFields({
         <p className="flex items-center gap-1.5 text-xs text-gray-700">
           <span className="badge-blue">MCP</span>
           {connectedCount} case{connectedCount === 1 ? "" : "s"} connected
+        </p>
+      )}
+      {card.llm_unrun_sources && card.llm_unrun_sources.length > 0 && (
+        <p className="text-xs">
+          <UnrunSourcesHint titles={card.llm_unrun_sources} />
         </p>
       )}
       <div className="flex items-center gap-2">

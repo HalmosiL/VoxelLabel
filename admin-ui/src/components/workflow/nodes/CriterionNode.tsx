@@ -4,6 +4,7 @@ import { memo } from "react";
 import { FunnelCheckIcon } from "../../icons";
 import { CardNode } from "../types";
 import WorkflowNodeShell from "./WorkflowNodeShell";
+import UnrunSourcesHint from "../UnrunSourcesHint";
 
 // The two named outputs a Criterion card materializes once its own
 // chat session has been asked to evaluate -- included cases are meant
@@ -42,6 +43,7 @@ function CriterionNode({ data, selected }: NodeProps<CardNode>) {
         <span>
           {connectedCount} case{connectedCount === 1 ? "" : "s"} connected
         </span>
+        <UnrunSourcesHint titles={card.llm_unrun_sources} />
       </div>
       <ul className="mt-2 flex flex-col gap-0.5 text-xs text-gray-600">
         {CRITERION_BRANCHES.map((branch) => (

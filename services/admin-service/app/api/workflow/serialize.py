@@ -2,7 +2,7 @@
 from shared_models.models import WorkflowCard, WorkflowCardType, WorkflowEdge
 from sqlalchemy.orm import Session
 
-from .graph import _dataset_output_ids, _is_stale, _llm_connected_case_ids, _materialized_children, _output_count
+from .graph import _dataset_output_ids, _is_stale, _llm_connected_summary, _materialized_children, _output_count
 from .status import _annotation_progress, compute_job_status
 
 
@@ -73,8 +73,9 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         # every time rather than cached, since this card is never Run
         # (see _NO_RUN_TYPES); its "input" edges may change at any time.
         # Builder has no connected data at all (scoped to the whole
-        # study instead), so it gets no such count.
-        result["llm_connected_case_count"] = len(_llm_connected_case_ids(db, card))
+        # study instead), so it gets no such count. Inputs whose source
+        # hasn't been Run yet are named instead of counted.
+        result["llm_connected_case_count"], result["llm_unrun_sources"] = _llm_connected_summary(db, card)
 
     if card.type == WorkflowCardType.DATASET and card.materialized_source_card_id:
         source = cards_by_id.get(card.materialized_source_card_id) or db.get(

@@ -4,6 +4,7 @@ import { memo } from "react";
 import { SparklesIcon } from "../../icons";
 import { CardNode } from "../types";
 import WorkflowNodeShell from "./WorkflowNodeShell";
+import UnrunSourcesHint from "../UnrunSourcesHint";
 
 /** The Clinical Trial module's data-connected chat card -- a real small
  * model driven through a real MCP server (see services/mcp-server),
@@ -26,6 +27,7 @@ function LlmNode({ data, selected }: NodeProps<CardNode>) {
         <span>
           {connectedCount} case{connectedCount === 1 ? "" : "s"} connected
         </span>
+        <UnrunSourcesHint titles={card.llm_unrun_sources} />
         {createdCount > 0 && (
           <span>
             {createdCount} dataset{createdCount === 1 ? "" : "s"} created
