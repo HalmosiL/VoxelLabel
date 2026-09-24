@@ -31,8 +31,11 @@ export default function PeopleTab({
   return (
     <div className="space-y-5">
       <PeopleCard summary={summary} onOpen={onOpenUser} />
-      {sessionsFor && <SessionsCard who={sessionsFor} sessions={sessions} selected={session?.session_id ?? null} since={summary.since} until={summary.until} onOpen={onOpenSession} onClose={onCloseSessions} />}
+      {/* The replay sits above the list it was picked from, and scrolls
+          itself into view when a sitting opens -- no hunting for it below
+          a long session list. */}
       {session && <ReplayCard session={session} />}
+      {sessionsFor && <SessionsCard who={sessionsFor} sessions={sessions} selected={session?.session_id ?? null} since={summary.since} until={summary.until} onOpen={onOpenSession} onClose={onCloseSessions} />}
       {learningCurve && <LearningCurveCard rows={learningCurve} since={summary.since} until={summary.until} tutorialDone={new Set(summary.guides.finished_user_ids)} />}
       <TutorialCard summary={summary} />
     </div>
@@ -277,9 +280,11 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   const stage = useFullscreen<HTMLDivElement>();
   const logRef = useRef<HTMLUListElement>(null);
 
+  const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setHead(0);
     setPlaying(false);
+    cardRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   }, [session.session_id]);
 
   // Fetch every screen of the sitting up front (they're cached), so the
@@ -352,7 +357,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   }
 
   return (
-    <div className="card" data-testid="usage-timeline">
+    <div ref={cardRef} className="card scroll-mt-4" data-testid="usage-timeline">
       <CardHeader
         title={`Replay · ${session.username} · ${session.app}`}
         hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them the screen as it was -- its images as grey blocks, or the case images themselves where they were recorded.`}
