@@ -46,7 +46,8 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
   const t = await token("dr-test", "Test1234!");
   const jobs = await api(t, `${ADMIN}/admin/my-jobs`);
   const job = jobs.find((j) => j.card_id === ANNOT_CARD);
-  const pendingCase = job.cases.find((c) => c.status !== "done");
+  // no open case left (other specs handed them all in): take the last one -- a new hand-in makes it reviewable again
+  const pendingCase = job.cases.find((c) => c.status !== "done") ?? job.cases[job.cases.length - 1];
   const series = await api(t, `http://localhost:8002/data/cases/${pendingCase.id}/series`);
   const seriesId = series[0].id;
   console.log("case", pendingCase.title, "series", seriesId);
