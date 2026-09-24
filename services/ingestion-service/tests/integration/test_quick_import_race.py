@@ -85,3 +85,11 @@ def test_parallel_imports_of_one_new_patient_both_land_on_that_patient(db, stage
     assert len(cases) == 2
     assert len({c.patient_id for c in cases}) == 1
     assert db.query(Instance).count() == 2
+
+
+def test_a_padded_patient_id_is_the_same_patient(db):
+    """B-18/J-14: trimmed like admin-service's case creation, so " MRN-1 "
+    and "MRN-1" are one person, with the same pseudonym on both paths."""
+    first = quick_import._get_or_create_patient(db, "MRN-1")
+    db.commit()
+    assert quick_import._get_or_create_patient(db, " MRN-1 ").id == first.id

@@ -4,7 +4,6 @@ data model". Reading/listing this data lives in data-service, not here --
 this router only covers the write/creation side.
 """
 import uuid
-from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from shared_auth import CurrentUser, get_current_user, require_study_role
@@ -12,6 +11,7 @@ from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, Consent, ConsentStatus, Tag
 from sqlalchemy.orm import Session
 
+from app.api import input_checks
 from app.storage import delete_object, upload_clinical_data_file
 
 router = APIRouter(prefix="/admin", tags=["admin:clinical-data"])
@@ -41,24 +41,36 @@ async def create_clinical_data_item(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Attach a clinical data item to a case, with an optional file upload."""
+    """Attach a clinical data item to a case, with an optional file upload.
+
+    Every value is checked, and the row flushed, before the file is
+    written, and a commit that still fails removes the file again -- so a
+    refused upload leaves no orphan object in the bucket (J-05). The
+    stored key uses a sanitised filename (input_checks.safe_filename)."""
     case = _case_or_404(db, case_id)
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     storage_key = None
     if file is not None and file.filename:
-        storage_key = f"clinical-data/{case_id}/{uuid.uuid4()}-{file.filename}"
-        upload_clinical_data_file(storage_key, await file.read())
+        storage_key = f"clinical-data/{case.id}/{uuid.uuid4()}-{input_checks.safe_filename(file.filename)}"
 
     item = ClinicalDataItem(
         case_id=case.id,
-        date=date_type.fromisoformat(item_date) if item_date else None,
-        type=type,
-        title=title,
+        date=input_checks.optional_date(item_date, "The document date"),
+        type=input_checks.required_text(type, "The document type"),
+        title=input_checks.required_text(title, "The document title"),
         object_storage_key=storage_key,
     )
     db.add(item)
-    db.commit()
+    db.flush()
+    if storage_key is not None:
+        upload_clinical_data_file(storage_key, await file.read())
+    try:
+        db.commit()
+    except Exception:
+        if storage_key is not None:
+            delete_object(storage_key)
+        raise
     return {"id": str(item.id), "title": item.title}
 
 
@@ -83,7 +95,7 @@ def update_clinical_data_item(
     if title:
         item.title = title
     if item_date is not None:
-        item.date = date_type.fromisoformat(item_date) if item_date else None
+        item.date = input_checks.optional_date(item_date, "The document date")
 
     db.commit()
     return {

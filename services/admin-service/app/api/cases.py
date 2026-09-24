@@ -6,15 +6,14 @@ data model".
 """
 import hashlib
 import uuid
-from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap
+from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Patient, PatientIdentityMap, Study
 from sqlalchemy.orm import Session
 
-from app.api import audit
+from app.api import audit, input_checks
 from app.api.imaging import _delete_annotations_targeting, _delete_instance
 from app.api.studies import _require_global_admin
 from app.api.workflow import _cascade_new_case
@@ -28,9 +27,10 @@ def _get_or_create_patient(db: Session, external_patient_id: str) -> Patient:
     """Look up or create a pseudonymized patient record from a real-world
     identifier (e.g. an MRN). The mapping lives only in
     PatientIdentityMap (access-restricted); external_patient_id itself is
-    never stored anywhere else.
+    never stored anywhere else. The identifier is trimmed first (see
+    input_checks.external_patient_id).
     """
-    external_id_hash = hashlib.sha256(external_patient_id.encode()).hexdigest()
+    external_id_hash = hashlib.sha256(input_checks.external_patient_id(external_patient_id).encode()).hexdigest()
 
     mapping = db.query(PatientIdentityMap).filter_by(external_id_hash=external_id_hash).first()
     if mapping is not None:
@@ -86,12 +86,15 @@ def create_case(
     list to add another case to them). Exactly one of the two must be
     given."""
     require_study_role(db, study_id, user, allowed_roles=["data_manager", "admin"])
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    case_day = input_checks.optional_date(case_date, "The case date")
 
     if patient_id:
         patient = db.get(Patient, patient_id)
         if patient is None:
             raise HTTPException(status_code=404, detail="Patient not found")
-    elif external_patient_id:
+    elif external_patient_id is not None:
         patient = _get_or_create_patient(db, external_patient_id)
     else:
         raise HTTPException(status_code=422, detail="Either external_patient_id or patient_id is required")
@@ -100,7 +103,7 @@ def create_case(
         study_id=study_id,
         patient_id=patient.id,
         accession_number=accession_number,
-        date=date_type.fromisoformat(case_date) if case_date else None,
+        date=case_day,
         type=type,
         title=title,
         comment=comment,
@@ -145,7 +148,7 @@ def update_case(
     if accession_number is not None:
         case.accession_number = accession_number or None
     if case_date is not None:
-        case.date = date_type.fromisoformat(case_date) if case_date else None
+        case.date = input_checks.optional_date(case_date, "The case date")
     if type is not None:
         case.type = type or None
     if title is not None:

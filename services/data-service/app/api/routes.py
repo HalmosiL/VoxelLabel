@@ -190,6 +190,8 @@ def list_series(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     imaging_study = db.get(ImagingStudy, imaging_study_id)
+    if imaging_study is None:
+        raise HTTPException(status_code=404, detail="Imaging study not found")
     require_study_role(db, str(imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
     return [
@@ -210,6 +212,8 @@ def list_instances(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     series = db.get(Series, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Series not found")
     require_study_role(db, str(series.imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 
     # series.instances (the bare relationship) has no defined order --
@@ -246,6 +250,8 @@ def get_pixel_data_url(
     """A signed link (see app/storage.object_link) to download the raw
     DICOM file through this service."""
     instance = db.get(Instance, instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail="Instance not found")
     imaging_study = instance.series.imaging_study
     require_study_role(db, str(imaging_study.case.study_id), user, allowed_roles=_READ_ROLES)
 

@@ -37,8 +37,10 @@ def _get_or_create_patient(db: Session, external_patient_id: str) -> Patient:
     """Same pseudonymization convention as admin-service's own
     cases.py::_get_or_create_patient -- a patient quick-imported here
     resolves to the identical pseudonym a manually created case for the
-    same real identifier (e.g. a PatientID re-typed by hand) would."""
-    external_id_hash = hashlib.sha256(external_patient_id.encode()).hexdigest()
+    same real identifier (e.g. a PatientID re-typed by hand) would --
+    trimmed the same way (admin-service's input_checks.external_patient_id),
+    so a padded PatientID doesn't split one person into two patients."""
+    external_id_hash = hashlib.sha256(external_patient_id.strip().encode()).hexdigest()
 
     mapping = db.query(PatientIdentityMap).filter_by(external_id_hash=external_id_hash).first()
     if mapping is not None:

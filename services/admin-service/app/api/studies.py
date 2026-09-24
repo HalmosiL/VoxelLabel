@@ -16,6 +16,7 @@ from shared_models.models import Annotation, AnnotationReview, Case, Deidentific
 from sqlalchemy.orm import Session
 
 from app.api import audit
+from app.api.input_checks import required_text
 from app.duplication import duplicate_study
 from app.keycloak_admin import list_realm_users
 from app.storage import study_cover_image_link, upload_study_cover_image
@@ -148,6 +149,7 @@ def create_study(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     _require_global_admin(user)
+    name = required_text(name, "The study name")
     study = Study(name=name, description=description)
     db.add(study)
     db.flush()
@@ -175,6 +177,8 @@ def update_study(
     _require_study_admin(db, study_id, user)
 
     changes = {}
+    if name is not None:
+        name = required_text(name, "The study name")
     if name is not None and name != study.name:
         changes["name"] = {"from": study.name, "to": name}
         study.name = name
