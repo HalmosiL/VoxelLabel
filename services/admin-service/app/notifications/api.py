@@ -13,7 +13,7 @@ from app.keycloak_admin import list_realm_users
 
 from .events import get_settings
 from .mailer import send_email
-from .poller import poller_state, run_once
+from .poller import CycleBusy, poller_state, run_once
 
 router = APIRouter(prefix="/admin/notifications", tags=["admin:notifications"])
 
@@ -120,6 +120,8 @@ def run_now(user: CurrentUser = Depends(get_current_user)) -> dict:
     _require_global_admin(user)
     try:
         return run_once()
+    except CycleBusy:
+        raise HTTPException(status_code=409, detail="A check is already running -- its results will show in a moment.") from None
     except Exception as err:
         raise HTTPException(status_code=500, detail=f"The check failed: {err}")
 

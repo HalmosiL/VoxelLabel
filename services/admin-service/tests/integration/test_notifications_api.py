@@ -81,3 +81,35 @@ def test_test_email_goes_through_the_saved_settings(client, outbox):
     assert client.get("/admin/notifications/log").json()[0]["event_type"] == "test"
     status = client.get("/admin/notifications/status").json()
     assert status["enabled"] is True and status["log_entries"] >= 1
+
+
+def test_overlapping_checks_run_one_cycle(client, db, monkeypatch):
+    """D-04: four "Check for changes now" at once (or one during the
+    poller's own pass) ran four cycles and sent every email four times.
+    One runs; the others are told a check is already running."""
+    import threading
+    import time
+
+    from app.notifications import poller
+
+    runs = []
+
+    def slow_cycle(session):
+        runs.append(1)
+        time.sleep(0.5)
+        return {"cards": 0}
+
+    monkeypatch.setattr(poller, "run_cycle", slow_cycle)
+    codes, barrier = [], threading.Barrier(4)
+
+    def press():
+        barrier.wait()
+        codes.append(client.post("/admin/notifications/run-now").status_code)
+
+    threads = [threading.Thread(target=press) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(runs) == 1 and sorted(codes) == [200, 409, 409, 409], (runs, codes)
+    assert client.post("/admin/notifications/run-now").status_code == 200  # free again afterwards
