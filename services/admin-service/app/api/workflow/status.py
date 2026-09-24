@@ -250,7 +250,8 @@ def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
     case_ids = card.output_case_ids or []
     if not case_ids:
         return []
-    cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
+    # this study's cases only -- a stored id list can predate the checks (C-08)
+    cases = db.query(Case).filter(Case.id.in_(case_ids), Case.study_id == card.study_id).all()
     review = card.type == WorkflowCardType.REVIEW
     # A Review card's whole job is to consume an upstream Annotation
     # card's already-submitted work -- which by definition predates this

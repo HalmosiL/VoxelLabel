@@ -20,7 +20,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Study, StudyMembership, StudyRole, WorkflowCard, WorkflowCardType, WorkflowEdge
+from shared_models.models import Case, Study, StudyMembership, StudyRole, WorkflowCard, WorkflowCardType, WorkflowEdge
 from sqlalchemy.orm import Session
 
 from app.api import audit
@@ -157,6 +157,7 @@ def create_workflow_card(
     require_study_role(db, str(study_id), user, allowed_roles=_WRITE_ROLES)
 
     _validate_assignee(db, WorkflowCard(study_id=study_id, type=body.type), body.config)
+    _validate_case_ids(db, study_id, body.config)
     card = WorkflowCard(
         id=body.id or uuid.uuid4(),
         study_id=study_id,
@@ -174,6 +175,28 @@ def create_workflow_card(
     db.refresh(card)
     autosave(db, card.study_id, user.subject)
     return _serialize_card(db, card, {card.id: card}, {})
+
+
+def _validate_case_ids(db: Session, study_id, config: dict) -> None:
+    """A card's pinned case list (a manual Dataset, or anything else
+    carrying `case_ids`) may only name cases of the board's own study --
+    otherwise a data manager of one study could pull another study's
+    cases, their annotation state and reviewer comments into their board
+    (C-08). Garbage ids are refused too, instead of failing a later Run."""
+    if "case_ids" not in config:
+        return
+    raw = config["case_ids"]
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise HTTPException(status_code=422, detail="case_ids must be a list of case ids")
+    try:
+        ids = {uuid.UUID(x) for x in raw}
+    except ValueError:
+        raise HTTPException(status_code=422, detail="case_ids must be a list of case ids") from None
+    if not ids:
+        return
+    found = {row.id for row in db.query(Case.id).filter(Case.id.in_(ids), Case.study_id == study_id).all()}
+    if len(found) != len(ids):
+        raise HTTPException(status_code=422, detail=f"{len(ids) - len(found)} of the case ids are not cases of this study")
 
 
 _ASSIGNABLE_ROLE = {
@@ -233,6 +256,7 @@ def update_workflow_card(
         card.height = body.height
     if body.config is not None:
         _validate_assignee(db, card, body.config)
+        _validate_case_ids(db, card.study_id, body.config)
         # A merge, not a replace: a caller that only knows about the one
         # field it's changing (e.g. ct-annotator's status-dropdown proxy,
         # which sends only {"status": ...} with no visibility into the

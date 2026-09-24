@@ -199,7 +199,7 @@ def _run_filter(db: Session, card: WorkflowCard, now: datetime) -> None:
     source = _card_or_404(db, edge.source_card_id)
     input_ids = _resolve_output(db, source, set())
 
-    cases = db.query(Case).filter(Case.id.in_(input_ids)).all()
+    cases = db.query(Case).filter(Case.id.in_(input_ids), Case.study_id == card.study_id).all()
     card.output_case_ids = sorted(str(c.id) for c in cases if _matches_filter(case_tags(c), card.config))
 
 

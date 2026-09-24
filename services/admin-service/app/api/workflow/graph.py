@@ -27,7 +27,18 @@ def _has_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles
 
 def _dataset_output_ids(db: Session, card: WorkflowCard) -> list[str]:
     if card.config.get("mode") == "manual":
-        return list(card.config.get("case_ids", []))
+        # Only this study's cases, whatever a stored config says (the write
+        # routes refuse foreign ids; this also covers rows written before).
+        wanted = []
+        for raw in card.config.get("case_ids", []):
+            try:
+                wanted.append(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+        if not wanted:
+            return []
+        own = {row.id for row in db.query(Case.id).filter(Case.id.in_(wanted), Case.study_id == card.study_id).all()}
+        return [str(cid) for cid in wanted if cid in own]
     return [str(c.id) for c in db.query(Case).filter_by(study_id=card.study_id).all()]
 
 

@@ -197,3 +197,39 @@ def test_review_jobs_surface_config_carries_the_annotation_labels_and_their_form
     _edge(client, sid, mid["id"], rev["id"])
     client.as_user(REVIEWER_SUBJECT)
     assert client.get(f"/admin/workflow-cards/{rev['id']}/surface-config").json()["labels"] == labels
+
+
+def test_a_dataset_can_only_pin_cases_of_its_own_study(client, db):
+    """C-08: a data manager of study A must not pull study B's cases (their
+    annotation state and reviewer comments) into A's board."""
+    from shared_models.models import WorkflowCard
+
+    sid_a = make_study(client, "A")
+    sid_b = make_study(client, "B")
+    add_member(client, sid_a, DM_SUBJECT, "data_manager")
+    own = make_case(client, sid_a, external="a1")
+    foreign = make_case(client, sid_b, external="b1")
+    client.as_user(DM_SUBJECT)
+
+    def create(case_ids):
+        return client.post(f"/admin/studies/{sid_a}/workflow/cards", json={"type": "dataset", "title": "Pinned", "position_x": 0, "position_y": 0, "config": {"mode": "manual", "case_ids": case_ids}})
+
+    assert create([foreign["id"]]).status_code == 422
+    assert create([own["id"], foreign["id"]]).status_code == 422
+    assert create(["not-a-uuid"]).status_code == 422
+    assert create("x").status_code == 422
+    ds = create([own["id"]])
+    assert ds.status_code == 201
+    # nor sneak it in later with a PATCH
+    assert client.patch(f"/admin/workflow-cards/{ds.json()['id']}", json={"config": {"case_ids": [foreign["id"]]}}).status_code == 422
+
+    # a config stored before these checks (or restored from a version) is ignored on read and on Run
+    client.as_admin()
+    card = db.get(WorkflowCard, ds.json()["id"])
+    card.config = {"mode": "manual", "case_ids": [own["id"], foreign["id"], "junk"]}
+    db.commit()
+    ann = _card(client, sid_a, "annotation", "Annotate", {}, x=300)
+    _edge(client, sid_a, ds.json()["id"], ann["id"])
+    assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
+    ids = [c["id"] for c in client.get(f"/admin/workflow-cards/{ann['id']}/cases").json()]
+    assert ids == [own["id"]]
