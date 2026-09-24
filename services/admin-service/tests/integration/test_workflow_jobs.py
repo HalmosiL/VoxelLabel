@@ -264,3 +264,22 @@ def test_board_loads_when_an_ai_card_is_fed_by_a_card_not_run_yet(client, db):
     card = next(c for c in r.json()["cards"] if c["id"] == llm["id"])
     assert card["llm_connected_case_count"] == 1  # the Dataset's case still counts
     assert card["llm_unrun_sources"] == ["Adults only"]
+
+
+def test_a_reviewers_save_keeps_the_case_handed_in(client, db):
+    """F-01: the reviewer's "Save" while reviewing made the case "not
+    annotated" for the annotator and left the review queue nothing to
+    decide. Their draft points at the version it reviews and changes
+    neither side."""
+    from shared_models.models import Annotation
+
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=1)
+    submitted = make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    review_draft = make_annotation(db, sid, series[0], REVIEWER_SUBJECT, "draft")
+    db.get(Annotation, review_draft).review_of_id = submitted
+    db.commit()
+
+    annotator_case = _job(client, ANNOTATOR_SUBJECT, ann["id"])["cases"][0]
+    assert annotator_case["status"] == "done"
+    reviewer_case = _job(client, REVIEWER_SUBJECT, rev["id"])["cases"][0]
+    assert reviewer_case["status"] == "pending" and reviewer_case["pending_annotation_id"] == str(review_draft)

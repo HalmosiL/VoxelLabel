@@ -4,7 +4,7 @@
 // type; Annotator never overrides a real Review job (see ViewerPage.tsx's
 // own comment on `reviewMode`). Non-admins never see the tabs.
 const { chromium } = require("playwright");
-const { F } = require("./helpers");
+const { F, saveMaskAs } = require("./helpers");
 const ADMIN = "http://localhost:8004", KC = "http://localhost:8080", VIEWER = "http://localhost:5174", UI = "http://localhost:5173";
 const ANNOT_CARD = F.ANNOT_CARD, REVIEW_CARD = F.REVIEW_CARD, STUDY = F.STUDY;
 const results = []; const check = (n, ok, extra) => results.push({ n, ok: Boolean(ok), extra });
@@ -39,12 +39,9 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
 (async () => {
   const t = await token("dr-test", "Test1234!");
   const annotJob = (await api(t, `${ADMIN}/admin/my-jobs`)).find((j) => j.card_id === ANNOT_CARD);
-  const kase = annotJob.cases.find((c) => c.status !== "done");
+  const kase = annotJob.cases.find((c) => c.status !== "done") ?? annotJob.cases[0];
   const series = (await api(t, `http://localhost:8002/data/cases/${kase.id}/series`))[0].id;
   const rt = await token("dr-review", "Test1234!");
-  const revJob = (await api(rt, `${ADMIN}/admin/my-jobs`)).find((j) => j.card_id === REVIEW_CARD);
-  const revCase = revJob.cases.find((c) => c.pending_annotation_id) ?? revJob.cases[0];
-  const revSeries = (await api(rt, `http://localhost:8002/data/cases/${revCase.id}/series`))[0].id;
 
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 950 } });
@@ -102,6 +99,18 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
   await page.locator('[data-testid="view-as"] [role="tab"]', { hasText: "Admin" }).click(); await page.waitForTimeout(600);
   await page.locator('[data-testid="view-as"] [role="tab"]', { hasText: "Reviewer" }).click(); await page.waitForTimeout(600);
   check("admin-ui: Reviewer -> workbench, /my-jobs", page.url().endsWith("/my-jobs"));
+  // Only handed-in work can be reviewed. The annotator-mode draft saved
+  // above withdrew that case from review, so if nothing is handed in now,
+  // the annotator hands one in right before the review.
+  let revJob = (await api(rt, `${ADMIN}/admin/my-jobs`)).find((j) => j.card_id === REVIEW_CARD);
+  if (!revJob.cases.some((c) => c.pending_annotation_id)) {
+    const open = revJob.cases.find((c) => c.status !== "done") ?? revJob.cases[0];
+    const s = (await api(t, `http://localhost:8002/data/cases/${open.id}/series`))[0].id;
+    await saveMaskAs(t, s, STUDY, "submitted");
+    revJob = (await api(rt, `${ADMIN}/admin/my-jobs`)).find((j) => j.card_id === REVIEW_CARD);
+  }
+  const revCase = revJob.cases.find((c) => c.pending_annotation_id) ?? revJob.cases[0];
+  const revSeries = (await api(rt, `http://localhost:8002/data/cases/${revCase.id}/series`))[0].id;
   await v.goto(`${VIEWER}/viewer/series/${revSeries}?studyId=${STUDY}&caseId=${revCase.id}&jobId=${REVIEW_CARD}&viewAs=reviewer`); await waitViewer(v);
   check("viewer: real review job + Reviewer = review chrome", (await v.locator("header h1").innerText()) === "Review");
   const hasObjects = (await v.locator("aside button", { hasText: "Accept" }).count()) === 1;

@@ -4,10 +4,9 @@ own prefix are never read (A-04). data-service is faked: MEMBER may read
 series S / instance I, OUTSIDER may not."""
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
-
 from app import main
 from app.auth import CurrentUser, get_current_user
+from fastapi.testclient import TestClient
 
 MEMBER = CurrentUser(subject="member", token="t-member")
 OUTSIDER = CurrentUser(subject="outsider", token="t-outsider")
@@ -171,3 +170,44 @@ def test_nothing_is_stored_for_someone_without_access_or_for_garbage(api, monkey
     api.as_user(MEMBER)
     assert api.post(f"/series/{SERIES}/mask-volume", json={**_save_body(), "mask_gzip_base64": "!!not base64!!"}).status_code == 422
     assert uploaded == []
+
+
+def test_a_reviewers_save_says_which_handed_in_version_it_reviews(api, monkeypatch):
+    """F-01: a save made while reviewing carries review_of, so it stays
+    handed-in work instead of taking the case back to "not annotated"."""
+    posted = []
+    monkeypatch.setattr(main, "upload_mask_volume", lambda data: "annotation-masks/new.gz")
+
+    async def post(url, params=None, json=None, headers=None):
+        posted.append(params)
+        return _Resp(200, {"id": "v3", "status": "draft", "review_of_id": params.get("review_of")})
+
+    api.fake.post = post
+    api.as_user(MEMBER)
+    body = {**_save_body("v2"), "review_of": "v1"}
+    assert api.post(f"/series/{SERIES}/mask-volume", json=body).json()["review_of_id"] == "v1"
+    assert posted[-1]["review_of"] == "v1"
+    api.post(f"/series/{SERIES}/mask-volume", json=_save_body("v3"))
+    assert "review_of" not in posted[-1]  # an annotator's save
+
+
+def test_the_loaded_version_says_whether_it_is_handed_in(api, monkeypatch):
+    real_get = api.fake.get
+
+    async def get(url, headers=None, **kw):
+        if url.endswith(f"/annotations/series/{SERIES}"):
+            return _Resp(200, [
+                {"id": "v1", "type_id": "t", "status": "submitted", "review_of_id": None, "payload": {"mask_volume_key": "annotation-masks/a.gz", "labels": [], "objects": []}},
+                {"id": "v2", "type_id": "t", "status": "draft", "review_of_id": "v1", "payload": {"mask_volume_key": "annotation-masks/b.gz", "labels": [], "objects": []}},
+            ])
+        return await real_get(url, headers=headers, **kw)
+
+    async def types(user):
+        return [{"id": "t", "name": "segmentation_volume"}]
+
+    api.fake.get = get
+    monkeypatch.setattr(main, "_get_annotation_types", types)
+    monkeypatch.setattr(main, "download_bytes", lambda key: b"gz")
+    api.as_user(MEMBER)
+    r = api.get(f"/series/{SERIES}/mask-volume").json()
+    assert (r["version_id"], r["version_status"], r["review_of_id"]) == ("v2", "draft", "v1")

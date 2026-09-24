@@ -33,6 +33,7 @@ from shared_models.models import (
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from app.api.workflow.status import _effective_status
 from app.keycloak_admin import list_realm_users
 
 from . import stats
@@ -113,7 +114,10 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
     annotations: list = []
     if case_by_series or case_by_instance:
         annotations = (
-            db.query(Annotation.id, Annotation.target_type, Annotation.target_id, Annotation.status, Annotation.created_at, Annotation.annotator_id)
+            db.query(
+                Annotation.id, Annotation.target_type, Annotation.target_id, Annotation.status, Annotation.created_at,
+                Annotation.annotator_id, Annotation.review_of_id,
+            )
             .filter(
                 or_(
                     and_(Annotation.target_type == "series", Annotation.target_id.in_(case_by_series.keys())),
@@ -125,10 +129,11 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
         )
 
     annotations_by_case: dict[str, list] = defaultdict(list)
-    for annotation_id, target_type, target_id, status, created_at, annotator_id in annotations:
+    for annotation_id, target_type, target_id, status, created_at, annotator_id, review_of_id in annotations:
         cid = case_by_series.get(str(target_id)) if target_type == "series" else case_by_instance.get(str(target_id))
         if cid:
-            annotations_by_case[cid].append((annotation_id, status, created_at, annotator_id))
+            # a reviewer's in-progress draft is still handed-in work (see workflow/status.py)
+            annotations_by_case[cid].append((annotation_id, _effective_status(status, review_of_id), created_at, annotator_id))
 
     annotation_ids = [row[0] for rows in annotations_by_case.values() for row in rows]
     reviews_by_annotation: dict = defaultdict(list)

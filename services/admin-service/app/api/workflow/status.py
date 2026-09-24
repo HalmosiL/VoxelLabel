@@ -28,16 +28,29 @@ def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set,
     Python.
 
     `since`, when given, ignores any Annotation older than that -- see
-    `_latest_annotation_per_case`'s docstring for why a card needs this."""
+    `_latest_annotation_per_case`'s docstring for why a card needs this.
+
+    A reviewer's in-progress draft (review_of_id set) counts as the
+    handed-in work it reviews, i.e. SUBMITTED: the reviewer saving their
+    progress mustn't take the case back out of "handed in" for the
+    annotator, or leave the review queue nothing to decide (F-01). Its
+    own id is the one to decide."""
     if not target_ids:
         return {}
-    query = db.query(Annotation.target_id, Annotation.id, Annotation.status, Annotation.created_at).filter(
-        Annotation.target_type == target_type, Annotation.target_id.in_(target_ids)
-    )
+    query = db.query(
+        Annotation.target_id, Annotation.id, Annotation.status, Annotation.created_at, Annotation.review_of_id
+    ).filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids))
     if since is not None:
         query = query.filter(Annotation.created_at >= since)
     rows = query.order_by(Annotation.target_id, Annotation.created_at.desc()).distinct(Annotation.target_id).all()
-    return {row[0]: (row[1], row[2], row[3]) for row in rows}
+    return {row[0]: (row[1], _effective_status(row[2], row[4]), row[3]) for row in rows}
+
+
+def _effective_status(status: AnnotationStatus, review_of_id) -> AnnotationStatus:
+    """A reviewer's draft stands for the handed-in version it reviews."""
+    if status == AnnotationStatus.DRAFT and review_of_id is not None:
+        return AnnotationStatus.SUBMITTED
+    return status
 
 
 def _latest_annotation_per_case(db: Session, case_ids: list[str], since=None) -> dict:

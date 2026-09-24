@@ -509,6 +509,14 @@ class Annotation(Base):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[AnnotationStatus] = mapped_column(default=AnnotationStatus.DRAFT, nullable=False)
     parent_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("annotations.id"))
+    # Set on a reviewer's in-progress version (a DRAFT saved while
+    # reviewing): the handed-in (SUBMITTED) version it reviews. Such a
+    # draft doesn't take the case back out of "handed in" -- see
+    # admin-service's workflow/status.py and annotation-service's review
+    # rules (F-01, F-07, F-09).
+    review_of_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("annotations.id", ondelete="SET NULL")
+    )
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

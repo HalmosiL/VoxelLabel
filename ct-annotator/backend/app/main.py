@@ -564,6 +564,10 @@ class SaveMaskVolumeBody(BaseModel):
     # meanwhile by another tab or person turns this save into a 409
     # instead of silently burying it. Absent: no check (older clients).
     base_version_id: str | None = None
+    # Set while reviewing: the handed-in version under review (the loaded
+    # version's own id if it is SUBMITTED, else its review_of_id). The
+    # save is then a reviewer's draft that keeps the case handed in.
+    review_of: str | None = None
 
 
 # A mask upload is gzip of one byte per voxel; generous for a 512x512x600
@@ -594,12 +598,8 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         if type_names.get(a.get("type_id")) == "segmentation_volume" and _is_mask_key((a.get("payload") or {}).get("mask_volume_key"))
     ]
     if not volume_annotations:
-        return {"mask_gzip_base64": None, "labels": [], "objects": [], "version_id": None}
+        return {"mask_gzip_base64": None, "labels": [], "objects": [], "version_id": None, "version_status": None, "review_of_id": None}
 
-    # The list endpoint doesn't return created_at, so "latest" relies on
-    # Postgres returning unindexed rows in roughly insertion order (true
-    # in practice for this app's low write volume) -- the last element is
-    # the best available approximation of "most recently saved".
     # annotation-service lists oldest-first by the save's own timestamp
     # (then id), so the last one is the newest.
     latest = volume_annotations[-1]
@@ -610,6 +610,10 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         "labels": payload["labels"],
         "objects": payload["objects"],
         "version_id": latest["id"],
+        # What review mode needs: is this handed-in work (submitted, or a
+        # reviewer's draft of it), still to decide, or already decided?
+        "version_status": latest.get("status"),
+        "review_of_id": latest.get("review_of_id"),
     }
 
 
@@ -631,6 +635,8 @@ async def save_mask_volume(
     params = {"target_type": "series", "target_id": series_id, "type_name": "segmentation_volume", "status": body.status}
     if body.base_version_id is not None:
         params["base_version_id"] = body.base_version_id or "none"
+    if body.review_of:
+        params["review_of"] = body.review_of
     resp = await _http_client.post(
         f"{ANNOTATION_SERVICE_URL}/annotations/studies/{body.study_id}",
         params=params,

@@ -58,4 +58,22 @@ async function walkTour(page) {
   return titles;
 }
 
-module.exports = { F, seenGuides, login, token, walkTour };
+/** Saves a series' current segmentation again as `status` ("submitted" =
+ * the annotator handing the case in), through the viewer backend, as the
+ * token's user. Lets a spec make a case reviewable without drawing. */
+async function saveMaskAs(tok, seriesId, studyId, status, extra = {}) {
+  const headers = { Authorization: `Bearer ${tok}`, "content-type": "application/json" };
+  const m = await (await fetch(`http://localhost:8010/series/${seriesId}/mask-volume`, { headers })).json();
+  const empty = "H4sIAAAAAAAAAwMAAAAAAAAAAAA="; // gzip of zero bytes
+  const r = await fetch(`http://localhost:8010/series/${seriesId}/mask-volume`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      study_id: studyId, mask_gzip_base64: m.mask_gzip_base64 || empty, labels: m.labels || [], objects: m.objects || [],
+      status, base_version_id: m.version_id || "", ...extra,
+    }),
+  });
+  return { status: r.status, body: await r.json().catch(() => null), before: m };
+}
+
+module.exports = { F, seenGuides, login, token, walkTour, saveMaskAs };

@@ -33,6 +33,7 @@ import DocumentPanel, { DocumentSource } from "../components/DocumentPanel";
 import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnswers } from "../components/ObjectForm";
 import SliceControl from "../components/SliceControl";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
+import { reviewBlockedMessage, ReviewState, reviewStateOf } from "../lib/reviewState";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import {
   CaseDocument,
@@ -903,6 +904,9 @@ export default function ViewerPage() {
   // saved; undefined = not loaded yet). Sent with every save, so a newer
   // save by another tab or person is refused rather than overwritten (J-11).
   const loadedVersionRef = useRef<string | null | undefined>(undefined);
+  // Review mode: can the loaded version be reviewed at all (handed in, not
+  // yet decided)? Saves made while reviewing refer to its handed-in id.
+  const [reviewState, setReviewState] = useState<ReviewState | null>(null);
   // Unsaved work (E-04): any mask edit since the last load/save, or labels/
   // objects that differ from what was loaded/saved. Leaving the case --
   // arrows, Back, reload, closing the tab -- asks first.
@@ -1124,6 +1128,7 @@ export default function ViewerPage() {
       try {
         const loaded = await fetchSegmentationVolume(seriesId);
         loadedVersionRef.current = loaded.versionId;
+        setReviewState(reviewStateOf(loaded.versionId, loaded.versionStatus, loaded.reviewOfId));
         const result = loaded.volume;
         if (result) {
           const unpacked = await gunzipToUint8Array(result.gzipBytes);
@@ -2380,6 +2385,12 @@ export default function ViewerPage() {
     savedMessageTimeoutRef.current = setTimeout(() => setSavedMessage(null), 3000);
   }
 
+  /** The handed-in version a save made in review mode reviews, so it
+   * stays handed in (F-01); undefined for an annotator's save. */
+  function reviewSaveOf(): string | undefined {
+    return reviewMode && reviewState?.kind === "reviewable" ? reviewState.handedInId : undefined;
+  }
+
   async function handleSave(status: "draft" | "submitted" = "draft") {
     const volume = maskVolumeRef.current;
     if (!volume || !seriesId || !studyId) return;
@@ -2393,7 +2404,7 @@ export default function ViewerPage() {
       const objectsToSave =
         status === "submitted" ? objects.map((o) => ({ ...o, review_status: undefined, reject_reason: undefined })) : objects;
       if (status === "submitted") setObjects(objectsToSave);
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current);
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current, reviewSaveOf());
       loadedVersionRef.current = saved.id;
       markSaved(labels, objectsToSave);
       trackAction(status === "submitted" ? "mark_annotated" : "save");
@@ -2444,7 +2455,7 @@ export default function ViewerPage() {
     setError(null);
     try {
       const gzipBytes = await gzipUint8Array(volume);
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current);
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current, reviewSaveOf());
       loadedVersionRef.current = saved.id;
       markSaved(labels, objects);
       const decision = reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve";
@@ -2846,6 +2857,8 @@ export default function ViewerPage() {
   const clampedReviewIndex = Math.max(0, Math.min(reviewIndex, reviewOrderedObjects.length - 1));
   const currentReviewObject = reviewOrderedObjects[clampedReviewIndex] ?? null;
   const reviewPendingCount = reviewOrderedObjects.filter((o) => (o.review_status ?? "pending") === "pending").length;
+  // Why this case can't be reviewed (not handed in, or already decided), or null.
+  const reviewBlocked = reviewMode ? reviewBlockedMessage(reviewState) : null;
 
   useEffect(() => {
     if (reviewMode && maskReady && currentReviewObject) jumpToObject(currentReviewObject.id, { silent: true });
@@ -3628,7 +3641,7 @@ export default function ViewerPage() {
             <span className="flex" data-guide="save">
               <button
                 onClick={() => handleSave("draft")}
-                disabled={saving || !studyId || !maskReady}
+                disabled={saving || !studyId || !maskReady || reviewBlocked !== null}
                 className="rounded border border-blue-500 bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save"}
@@ -3663,7 +3676,7 @@ export default function ViewerPage() {
               <span className="flex" data-guide="submit-review">
                 <button
                   onClick={handleSubmitReview}
-                  disabled={saving || !studyId || !maskReady || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
+                  disabled={saving || !studyId || !maskReady || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Submit review
@@ -3675,6 +3688,11 @@ export default function ViewerPage() {
         </div>
       </header>
       {error && <div className="flex-shrink-0 bg-red-900/60 px-4 py-1.5 text-xs text-red-200">{error}</div>}
+      {reviewBlocked && maskReady && (
+        <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="review-blocked">
+          {reviewBlocked}
+        </div>
+      )}
       {!studyId && (
         <div className="flex-shrink-0 bg-red-900/60 px-4 py-1.5 text-xs text-red-200">
           No studyId in the URL -- annotations can't be saved without it.

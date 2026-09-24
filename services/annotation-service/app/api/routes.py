@@ -69,6 +69,29 @@ def _latest_version(db: Session, target_type: str, target_id: uuid.UUID, study_i
     )
 
 
+def _handed_in(db: Session, annotation: Annotation) -> Annotation | None:
+    """The handed-in (SUBMITTED) version `annotation` stands for: itself,
+    or for a reviewer's draft the version it reviews -- None if it stands
+    for no handed-in work (an annotator's plain draft, or a decision)."""
+    if annotation.status == AnnotationStatus.SUBMITTED:
+        return annotation
+    if annotation.status == AnnotationStatus.DRAFT and annotation.review_of_id is not None:
+        reviewed = db.get(Annotation, annotation.review_of_id)
+        if reviewed is not None and reviewed.status == AnnotationStatus.SUBMITTED:
+            return reviewed
+    return None
+
+
+def _not_reviewable(annotation: Annotation) -> HTTPException:
+    """409 for a version that isn't handed-in work: why, in words."""
+    if annotation.status in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED):
+        return HTTPException(status_code=409, detail=f"This annotation was already {annotation.status.value}")
+    return HTTPException(
+        status_code=409,
+        detail="This case hasn't been handed in for review yet -- the annotator still has to mark it as annotated.",
+    )
+
+
 def _check_storage_keys(payload: dict) -> None:
     for field in STORAGE_KEY_FIELDS:
         value = payload.get(field)
@@ -87,10 +110,18 @@ def create_annotation(
     payload: dict,
     status: AnnotationStatus = AnnotationStatus.DRAFT,
     base_version_id: str | None = None,
+    review_of: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """`base_version_id`: the version this save was edited from ("none"
+    """`review_of`: set by a reviewer's in-progress save -- the handed-in
+    (SUBMITTED) version under review. Such a draft keeps the case handed
+    in (admin-service's case status reads it as submitted) and is what
+    the review then decides. Reviewers and admins only; refused with 409
+    unless that version is handed in and nobody else saved on top of it
+    (F-01, F-07, F-09).
+
+    `base_version_id`: the version this save was edited from ("none"
     when the target had no annotation of this type yet). When given, the
     save is refused with 409 if someone saved a newer version meanwhile --
     instead of silently burying their work (J-11). Omitted: no check.
@@ -129,6 +160,29 @@ def create_annotation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     _check_storage_keys(payload)
 
+    reviewed = None
+    if review_of is not None:
+        require_study_role(db, study_id, user, allowed_roles=["reviewer", "admin"])
+        if status != AnnotationStatus.DRAFT:
+            raise HTTPException(status_code=422, detail="A review's in-progress save is a draft")
+        try:
+            reviewed = db.get(Annotation, uuid.UUID(review_of))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="review_of must be an annotation id") from None
+        if reviewed is None or (reviewed.target_type, reviewed.target_id, str(reviewed.study_id), reviewed.type_id) != (
+            target_type, target_id, study_id, annotation_type.id
+        ):
+            raise HTTPException(status_code=404, detail="The version under review isn't an annotation of this image")
+        if reviewed.status != AnnotationStatus.SUBMITTED and "admin" not in user.realm_roles:
+            raise _not_reviewable(reviewed)
+        _lock_target(db, target_type, target_id)
+        latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id)
+        if latest is not None and latest.id != reviewed.id and latest.review_of_id != reviewed.id:
+            raise HTTPException(
+                status_code=409,
+                detail="Someone saved a newer version of this while you were working -- reload to see it before saving again.",
+            )
+
     parent_id = None
     if base_version_id is not None:
         _lock_target(db, target_type, target_id)
@@ -150,6 +204,7 @@ def create_annotation(
         payload=payload,
         status=status,
         parent_version_id=parent_id,
+        review_of_id=reviewed.id if reviewed is not None else None,
         # The wall-clock moment of this save, not the transaction start
         # (server default now()): saves in quick succession must stay in
         # the order they happened, so "the latest" is unambiguous.
@@ -157,7 +212,11 @@ def create_annotation(
     )
     db.add(annotation)
     db.commit()
-    return {"id": str(annotation.id), "status": annotation.status.value}
+    return {
+        "id": str(annotation.id),
+        "status": annotation.status.value,
+        "review_of_id": str(annotation.review_of_id) if annotation.review_of_id else None,
+    }
 
 
 @router.get("/studies/{study_id}")
@@ -219,6 +278,7 @@ def list_annotations_for_target(
             "type_id": str(a.type_id),
             "payload": a.payload,
             "status": a.status.value,
+            "review_of_id": str(a.review_of_id) if a.review_of_id else None,
             "created_at": a.created_at.isoformat() if a.created_at else None,
         }
         for a in annotations
@@ -233,7 +293,11 @@ def review_annotation(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Approve or reject a submitted annotation."""
+    """Approve or reject handed-in work: a SUBMITTED version, or a
+    reviewer's draft of one (see create_annotation's `review_of`), and
+    only the image's latest version. An annotator's plain draft (never
+    handed in) or an already decided version is refused with 409 (F-09,
+    F-07); a global admin may override."""
     annotation = db.get(Annotation, annotation_id)
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found")
@@ -241,11 +305,17 @@ def review_annotation(
     require_study_role(db, str(annotation.study_id), user, allowed_roles=["reviewer", "admin"])
     if decision not in ("approve", "reject"):
         raise HTTPException(status_code=422, detail="decision must be 'approve' or 'reject'")
-    if annotation.status in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED) and "admin" not in user.realm_roles:
+    if "admin" not in user.realm_roles:
         # A decision is a decision -- re-deciding an already approved/
         # rejected version is reserved for a global admin (an override),
-        # so two reviewers can't silently flip each other's outcome.
-        raise HTTPException(status_code=409, detail=f"This annotation was already {annotation.status.value}")
+        # so two reviewers can't silently flip each other's outcome; and
+        # a reviewer can't bypass that by deciding a fresh version made on
+        # top of a decided one, or a draft nobody handed in.
+        if _handed_in(db, annotation) is None:
+            raise _not_reviewable(annotation)
+        latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id)
+        if latest is not None and latest.id != annotation.id:
+            raise HTTPException(status_code=409, detail="A newer version of this image exists -- reload before deciding.")
     annotation.status = AnnotationStatus.APPROVED if decision == "approve" else AnnotationStatus.REJECTED
     db.add(AnnotationReview(annotation_id=annotation.id, reviewer_id=user.subject, decision=decision, comment=comment))
     db.commit()

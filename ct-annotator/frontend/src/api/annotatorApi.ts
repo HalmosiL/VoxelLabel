@@ -374,6 +374,10 @@ export interface SegmentationVolume {
 export interface LoadedSegmentation {
   volume: SegmentationVolume | null;
   versionId: string | null;
+  // The loaded version's status and, for a reviewer's draft, the handed-in
+  // version it reviews -- see lib/reviewState.ts.
+  versionStatus: string | null;
+  reviewOfId: string | null;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -398,15 +402,19 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
  * (ViewerPage) ungzips the volume into its own Uint8Array; this backend
  * never interprets voxel values or the label/object payload. */
 export async function fetchSegmentationVolume(seriesId: string): Promise<LoadedSegmentation> {
-  const result = await apiFetch<{ mask_gzip_base64: string | null; labels: SegLabel[]; objects: SegObject[]; version_id?: string | null }>(
-    API.annotator,
-    `/series/${seriesId}/mask-volume`
-  );
-  const versionId = result.version_id ?? null;
+  const result = await apiFetch<{
+    mask_gzip_base64: string | null;
+    labels: SegLabel[];
+    objects: SegObject[];
+    version_id?: string | null;
+    version_status?: string | null;
+    review_of_id?: string | null;
+  }>(API.annotator, `/series/${seriesId}/mask-volume`);
+  const version = { versionId: result.version_id ?? null, versionStatus: result.version_status ?? null, reviewOfId: result.review_of_id ?? null };
   // no volume = nothing saved for this series yet (a normal 200 answer,
   // see the backend's get_mask_volume) -- start from an empty volume.
-  if (!result.mask_gzip_base64) return { volume: null, versionId };
-  return { volume: { gzipBytes: base64ToArrayBuffer(result.mask_gzip_base64), labels: result.labels, objects: result.objects }, versionId };
+  if (!result.mask_gzip_base64) return { volume: null, ...version };
+  return { volume: { gzipBytes: base64ToArrayBuffer(result.mask_gzip_base64), labels: result.labels, objects: result.objects }, ...version };
 }
 
 export function saveSegmentationVolume(
@@ -420,7 +428,10 @@ export function saveSegmentationVolume(
   status: "draft" | "submitted" = "draft",
   // The version this save was edited from (null = the series had nothing
   // saved): a newer save made meanwhile makes this one fail with 409.
-  baseVersionId?: string | null
+  baseVersionId?: string | null,
+  // Set while reviewing: the handed-in version under review, so this save
+  // is a reviewer's draft that keeps the case handed in (F-01).
+  reviewOf?: string | null
 ): Promise<{ id: string; status: string }> {
   return apiFetch(API.annotator, `/series/${seriesId}/mask-volume`, {
     method: "POST",
@@ -431,6 +442,7 @@ export function saveSegmentationVolume(
       objects,
       status,
       ...(baseVersionId !== undefined ? { base_version_id: baseVersionId ?? "" } : {}),
+      ...(reviewOf ? { review_of: reviewOf } : {}),
     }),
   });
 }
