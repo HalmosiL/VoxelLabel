@@ -211,3 +211,34 @@ def test_the_loaded_version_says_whether_it_is_handed_in(api, monkeypatch):
     api.as_user(MEMBER)
     r = api.get(f"/series/{SERIES}/mask-volume").json()
     assert (r["version_id"], r["version_status"], r["review_of_id"]) == ("v2", "draft", "v1")
+
+
+def test_a_review_comment_is_forwarded_in_the_body(monkeypatch):
+    """F-08: as a query parameter a long comment overflowed the URL -> 500."""
+    sent = {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, params=None, json=None, headers=None):
+            sent.update(params=params, json=json)
+            return _Resp(200, {"id": "a1", "status": "rejected"})
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", _Client)
+    app = main.app
+    app.dependency_overrides[main.get_current_user] = lambda: MEMBER
+    try:
+        from fastapi.testclient import TestClient
+
+        r = TestClient(app).post("/annotations/a1/review", json={"decision": "reject", "comment": "ő" * 12000})
+    finally:
+        app.dependency_overrides.pop(main.get_current_user, None)
+    assert r.status_code == 200
+    assert sent["params"] == {"decision": "reject"} and len(sent["json"]["comment"]) == 12000

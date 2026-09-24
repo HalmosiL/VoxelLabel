@@ -85,3 +85,24 @@ def test_review_drafts_are_for_reviewers(client, db):
     client.as_user(ALICE)
     submitted = _save(client, study, series, status="submitted").json()["id"]
     assert _save(client, study, series, review_of=submitted).status_code == 403
+
+
+def test_a_long_review_comment_travels_in_the_body(client, db):
+    """F-08: the comment went as a URL query parameter and ~11 000
+    Hungarian characters made the URL too long -- a 500 after the
+    reviewer's draft was already saved."""
+    study, series = _setup(db)
+    client.as_user(ALICE)
+    submitted = _save(client, study, series, status="submitted").json()["id"]
+    client.as_user(REVIEWER)
+    comment = "ő" * 12000
+    r = client.post(f"/annotations/{submitted}/review", params={"decision": "reject"}, json={"comment": comment})
+    assert r.status_code == 200, r.text
+    from shared_models.models import AnnotationReview
+    assert db.query(AnnotationReview).one().comment == comment
+    # an absurd comment is refused with a reason, not a crash
+    client.as_user(ALICE)
+    again = _save(client, study, series, status="submitted").json()["id"]
+    client.as_user(REVIEWER)
+    r = client.post(f"/annotations/{again}/review", params={"decision": "approve"}, json={"comment": "x" * 200_001})
+    assert r.status_code == 422 and "too long" in r.json()["detail"]

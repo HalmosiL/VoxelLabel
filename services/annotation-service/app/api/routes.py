@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, AnnotationStatus, AnnotationType, Instance, Series
@@ -285,11 +286,21 @@ def list_annotations_for_target(
     ]
 
 
+class ReviewBody(BaseModel):
+    comment: str | None = None
+
+
+# Every object's comment, reason and form answers joined -- generous, but a
+# hard stop for anything absurd.
+MAX_REVIEW_COMMENT_CHARS = 200_000
+
+
 @router.post("/{annotation_id}/review")
 def review_annotation(
     annotation_id: uuid.UUID,
     decision: str,
     comment: str | None = None,
+    body: ReviewBody | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
@@ -297,7 +308,15 @@ def review_annotation(
     reviewer's draft of one (see create_annotation's `review_of`), and
     only the image's latest version. An annotator's plain draft (never
     handed in) or an already decided version is refused with 409 (F-09,
-    F-07); a global admin may override."""
+    F-07); a global admin may override.
+
+    The comment goes in the JSON body ({"comment": ...}); the `comment`
+    query parameter still works for short ones, but a long review made
+    the URL too long and failed with a 500 (F-08)."""
+    if body is not None and body.comment is not None:
+        comment = body.comment
+    if comment is not None and len(comment) > MAX_REVIEW_COMMENT_CHARS:
+        raise HTTPException(status_code=422, detail=f"The review comment is too long (at most {MAX_REVIEW_COMMENT_CHARS:,} characters)")
     annotation = db.get(Annotation, annotation_id)
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found")

@@ -905,13 +905,13 @@ async def submit_annotation_review(
     nothing else sees. Requires the caller to actually hold the
     "reviewer" (or "admin") study role -- annotation-service's own
     role check is what enforces that, not anything here."""
-    params = {"decision": body.decision}
-    if body.comment:
-        params["comment"] = body.comment
+    # The comment goes in the body: as a query parameter a long review
+    # (every object's comment and form answers) overflowed the URL -> 500 (F-08).
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{ANNOTATION_SERVICE_URL}/annotations/{annotation_id}/review",
-            params=params,
+            params={"decision": body.decision},
+            json={"comment": body.comment or None},
             headers=_auth_headers(user),
         )
     if resp.status_code >= 400:
