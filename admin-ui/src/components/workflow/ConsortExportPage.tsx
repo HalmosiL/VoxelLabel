@@ -84,9 +84,11 @@ function StageBox({
 }
 
 function ExcludedBox({ y, stage }: { y: number; stage: ConsortStage }) {
-  const label = stage.evaluated
-    ? `Excluded (n = ${stage.excluded_count})`
-    : "Criterion not evaluated yet";
+  const label = !stage.evaluated
+    ? `Not evaluated yet: ${stage.title.length > 24 ? `${stage.title.slice(0, 23)}…` : stage.title}`
+    : stage.needs_reevaluation
+      ? "Re-evaluate: population changed"
+      : `Excluded (n = ${stage.excluded_count})`;
   return (
     <g>
       <line
@@ -125,6 +127,29 @@ function ExcludedBox({ y, stage }: { y: number; stage: ConsortStage }) {
         </text>
       )}
     </g>
+  );
+}
+
+/** What makes the diagram unfit to publish as it stands: a criterion
+ * evaluated before the population changed, or a step with more than one
+ * criterion wired to it (only the oldest is followed). */
+function ConsortWarnings({ data }: { data: ConsortExport }) {
+  const stale = data.stages.filter((s) => s.needs_reevaluation);
+  const forks = data.stages.filter((s) => s.other_criteria.length > 0);
+  if (stale.length === 0 && forks.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="consort-warnings">
+      {stale.map((s) => (
+        <p key={s.criterion_card_id}>
+          "{s.title}" was evaluated before its population changed ({s.input_count} cases now, {(s.included_count ?? 0) + (s.excluded_count ?? 0)} evaluated) -- run it again before using these numbers.
+        </p>
+      ))}
+      {forks.map((s) => (
+        <p key={`fork-${s.criterion_card_id}`}>
+          This step also feeds {s.other_criteria.map((t) => `"${t}"`).join(", ")}; the diagram follows "{s.title}", the oldest.
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -205,7 +230,9 @@ export default function ConsortExportPage({ studyId, onClose }: { studyId: strin
         // the natural starting population for an eligibility chain, the
         // same assumption the backend's own consort-export makes.
         const targets = new Set(board.edges.map((e) => e.target_card_id));
-        const roots = board.cards.filter((c) => c.type === "dataset" && !targets.has(c.id));
+        // Materialized children (a Split part, a criterion's "included")
+        // have no incoming edge either, but are never a starting population.
+        const roots = board.cards.filter((c) => c.type === "dataset" && !targets.has(c.id) && !c.materialized_from);
         setCandidates(roots.map((c) => ({ id: c.id, title: c.title })));
         if (roots.length === 1) setRootCardId(roots[0].id);
       })
@@ -268,6 +295,7 @@ export default function ConsortExportPage({ studyId, onClose }: { studyId: strin
           <p className="hint">This study has no Dataset card with no incoming edge -- create one to serve as the starting population.</p>
         )}
         {!rootCardId && candidates.length > 1 && <p className="hint">Choose a starting Dataset card above.</p>}
+        {data && <ConsortWarnings data={data} />}
         {data && <ConsortDiagram data={data} svgRef={svgRef} />}
       </div>
     </div>,

@@ -434,3 +434,35 @@ def test_the_review_feedback_loop_carries_the_rejected_case_and_settles(client, 
     assert not card("Annotate")["stale"] and not card("Review")["stale"]
     assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
     assert not card("Annotate")["stale"] and not card("Review")["stale"]
+
+
+def test_consort_follows_the_criterion_and_flags_a_changed_population(client, db):
+    """C-16: the export followed whichever outgoing edge the database
+    returned first (an Annotation, so no stages at all), and kept a
+    criterion's old counts after the population changed (6 of 5
+    included)."""
+    from shared_models.models import WorkflowCard
+
+    sid = make_study(client)
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    ids = [make_case(client, sid, external=f"c{i}")["id"] for i in range(4)]
+    root = _card(client, sid, "dataset", "Population", {"mode": "manual", "case_ids": ids})
+    ann = _card(client, sid, "annotation", "Annotate", {"assigned_user_id": ANNOTATOR_SUBJECT}, x=300)
+    crit = _card(client, sid, "criterion", "Adults", {"criterion": "age >= 18"}, x=300)
+    _edge(client, sid, root["id"], ann["id"])  # the older edge, not a criterion
+    _edge(client, sid, root["id"], crit["id"])
+    # the criterion's evaluation, as evaluate_criterion materializes it
+    for handle, case_ids in (("included", ids[:3]), ("excluded", ids[3:])):
+        db.add(WorkflowCard(study_id=uuid.UUID(sid), type="dataset", title=f"Adults -- {handle}", position_x=0, position_y=0,
+                            config={"mode": "manual", "case_ids": case_ids}, materialized_source_card_id=uuid.UUID(crit["id"]), materialized_source_handle=handle))
+    db.commit()
+
+    url = f"/admin/studies/{sid}/consort-export?root_card_id={root['id']}"
+    export = client.get(url).json()
+    assert [s["title"] for s in export["stages"]] == ["Adults"]
+    assert export["stages"][0]["included_count"] == 3 and not export["stages"][0]["needs_reevaluation"]
+    assert export["final_count"] == 3
+
+    client.patch(f"/admin/workflow-cards/{root['id']}", json={"config": {"case_ids": ids[:2]}})  # the population changed
+    stage = client.get(url).json()["stages"][0]
+    assert stage["input_count"] == 2 and stage["needs_reevaluation"]

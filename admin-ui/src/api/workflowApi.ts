@@ -154,6 +154,11 @@ export interface ConsortStage {
   included_count: number | null;
   excluded_count: number | null;
   evaluated: boolean;
+  // The population changed since this criterion was evaluated: its counts
+  // no longer add up to the step's input (C-16).
+  needs_reevaluation: boolean;
+  // Other Criterion cards wired to the same step (the oldest is followed).
+  other_criteria: string[];
 }
 
 export interface ConsortExport {

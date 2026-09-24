@@ -103,30 +103,48 @@ def get_consort_export(
         # "output" -- true for the root Dataset itself, and for every
         # subsequent step too, since an "included" child is always a
         # plain (materialized) Dataset card, same as the root.
-        edge = (
-            db.query(WorkflowEdge)
-            .filter_by(source_card_id=current.id, source_handle="output", target_handle="input")
-            .first()
+        # Only Criterion cards continue the chain, oldest first -- not
+        # whichever edge the database returned first, which could be an
+        # Annotation job and so export no stages at all (C-16). Any other
+        # Criterion wired to the same step is named, not silently skipped.
+        criteria = (
+            db.query(WorkflowCard)
+            .join(WorkflowEdge, WorkflowEdge.target_card_id == WorkflowCard.id)
+            .filter(
+                WorkflowEdge.source_card_id == current.id,
+                WorkflowEdge.source_handle == "output",
+                WorkflowEdge.target_handle == "input",
+                WorkflowCard.type == WorkflowCardType.CRITERION,
+                WorkflowCard.id.notin_(visited),
+            )
+            .order_by(WorkflowCard.created_at, WorkflowCard.id)
+            .all()
         )
-        if edge is None or edge.target_card_id in visited:
+        if not criteria:
             break
-        next_card = db.get(WorkflowCard, edge.target_card_id)
-        if next_card is None or next_card.type != WorkflowCardType.CRITERION:
-            break
+        next_card = criteria[0]
         visited.add(next_card.id)
 
         children = {c.materialized_source_handle: c for c in _materialized_children(db, next_card.id)}
         included = children.get("included")
         excluded = children.get("excluded")
+        input_ids = set(_dataset_output_ids(db, current))
+        included_ids = set(included.config.get("case_ids", [])) if included else set()
+        excluded_ids = set(excluded.config.get("case_ids", [])) if excluded else set()
         stages.append(
             {
                 "criterion_card_id": str(next_card.id),
                 "title": next_card.title,
                 "criterion_text": next_card.config.get("criterion", ""),
-                "input_count": len(_dataset_output_ids(db, current)),
-                "included_count": len(included.config.get("case_ids", [])) if included else None,
-                "excluded_count": len(excluded.config.get("case_ids", [])) if excluded else None,
+                "input_count": len(input_ids),
+                "included_count": len(included_ids) if included else None,
+                "excluded_count": len(excluded_ids) if excluded else None,
                 "evaluated": included is not None,
+                # The evaluation no longer splits this step's population
+                # (it changed since): its counts can't go in a diagram --
+                # "6 of 5 included" (C-16).
+                "needs_reevaluation": included is not None and (included_ids | excluded_ids) != input_ids,
+                "other_criteria": [c.title for c in criteria[1:]],
             }
         )
         if included is None:
