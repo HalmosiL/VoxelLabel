@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from shared_auth import CurrentUser, get_current_user, require_study_role
-from shared_auth.object_links import verify_object_link
+from shared_auth.object_links import safe_download_headers, verify_object_link
 from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, ImagingStudy, Instance, Patient, Series, case_tags
 from sqlalchemy import or_
@@ -34,9 +34,10 @@ def get_object(key: str = Query(...), exp: int = Query(...), sig: str = Query(..
         raise
     if content_type == "application/octet-stream":
         content_type = mimetypes.guess_type(key)[0] or content_type
-    filename = key.rsplit("/", 1)[-1]
-    disposition = "attachment" if filename.endswith(".dcm") else "inline"
-    headers = {"Content-Disposition": f'{disposition}; filename="{filename}"', "Cache-Control": "private, max-age=3600"}
+    # Inline only for types that can't run script; an uploaded .html/.svg
+    # document is a download (J-04). Non-Latin-1 names work too (B-15).
+    content_type, headers = safe_download_headers(key.rsplit("/", 1)[-1], content_type)
+    headers["Cache-Control"] = "private, max-age=3600"
     if length is not None:
         headers["Content-Length"] = str(length)
     return StreamingResponse(body.iter_chunks(64 * 1024), media_type=content_type, headers=headers)

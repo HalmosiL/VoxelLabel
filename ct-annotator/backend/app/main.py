@@ -749,15 +749,31 @@ async def get_document_file(item_id: str, user: CurrentUser = Depends(get_curren
     if not storage_key:
         raise HTTPException(status_code=502, detail="data-service returned no storage key for this document")
     body, content_type = await asyncio.to_thread(download_object, storage_key)
-    filename = storage_key.rsplit("/", 1)[-1]
-    return Response(
-        content=body,
-        media_type=content_type,
-        headers={
-            "Content-Disposition": f'inline; filename="{filename}"',
-            "Cache-Control": "private, no-store",
-        },
-    )
+    media_type, headers = _safe_document_headers(storage_key.rsplit("/", 1)[-1], content_type)
+    headers["Cache-Control"] = "private, no-store"
+    return Response(content=body, media_type=media_type, headers=headers)
+
+
+# The platform's rule (libs/shared-auth object_links.safe_download_headers),
+# kept in step here -- this backend doesn't depend on shared_auth: only
+# types that can't run script are shown inline; an uploaded .html/.svg
+# document is a download, never active content in the viewer's origin.
+_INLINE_SAFE_TYPES = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "text/plain"}
+
+
+def _safe_document_headers(filename: str, content_type: str | None) -> tuple[str, dict]:
+    from urllib.parse import quote
+
+    base_type = (content_type or "application/octet-stream").split(";")[0].strip().lower()
+    inline = base_type in _INLINE_SAFE_TYPES
+    ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename) or "file"
+    headers = {
+        "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if not inline or base_type == "text/plain":
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+    return (content_type or "application/octet-stream") if inline else "application/octet-stream", headers
 
 
 @app.get("/jobs/{job_id}/surface-config")

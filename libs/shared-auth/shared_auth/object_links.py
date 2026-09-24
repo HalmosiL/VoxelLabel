@@ -75,3 +75,36 @@ def verify_object_link(path: str, key: str, exp: int, sig: str, secret: bytes, n
     if exp < t or exp > t + _MAX_EXP_AHEAD_S:
         return False
     return hmac.compare_digest(_signature(path, key, exp, secret), sig or "")
+
+
+# What a stored object may be shown as in the browser. Anything else --
+# HTML, SVG (which can carry script), XML, unknown types -- is served as
+# a download, so an uploaded document can never run in the API's origin.
+INLINE_SAFE_TYPES = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+}
+
+
+def safe_download_headers(filename: str, content_type: str) -> tuple[str, dict]:
+    """(content type to send, headers) for serving a stored object: inline
+    only for INLINE_SAFE_TYPES, otherwise an attachment; never sniffed,
+    and sandboxed even if a browser did render it. The filename is sent
+    both ASCII-safe and RFC 5987-encoded (non-Latin-1 names used to fail)."""
+    from urllib.parse import quote
+
+    base_type = (content_type or "application/octet-stream").split(";")[0].strip().lower()
+    inline = base_type in INLINE_SAFE_TYPES and not filename.lower().endswith(".dcm")
+    ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename) or "file"
+    disposition = f"{'inline' if inline else 'attachment'}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    headers = {"Content-Disposition": disposition, "X-Content-Type-Options": "nosniff"}
+    # A PDF or an image can't run script (and a sandbox would switch off
+    # the browser's own PDF viewer); everything else is also sandboxed in
+    # case a browser renders it anyway.
+    if not inline or base_type == "text/plain":
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+    return (content_type if inline else "application/octet-stream"), headers

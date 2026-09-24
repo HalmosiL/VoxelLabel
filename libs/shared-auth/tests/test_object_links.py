@@ -54,3 +54,24 @@ def test_a_public_default_storage_password_never_becomes_the_secret(monkeypatch,
     assert secret != derived_from_default and len(secret) == 32
     # stable within the process
     assert link_secret(default) == secret
+
+
+@pytest.mark.parametrize(
+    ("name", "ctype", "inline"),
+    [("report.pdf", "application/pdf", True), ("scan.jpg", "image/jpeg", True), ("x.html", "text/html", False), ("x.svg", "image/svg+xml", False), ("a.dcm", "application/pdf", False)],
+)
+def test_stored_objects_are_inline_only_when_they_cannot_run_script(name, ctype, inline):
+    from shared_auth.object_links import safe_download_headers
+
+    media, headers = safe_download_headers(name, ctype)
+    assert headers["Content-Disposition"].startswith("inline" if inline else "attachment")
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert (media == ctype) if inline else (media == "application/octet-stream")
+
+
+def test_a_hungarian_filename_is_header_safe():
+    from shared_auth.object_links import safe_download_headers
+
+    _, headers = safe_download_headers("zárójelentés-ő.pdf", "application/pdf")
+    headers["Content-Disposition"].encode("latin-1")
+    assert "filename*=UTF-8''" in headers["Content-Disposition"]

@@ -6,7 +6,7 @@ whether or not the browser can reach MinIO's port."""
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from shared_auth.object_links import verify_object_link
+from shared_auth.object_links import safe_download_headers, verify_object_link
 
 from app.storage import LINK_SECRET, OBJECTS_PATH, read_object
 
@@ -23,7 +23,8 @@ def get_object(key: str = Query(...), exp: int = Query(...), sig: str = Query(..
         if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
             raise HTTPException(status_code=404, detail="Object not found") from None
         raise
-    headers = {"Content-Disposition": f'inline; filename="{key.rsplit("/", 1)[-1]}"', "Cache-Control": "private, max-age=3600"}
+    content_type, headers = safe_download_headers(key.rsplit("/", 1)[-1], content_type)
+    headers["Cache-Control"] = "private, max-age=3600"
     if length is not None:
         headers["Content-Length"] = str(length)
     return StreamingResponse(body.iter_chunks(64 * 1024), media_type=content_type, headers=headers)

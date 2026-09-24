@@ -113,3 +113,21 @@ def test_only_the_viewers_own_mask_keys_are_read():
     assert main._is_mask_key("annotation-masks/0b7c.gz")
     for bad in ("1.2.3/4.5/6.dcm", "annotation-masks/../x.dcm", "thumbnails/x.png", "annotation-masks\\x", None, 12):
         assert not main._is_mask_key(bad), bad
+
+
+@pytest.mark.parametrize(
+    ("name", "ctype", "inline"),
+    [("report.pdf", "application/pdf", True), ("scan.png", "image/png", True), ("x.html", "text/html", False), ("x.svg", "image/svg+xml", False), ("x.bin", None, False)],
+)
+def test_documents_are_inline_only_when_they_cannot_run_script(name, ctype, inline):
+    media, headers = main._safe_document_headers(name, ctype)
+    assert headers["Content-Disposition"].startswith("inline" if inline else "attachment")
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert (media == ctype) if inline else (media == "application/octet-stream")
+    assert ("Content-Security-Policy" in headers) is (not inline)
+
+
+def test_a_hungarian_filename_is_sent_in_a_header_safe_form():
+    _, headers = main._safe_document_headers("lelet-ő-ű.pdf", "application/pdf")
+    headers["Content-Disposition"].encode("latin-1")  # must not raise
+    assert "filename*=UTF-8''lelet-%C5%91-%C5%B1.pdf" in headers["Content-Disposition"]
