@@ -43,7 +43,7 @@ export default function DeidentificationProfilesPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="De-identification profiles"
-        subtitle="Configure how DICOM tags are handled on ingestion -- assigned to a study in the Admin API."
+        subtitle="Configure how DICOM tags are handled on import. Choose a study's profile under Edit study; the one marked default applies to every study without its own."
       />
       {error && <p className="alert-error">{error}</p>}
 

@@ -90,12 +90,16 @@ export function createPatient(externalPatientId: string): Promise<{ id: string; 
   return apiFetch(base, `/admin/patients?${qs}`, { method: "POST" });
 }
 
+/** `deidentificationProfileId`: leave out to keep it, null to clear it
+ * (the platform default profile applies), an id to assign one. */
 export function updateStudy(
   studyId: string,
   name: string,
-  description: string
-): Promise<{ id: string; name: string; description: string | null }> {
+  description: string,
+  deidentificationProfileId?: string | null
+): Promise<{ id: string; name: string; description: string | null; deidentification_profile_id: string | null }> {
   const qs = new URLSearchParams({ name, ...(description ? { description } : {}) });
+  if (deidentificationProfileId !== undefined) qs.set("deidentification_profile_id", deidentificationProfileId ?? "");
   return apiFetch(base, `/admin/studies/${studyId}?${qs}`, { method: "PATCH" });
 }
 

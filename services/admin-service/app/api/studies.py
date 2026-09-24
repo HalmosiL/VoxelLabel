@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Annotation, AnnotationReview, Case, Study, StudyMembership, StudyRole
+from shared_models.models import Annotation, AnnotationReview, Case, DeidentificationProfile, Study, StudyMembership, StudyRole
 from sqlalchemy.orm import Session
 
 from app.api import audit
@@ -161,9 +161,14 @@ def update_study(
     study_id: str,
     name: str | None = None,
     description: str | None = None,
+    deidentification_profile_id: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    """Rename/describe a study, and choose the de-identification profile
+    every image imported into it goes through (`deidentification_profile_id`
+    = a profile id; an empty value clears it, so the platform's default
+    profile applies -- see ingestion-service app/deidentify.py)."""
     study = db.get(Study, study_id)
     if study is None:
         raise HTTPException(status_code=404, detail="Study not found")
@@ -176,11 +181,32 @@ def update_study(
     if description is not None and description != study.description:
         changes["description"] = {"from": study.description, "to": description}
         study.description = description
+    if deidentification_profile_id is not None:
+        new_profile = None
+        if deidentification_profile_id.strip():
+            try:
+                new_profile = db.get(DeidentificationProfile, uuid.UUID(deidentification_profile_id))
+            except ValueError:
+                new_profile = None
+            if new_profile is None:
+                raise HTTPException(status_code=404, detail="De-identification profile not found")
+        new_id = new_profile.id if new_profile else None
+        if new_id != study.deidentification_profile_id:
+            changes["deidentification_profile_id"] = {
+                "from": str(study.deidentification_profile_id) if study.deidentification_profile_id else None,
+                "to": str(new_id) if new_id else None,
+            }
+            study.deidentification_profile_id = new_id
     if changes:
         audit.record(db, user, "study.update", "study", study.id, changes)
     db.commit()
     autosave(db, study.id, user.subject)
-    return {"id": str(study.id), "name": study.name, "description": study.description}
+    return {
+        "id": str(study.id),
+        "name": study.name,
+        "description": study.description,
+        "deidentification_profile_id": str(study.deidentification_profile_id) if study.deidentification_profile_id else None,
+    }
 
 
 @router.delete("/{study_id}", status_code=204)

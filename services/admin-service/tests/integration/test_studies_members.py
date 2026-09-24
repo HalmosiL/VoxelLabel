@@ -160,3 +160,27 @@ def test_a_study_cover_image_is_served_behind_a_signed_admin_link(client, monkey
     r = client.get(link)
     assert r.status_code == 200 and r.content == b"img"
     assert client.get(link.replace("x.png", "y.png")).status_code == 403
+
+
+def test_a_study_admin_chooses_the_studys_de_identification_profile(client, db):
+    from shared_models.models import AuditLog, Study
+
+    from .conftest import ANNOTATOR_SUBJECT, add_member, make_study
+
+    client.as_admin()
+    sid = make_study(client, "Deid study")
+    profile = client.post("/admin/deidentification-profiles", params={"name": "Strict"}).json()
+    r = client.patch(f"/admin/studies/{sid}", params={"deidentification_profile_id": profile["id"]})
+    assert r.status_code == 200 and r.json()["deidentification_profile_id"] == profile["id"]
+    db.expire_all()
+    assert str(db.get(Study, sid).deidentification_profile_id) == profile["id"]
+    assert db.query(AuditLog).filter(AuditLog.action == "study.update").count() == 1
+    # unknown / malformed profile -> 404, nothing changes
+    assert client.patch(f"/admin/studies/{sid}", params={"deidentification_profile_id": "00000000-0000-4000-8000-000000000999"}).status_code == 404
+    assert client.patch(f"/admin/studies/{sid}", params={"deidentification_profile_id": "nope"}).status_code == 404
+    # an empty value clears it (the platform default applies again)
+    assert client.patch(f"/admin/studies/{sid}", params={"deidentification_profile_id": ""}).json()["deidentification_profile_id"] is None
+    # an annotator can't change it
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    client.as_user(ANNOTATOR_SUBJECT)
+    assert client.patch(f"/admin/studies/{sid}", params={"deidentification_profile_id": profile["id"]}).status_code == 403

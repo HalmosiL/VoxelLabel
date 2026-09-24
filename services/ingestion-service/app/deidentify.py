@@ -14,20 +14,37 @@ from shared_models.database import SessionLocal
 from shared_models.models import DeidentificationAction, DeidentificationProfile, Study
 
 
-def apply_deidentification_profile(dataset, study_id: str):
-    """Apply the de-identification profile assigned to `study_id`, if any.
+def profile_for_study(db, study_id: str) -> DeidentificationProfile | None:
+    """The profile imports into `study_id` go through: the one assigned
+    to the study, else the platform's default profile (the newest one
+    marked is_default), else none."""
+    study = db.get(Study, study_id)
+    if study is None:
+        return None
+    if study.deidentification_profile_id is not None:
+        profile = db.get(DeidentificationProfile, study.deidentification_profile_id)
+        if profile is not None:
+            return profile
+    return (
+        db.query(DeidentificationProfile)
+        .filter(DeidentificationProfile.is_default.is_(True))
+        .order_by(DeidentificationProfile.created_at.desc())
+        .first()
+    )
 
-    If the study has no profile assigned, the dataset is returned
-    unchanged -- an explicit profile assignment is required to de-identify,
-    rather than a hardcoded default.
+
+def apply_deidentification_profile(dataset, study_id: str):
+    """Apply the study's de-identification profile (see profile_for_study).
+
+    With neither a study profile nor a default profile the dataset is
+    returned unchanged -- the tag policy is a compliance decision made by
+    an admin, not hardcoded here; the admin-ui warns about such studies.
     """
     db = SessionLocal()
     try:
-        study = db.get(Study, study_id)
-        if study is None or study.deidentification_profile_id is None:
+        profile = profile_for_study(db, study_id)
+        if profile is None:
             return dataset
-
-        profile = db.get(DeidentificationProfile, study.deidentification_profile_id)
         for rule in profile.rules:
             _apply_rule(dataset, rule)
         return dataset

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { getStudy, Study, updateStudy } from "../api/adminApi";
+import { DeidentificationProfile, getStudy, listDeidentificationProfiles, Study, updateStudy } from "../api/adminApi";
 import { describeApiError } from "../api/client";
 import { roleLabel, useMe } from "../auth/MeContext";
 import CasesPanel from "../components/CasesPanel";
@@ -116,11 +116,22 @@ function EditStudyModal({ study, onClose, onSaved }: { study: Study; onClose: ()
   const [name, setName] = useState(study.name);
   const [description, setDescription] = useState(study.description ?? "");
   const [error, setError] = useState<string | null>(null);
+  // Which de-identification profile imports into this study go through.
+  // The profile list is global-admin only: anyone else doesn't get the
+  // field at all (null), rather than a picker the server would refuse.
+  const [profiles, setProfiles] = useState<DeidentificationProfile[] | null>(null);
+  const [profileId, setProfileId] = useState<string>(study.deidentification_profile_id ?? "");
+  useEffect(() => {
+    listDeidentificationProfiles()
+      .then(setProfiles)
+      .catch(() => setProfiles(null));
+  }, []);
+  const defaultProfile = profiles?.find((p) => p.is_default) ?? null;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     try {
-      await updateStudy(study.id, name, description);
+      await updateStudy(study.id, name, description, profiles ? profileId || null : undefined);
       onSaved();
     } catch (err) {
       setError(describeApiError(err));
@@ -139,6 +150,25 @@ function EditStudyModal({ study, onClose, onSaved }: { study: Study; onClose: ()
           <span className="label">Description</span>
           <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
         </label>
+        {profiles && (
+          <label className="field">
+            <span className="label">De-identification profile</span>
+            <select className="input" value={profileId} onChange={(e) => setProfileId(e.target.value)} data-testid="study-deid-profile">
+              <option value="">{defaultProfile ? `Platform default (${defaultProfile.name})` : "None"}</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <span className="hint">Every image imported into this study goes through it before it is stored.</span>
+            {!profileId && !defaultProfile && (
+              <span className="alert-error mt-1 block text-xs" data-testid="study-deid-warning">
+                No profile and no platform default: images are stored exactly as uploaded, patient data included.
+              </span>
+            )}
+          </label>
+        )}
         <div className="mt-2 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="btn-secondary">
             Cancel
