@@ -9,6 +9,7 @@ import uuid
 import pydicom
 from shared_models.database import SessionLocal
 from shared_models.models import Case, ImagingStudy, Instance, Series
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -98,6 +99,12 @@ def _ingest_one_instance(db: Session, case: Case, dataset) -> dict:
     any staged-file cleanup -- a quick-import batch commits once per
     resolved case, not once per instance.
     """
+    # Serialised per SOP Instance UID for the rest of the caller's
+    # transaction: a second worker with the same instance waits here, then
+    # finds it below and reports "duplicate" -- before storing anything.
+    # Unlocked, it failed with a raw IntegrityError after having uploaded
+    # (possibly overwritten) the pixel data and a thumbnail (B-05).
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"sop:{dataset.SOPInstanceUID}"})
     existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
     if existing is not None:
         return {"status": "duplicate", "instance_id": str(existing.id)}

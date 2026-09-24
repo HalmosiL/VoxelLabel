@@ -2,6 +2,7 @@
 from celery import Celery
 
 from app.core.config import settings
+from app.deidentify import RuleError
 from app.pipeline import DicomValidationError, ingest_dicom
 from app.pytorch_export import build_pytorch_export
 from app.quick_import import run_quick_import
@@ -22,9 +23,10 @@ def ingest_dicom_file(self, job_id: str, case_id: str, staging_key: str) -> dict
         return ingest_dicom(job_id=job_id, case_id=case_id, staging_key=staging_key)
     except TransientIngestionError as exc:
         raise self.retry(exc=exc)
-    except DicomValidationError:
-        # Permanent failure: the staged copy would otherwise sit in object
-        # storage forever (ingest_dicom only deletes it on success).
+    except (DicomValidationError, RuleError):
+        # Permanent failure (an invalid file, or a de-identification rule
+        # that can't be applied): the staged copy would otherwise sit in
+        # object storage forever (ingest_dicom only deletes it on success).
         delete_staged_file(staging_key)
         raise
 

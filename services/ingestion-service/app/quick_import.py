@@ -211,6 +211,12 @@ def run_quick_import(
                 # _get_or_create_* conflicts are confined to savepoints,
                 # so they never undo the case.
                 result = _ingest_one_instance(db, case, dataset)
+                if result["status"] == "duplicate":
+                    # another import stored this very instance meanwhile:
+                    # drop the case made for it, if any, rather than commit it empty
+                    db.rollback()
+                    delete_staged_file(staging_key)
+                    continue
                 db.commit()
                 delete_staged_file(staging_key)
 
