@@ -102,3 +102,22 @@ def test_audit_log_is_admin_only_and_filters(client):
     assert client.get("/admin/audit-log", params={"entity_id": "not-a-uuid"}).status_code == 422
     entries = client.get("/admin/audit-log", params={"entity_type": "study", "entity_id": sid}).json()["entries"]
     assert len(entries) == 1 and entries[0]["action"] == "study.create" and entries[0]["actor"] == "platform-admin"
+
+
+def test_the_temporary_password_is_mailed_but_never_stored_in_the_delivery_log(client, db, keycloak, outbox):
+    """J-08: the notification log (readable in the admin UI, and in every
+    backup) must not keep the one-time password the mail carries."""
+    import re
+
+    from shared_models.models import NotificationLog
+
+    _delivery_on(client)
+    req = _submit(client).json()
+    outbox.clear()
+    assert client.post(f"/admin/registration-requests/{req['id']}/approve").status_code == 200
+    password = re.search(r"Temporary password: (\S+)", outbox[0]["text"]).group(1)
+    assert len(password) >= 8
+    row = db.query(NotificationLog).filter_by(event_type="registration_approved").one()
+    assert password not in row.body and "Temporary password: •••••• (not stored)" in row.body
+    listed = client.get("/admin/notifications/log").json()
+    assert password not in str(listed)

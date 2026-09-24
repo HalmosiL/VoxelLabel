@@ -60,13 +60,27 @@ def _serialize(req: RegistrationRequest) -> dict:
     }
 
 
+REDACTED = "•••••• (not stored)"
+
+
 def _send(
-    db: Session, settings: NotificationSettings, *, user_id: str, email: str | None, event_type: str, subject: str, text: str, html: str
+    db: Session,
+    settings: NotificationSettings,
+    *,
+    user_id: str,
+    email: str | None,
+    event_type: str,
+    subject: str,
+    text: str,
+    html: str,
+    redact: tuple[str, ...] = (),
 ) -> None:
     """Delivers (or records why it didn't) one registration-flow email
     into NotificationLog -- the same sent/failed/skipped bookkeeping the
     job-change notifications use, so this is visible in the one
-    delivery log rather than a second, invisible mail path."""
+    delivery log rather than a second, invisible mail path. Anything in
+    `redact` (a temporary password) goes out in the mail but is never
+    written to the log (J-08)."""
     status, error = "skipped", None
     if not settings.enabled:
         error = "email delivery is switched off"
@@ -78,7 +92,11 @@ def _send(
             status = "sent"
         except Exception as err:  # noqa: BLE001 -- recorded, not swallowed silently
             status, error = "failed", str(err)[:2000]
-    db.add(NotificationLog(user_id=user_id, email=email, event_type=event_type, subject=subject, body=text, status=status, error=error))
+    logged = text
+    for secret in redact:
+        if secret:
+            logged = logged.replace(secret, REDACTED)
+    db.add(NotificationLog(user_id=user_id, email=email, event_type=event_type, subject=subject, body=logged, status=status, error=error))
 
 
 class RegisterBody(BaseModel):
@@ -196,7 +214,10 @@ def approve_registration_request(
 
     settings = get_settings(db)
     subject, text, html = compose_approved(req, created["username"], temporary_password, settings.platform_base_url)
-    _send(db, settings, user_id=str(req.id), email=req.email, event_type="registration_approved", subject=subject, text=text, html=html)
+    _send(
+        db, settings, user_id=str(req.id), email=req.email, event_type="registration_approved",
+        subject=subject, text=text, html=html, redact=(temporary_password,),
+    )
 
     db.commit()
     return _serialize(req)
