@@ -114,3 +114,16 @@ def test_learning_curve_buckets_by_weeks_since_the_persons_own_tenure_start():
 def test_learning_curve_skips_actors_with_no_known_tenure_start():
     legs = [leg(ANNOT_CARD, "annotation", "c1", queue_start_h=0, first_touch_h=0, terminal_h=1, actor="no-tenure-user")]
     assert stats.learning_curve(legs, {}) == []
+
+
+def test_a_leg_decided_without_a_recorded_first_touch_is_not_open():
+    """H-04: a review decided from the admin-ui or the API has no viewer
+    page view, so no first touch -- it was listed as "waiting for a
+    reviewer" (and flagged after a week, forever) although it is done."""
+    now = T0 + timedelta(days=30)
+    legs = [
+        leg(REVIEW_CARD, "review", "approved-from-admin-ui", queue_start_h=0, terminal_h=1, assignee=BOB),
+        leg(REVIEW_CARD, "review", "really-waiting", queue_start_h=0, assignee=BOB),
+    ]
+    assert [r["case_id"] for r in stats.bottlenecks(legs, now)] == ["really-waiting"]
+    assert [r["open_count"] for r in stats.assignee_load(legs)] == [1]

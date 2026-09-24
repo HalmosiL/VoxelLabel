@@ -86,12 +86,16 @@ def bottlenecks(legs: list[dict], now: datetime) -> list[dict]:
     card_medians = _card_medians(legs)
     rows = []
     for leg in legs:
+        # A leg with its terminal action is finished, touched or not: a
+        # review decided from the admin-ui or the API has no recorded
+        # viewer visit, so no first touch, and used to be listed as still
+        # waiting for the reviewer (H-04).
+        if leg.get("terminal_at") is not None:
+            continue
         if leg.get("first_touch") is None:
             kind, since, baseline_key = "queue", leg["queue_start"], (leg["card_id"], "queue")
-        elif leg.get("terminal_at") is None:
-            kind, since, baseline_key = "work", leg["first_touch"], (leg["card_id"], "work")
         else:
-            continue  # this leg is finished -- nothing open to report
+            kind, since, baseline_key = "work", leg["first_touch"], (leg["card_id"], "work")
         waiting_ms = _ms(now - since)
         baseline_ms = card_medians.get(baseline_key)
         threshold_ms = baseline_ms * FLAG_MULTIPLE if baseline_ms is not None else _ms(FALLBACK_FLAG_AFTER)
@@ -121,9 +125,10 @@ def assignee_load(legs: list[dict]) -> list[dict]:
     for leg in legs:
         if leg.get("assignee_id") is None:
             continue
-        since = leg["queue_start"] if leg.get("first_touch") is None else (leg["first_touch"] if leg.get("terminal_at") is None else None)
-        if since is not None:
-            open_since[(leg["assignee_id"], leg["card_type"])].append(since)
+        if leg.get("terminal_at") is not None:
+            continue  # finished, even without a recorded first touch (H-04)
+        since = leg["queue_start"] if leg.get("first_touch") is None else leg["first_touch"]
+        open_since[(leg["assignee_id"], leg["card_type"])].append(since)
     rows = [
         {"assignee_id": assignee_id, "card_type": card_type, "open_count": len(times), "oldest_since": min(times)}
         for (assignee_id, card_type), times in open_since.items()
