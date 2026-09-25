@@ -129,6 +129,32 @@ jobs:
       - run: pytest -q tests/integration
         working-directory: services/admin-service
 
+  schema-parity:
+    name: models match the migrated schema
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ctplatform
+          POSTGRES_PASSWORD: ctplatform
+          POSTGRES_DB: schemacheck
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ctplatform" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://ctplatform:ctplatform@localhost:5432/schemacheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install alembic -e libs/shared-models
+      # the tests build their schema from the models: anything only in the
+      # migrations would be missing from every test run (I-01)
+      - run: alembic upgrade head && python check_models_match.py
+        working-directory: infra/migrations
+
   compose:
     name: docker compose config
     runs-on: ubuntu-latest

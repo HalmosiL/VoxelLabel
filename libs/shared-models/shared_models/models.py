@@ -628,6 +628,9 @@ class StudyVersion(Base):
     a restore re-shapes the study around them, it never deletes them."""
 
     __tablename__ = "study_versions"
+    # Also in the migration: the tests build their schema from these
+    # models, and ran without it (I-01, I-02).
+    __table_args__ = (UniqueConstraint("study_id", "number", name="uq_study_versions_study_number"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     study_id: Mapped[uuid.UUID] = mapped_column(
@@ -733,6 +736,10 @@ class NotificationLog(Base):
     delivery log. No FK to the card: the record should outlive it."""
 
     __tablename__ = "notification_log"
+    __table_args__ = (
+        Index("ix_notification_log_created_at", "created_at"),
+        Index("ix_notification_log_user_id", "user_id"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -920,6 +927,7 @@ class UsageSnapshot(UsageSnapshotFields, Base):
     __table_args__ = (
         Index("ix_usage_snapshots_route_occurred", "route", "occurred_at"),
         Index("ix_usage_snapshots_session", "session_id"),
+        Index("ix_usage_snapshots_study", "study_id"),
     )
 
 
@@ -1007,6 +1015,7 @@ class CaseStageEvent(Base):
     __table_args__ = (
         UniqueConstraint("card_id", "case_id", name="uq_case_stage_events_card_case"),
         Index("ix_case_stage_events_study_occurred", "study_id", "occurred_at"),
+        Index("ix_case_stage_events_card_case", "card_id", "case_id"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
