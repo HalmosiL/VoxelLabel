@@ -41,6 +41,7 @@ import os
 import uuid
 
 import boto3
+from botocore.config import Config
 import pypdf
 from mcp.server.mcpserver import MCPServer
 from sqlalchemy import create_engine
@@ -75,6 +76,7 @@ _s3 = boto3.client(
     endpoint_url=_OBJECT_STORAGE_ENDPOINT,
     aws_access_key_id=os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin"),
     aws_secret_access_key=os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin"),
+    config=Config(connect_timeout=3, retries={"total_max_attempts": 2, "mode": "standard"}),  # fail fast when storage is down
 )
 
 # Only these extensions are ever attempted as read-as-text -- a scanned

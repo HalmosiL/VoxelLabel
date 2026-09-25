@@ -10,6 +10,7 @@ import mimetypes
 from collections.abc import Callable
 
 import boto3
+from shared_auth.storage_errors import storage_client_config
 from shared_auth.object_links import link_secret, sign_object_link
 
 from app.core.config import settings
@@ -19,6 +20,7 @@ _client = boto3.client(
     endpoint_url=settings.object_storage_endpoint,
     aws_access_key_id=settings.object_storage_access_key,
     aws_secret_access_key=settings.object_storage_secret_key,
+    config=storage_client_config(),  # fail fast when storage is down
 )
 
 

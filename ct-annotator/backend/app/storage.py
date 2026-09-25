@@ -11,6 +11,7 @@ import mimetypes
 import uuid
 
 import boto3
+from botocore.config import Config
 
 from app.config import (
     OBJECT_STORAGE_ACCESS_KEY,
@@ -24,6 +25,9 @@ _client = boto3.client(
     endpoint_url=OBJECT_STORAGE_ENDPOINT,
     aws_access_key_id=OBJECT_STORAGE_ACCESS_KEY,
     aws_secret_access_key=OBJECT_STORAGE_SECRET_KEY,
+    # fail fast when storage is down: boto's defaults took 4-13 s per call
+    # (same as the platform's shared_auth.storage_errors.storage_client_config)
+    config=Config(connect_timeout=3, retries={"total_max_attempts": 2, "mode": "standard"}),
 )
 
 _MASK_PREFIX = "annotation-masks"

@@ -21,6 +21,7 @@ category of issue as the Keycloak issuer/JWKS split -- see
 `libs/shared-auth/README.md`.
 """
 import boto3
+from shared_auth.storage_errors import storage_client_config
 from shared_auth.object_links import link_secret, sign_object_link
 
 from app.core.config import settings
@@ -30,6 +31,7 @@ _client = boto3.client(
     endpoint_url=settings.object_storage_endpoint,
     aws_access_key_id=settings.object_storage_access_key,
     aws_secret_access_key=settings.object_storage_secret_key,
+    config=storage_client_config(),  # fail fast when storage is down
 )
 
 
@@ -63,6 +65,7 @@ _internal_client = boto3.client(
     endpoint_url=settings.object_storage_internal_endpoint,
     aws_access_key_id=settings.object_storage_access_key,
     aws_secret_access_key=settings.object_storage_secret_key,
+    config=storage_client_config(),  # fail fast when storage is down
 )
 LINK_SECRET = link_secret(settings.object_storage_secret_key)
 OBJECTS_PATH = "/data/objects"

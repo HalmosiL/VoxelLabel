@@ -2,6 +2,7 @@
 import io
 
 import boto3
+from shared_auth.storage_errors import storage_client_config
 
 from app.core.config import settings
 
@@ -10,6 +11,7 @@ _client = boto3.client(
     endpoint_url=settings.object_storage_endpoint,
     aws_access_key_id=settings.object_storage_access_key,
     aws_secret_access_key=settings.object_storage_secret_key,
+    config=storage_client_config(),  # fail fast when storage is down
 )
 
 # A second client, pointed at the browser-reachable endpoint rather than
@@ -24,6 +26,7 @@ _public_client = boto3.client(
     endpoint_url=settings.object_storage_public_endpoint,
     aws_access_key_id=settings.object_storage_access_key,
     aws_secret_access_key=settings.object_storage_secret_key,
+    config=storage_client_config(),  # fail fast when storage is down
 )
 
 
