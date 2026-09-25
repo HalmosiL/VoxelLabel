@@ -82,7 +82,18 @@ export type QuickImportStatus =
   | { status: "pending" | "started" | "retry" }
   | { status: "progress"; current: number; total: number; filename: string }
   | { status: "failed"; error: string }
-  | { status: "completed"; cases: QuickImportResultCase[]; instances_ingested: number; errors: QuickImportError[] };
+  | {
+      status: "completed";
+      cases: QuickImportResultCase[];
+      instances_ingested: number;
+      errors: QuickImportError[];
+      // files skipped because they are already imported -- and where (B-17)
+      already_imported?: { file: string; where: DuplicateWhere }[];
+    };
+
+/** Where an instance that is already imported lives: a DICOM instance
+ * belongs to one study only. */
+export type DuplicateWhere = "this_case" | "this_study" | "another_study";
 
 /** Uploads a whole batch of loose DICOM files (any mix of patients/
  * studies) in one request -- the server groups them by (PatientID,
@@ -143,7 +154,7 @@ export async function uploadDicom(caseId: string, file: File): Promise<{ job_id:
 
 export type IngestionJobStatus =
   | { status: "completed"; instance_id?: string; job_id?: string }
-  | { status: "duplicate"; instance_id?: string; job_id?: string }
+  | { status: "duplicate"; where?: DuplicateWhere; instance_id?: string; job_id?: string }
   | { status: "failed"; error: string }
   | { status: string };
 
@@ -152,4 +163,11 @@ export type IngestionJobStatus =
  * it landed, was a duplicate, or failed. */
 export function getIngestionJob(jobId: string): Promise<IngestionJobStatus> {
   return apiFetch(API.ingestion, `/ingestion/jobs/${jobId}`);
+}
+
+/** The line shown for a file that is already imported (B-17, B-21). */
+export function alreadyImportedMessage(fileName: string, where: DuplicateWhere | undefined): string {
+  if (where === "another_study") return `${fileName} is already in another study, so it wasn't added -- a DICOM image can belong to one study only.`;
+  if (where === "this_study") return `${fileName} is already in another case of this study (skipped).`;
+  return `${fileName} was already in this case (skipped).`;
 }

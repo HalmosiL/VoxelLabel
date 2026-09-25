@@ -1,6 +1,6 @@
 import { DragEvent, useEffect, useRef, useState } from "react";
 
-import { getQuickImport, quickImport, QuickImportStatus } from "../api/ingestionApi";
+import { alreadyImportedMessage, getQuickImport, quickImport, QuickImportStatus } from "../api/ingestionApi";
 import { describeApiError } from "../api/client";
 import Modal from "./Modal";
 
@@ -298,7 +298,8 @@ export default function QuickImportModal({
             <p className="hint">
               {result.instances_ingested} instance{result.instances_ingested === 1 ? "" : "s"} ingested across{" "}
               {result.cases.length} case{result.cases.length === 1 ? "" : "s"}
-              {result.errors.length > 0 && `, ${result.errors.length} file(s) failed`}.
+              {result.errors.length > 0 && `, ${result.errors.length} file(s) failed`}
+              {(result.already_imported?.length ?? 0) > 0 && `, ${result.already_imported!.length} already imported (skipped)`}.
             </p>
             <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-gray-100 p-2 text-sm">
               {result.cases.map((c) => (
@@ -311,6 +312,18 @@ export default function QuickImportModal({
                 </li>
               ))}
             </ul>
+            {(result.already_imported?.length ?? 0) > 0 && (
+              <details className="text-xs text-gray-500" data-testid="already-imported">
+                <summary className="cursor-pointer">{result.already_imported!.length} already imported</summary>
+                <ul className="mt-1 flex flex-col gap-1">
+                  {result.already_imported!.map((d, i) => (
+                    <li key={i} className="rounded bg-gray-50 px-2 py-1">
+                      {alreadyImportedMessage(d.file.split("/").pop() ?? d.file, d.where)}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             {result.errors.length > 0 && (
               <details open className="text-xs text-gray-500">
                 <summary className="cursor-pointer">{result.errors.length} error(s)</summary>

@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.deidentify import apply_deidentification_profile
-from app.pipeline import REQUIRED_TAGS, DicomValidationError, ForeignImagingError, _ingest_one_instance, foreign_imaging_owner
+from app.pipeline import REQUIRED_TAGS, DicomValidationError, ForeignImagingError, _ingest_one_instance, duplicate_result, foreign_imaging_owner
 from app.storage import delete_staged_file, download_staged_file
 
 
@@ -157,6 +157,7 @@ def run_quick_import(
     db: Session = SessionLocal()
     cases: dict[str, dict] = {}  # case_id -> {"title", "created", "instance_count"}
     errors: list[dict] = []
+    already: list[dict] = []  # {"file", "where"} -- see pipeline.duplicate_result
     total = len(staging_keys)
 
     try:
@@ -193,7 +194,10 @@ def run_quick_import(
                 # instead avoids spinning up an empty, orphaned Case every
                 # time a duplicate happens to be the first file seen for
                 # its StudyInstanceUID in this batch.
-                if db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first() is not None:
+                existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
+                if existing is not None:
+                    where = duplicate_result(existing, study_id=study_id)["where"]
+                    already.append({"file": display_name(staging_key), "where": where})
                     delete_staged_file(staging_key)
                     continue
 
@@ -214,6 +218,7 @@ def run_quick_import(
                 if result["status"] == "duplicate":
                     # another import stored this very instance meanwhile:
                     # drop the case made for it, if any, rather than commit it empty
+                    already.append({"file": display_name(staging_key), "where": "this_study" if result["where"] != "another_study" else "another_study"})
                     db.rollback()
                     delete_staged_file(staging_key)
                     continue
@@ -247,6 +252,7 @@ def run_quick_import(
             "cases": [{"case_id": cid, **info} for cid, info in cases.items()],
             "instances_ingested": sum(c["instance_count"] for c in cases.values()),
             "errors": errors,
+            "already_imported": already,
         }
     finally:
         db.close()

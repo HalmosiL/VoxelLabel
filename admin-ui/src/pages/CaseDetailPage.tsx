@@ -23,7 +23,7 @@ import {
   listImagingStudies,
   listInstances,
 } from "../api/dataApi";
-import { getIngestionJob, uploadDicom } from "../api/ingestionApi";
+import { alreadyImportedMessage, getIngestionJob, uploadDicom } from "../api/ingestionApi";
 import { useMe } from "../auth/MeContext";
 import { useRegisterGuide } from "../guide/GuideContext";
 import { CASE_STEPS } from "../guide/workbenchSteps";
@@ -335,7 +335,7 @@ function ImagingSection({
       const poll = async () => {
         const job = await getIngestionJob(result.job_id);
         if (job.status === "completed" || job.status === "duplicate") {
-          setUploadStatus(job.status === "duplicate" ? `${file.name} was already in this case (skipped).` : `✓ ${file.name} imported.`);
+          setUploadStatus(job.status === "duplicate" ? alreadyImportedMessage(file.name, "where" in job ? job.where : undefined) : `✓ ${file.name} imported.`);
           refresh();
           window.setTimeout(() => setUploadStatus(null), 4000);
         } else if (job.status === "failed") {
