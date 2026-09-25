@@ -27,12 +27,20 @@ _public_client = boto3.client(
 )
 
 
-def upload_pixel_data(storage_key: str, dataset) -> None:
-    """Upload a pydicom dataset's raw bytes to the pixel data bucket."""
+def dicom_file_bytes(dataset) -> bytes:
+    """The dataset as a standard DICOM file: preamble, "DICM" and File
+    Meta, whatever the upload looked like. Written "like the original", a
+    file uploaded without them was stored without them, and the viewer
+    and thumbnail_backfill (which read without force) could never open it
+    (B-07). The pipeline fills in missing File Meta first."""
     buffer = io.BytesIO()
-    dataset.save_as(buffer, enforce_file_format=False)
-    buffer.seek(0)
-    _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=buffer.getvalue())
+    dataset.save_as(buffer, enforce_file_format=True)
+    return buffer.getvalue()
+
+
+def upload_pixel_data(storage_key: str, dataset) -> None:
+    """Upload a pydicom dataset, as a standard DICOM file, to the pixel data bucket."""
+    _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=dicom_file_bytes(dataset))
 
 
 def upload_thumbnail(storage_key: str, png_bytes: bytes) -> None:

@@ -7,6 +7,8 @@ import io
 import uuid
 
 import pydicom
+from pydicom.dataset import FileMetaDataset
+from pydicom.uid import CTImageStorage, ExplicitVRBigEndian, ExplicitVRLittleEndian, ImplicitVRLittleEndian
 from shared_models.database import SessionLocal
 from shared_models.models import Case, ImagingStudy, Instance, Series
 from sqlalchemy import text
@@ -89,6 +91,54 @@ def ingest_dicom(job_id: str, case_id: str, staging_key: str) -> dict:
         db.close()
 
 
+def duplicate_result(existing: Instance, *, study_id, case_id=None) -> dict:
+    """What an upload of an instance that is already imported reports:
+    where it is -- "this_case", "this_study" or "another_study" (a DICOM
+    instance belongs to one study only). The existing instance's id only
+    when it is in the same study: it isn't the uploader's to see
+    otherwise. Before, the case page read every duplicate as "already in
+    this case" (B-21) and the quick import skipped them silently (B-17)."""
+    owner_case = existing.series.imaging_study.case
+    if case_id is not None and owner_case.id == case_id:
+        return {"status": "duplicate", "where": "this_case", "instance_id": str(existing.id)}
+    if str(owner_case.study_id) == str(study_id):
+        return {"status": "duplicate", "where": "this_study", "instance_id": str(existing.id)}
+    return {"status": "duplicate", "where": "another_study"}
+
+
+def _check_image_data(dataset) -> None:
+    """Refuses a file whose image data can't be decoded -- cut short,
+    damaged, or in an encoding no installed decoder handles. It used to
+    be "imported", then every render of it failed and it broke the whole
+    series' 3D views (B-06). The decoded array is kept on the dataset, so
+    the thumbnail reuses it."""
+    if "PixelData" not in dataset:
+        return
+    try:
+        dataset.pixel_array  # noqa: B018 -- decoding is the check
+    except Exception as exc:  # noqa: BLE001 -- any decoder failure means the same to the uploader
+        raise DicomValidationError(f"The image data can't be read -- the file may be cut short or damaged ({exc})") from exc
+
+
+def _ensure_file_meta(dataset) -> None:
+    """Fills in the File Meta header a file was uploaded without (no
+    preamble, no group 0002 -- read with force=True), so it can be stored
+    as a standard DICOM file (see storage.dicom_file_bytes, B-07)."""
+    meta = getattr(dataset, "file_meta", None)
+    if meta is not None and "TransferSyntaxUID" in meta:
+        meta.MediaStorageSOPInstanceUID = dataset.SOPInstanceUID
+        return
+    implicit, little = getattr(dataset, "original_encoding", (True, True))
+    new = FileMetaDataset()
+    new.MediaStorageSOPClassUID = dataset.get("SOPClassUID", CTImageStorage)
+    new.MediaStorageSOPInstanceUID = dataset.SOPInstanceUID
+    if implicit is False:
+        new.TransferSyntaxUID = ExplicitVRLittleEndian if little is not False else ExplicitVRBigEndian
+    else:
+        new.TransferSyntaxUID = ImplicitVRLittleEndian
+    dataset.file_meta = new
+
+
 def _ingest_one_instance(db: Session, case: Case, dataset) -> dict:
     """Given an already-resolved Case and a parsed (and de-identified)
     dataset, uploads its pixel data + thumbnail and inserts its Instance
@@ -107,12 +157,14 @@ def _ingest_one_instance(db: Session, case: Case, dataset) -> dict:
     db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"sop:{dataset.SOPInstanceUID}"})
     existing = db.query(Instance).filter_by(sop_instance_uid=dataset.SOPInstanceUID).first()
     if existing is not None:
-        return {"status": "duplicate", "instance_id": str(existing.id)}
+        return duplicate_result(existing, case_id=case.id, study_id=case.study_id)
     # Before anything is stored: never attach the images to someone else's case.
     reason = foreign_imaging_owner(db, dataset, case=case)
     if reason:
         raise ForeignImagingError(reason)
 
+    _ensure_file_meta(dataset)  # first: decoding needs the transfer syntax
+    _check_image_data(dataset)
     storage_key = f"{dataset.StudyInstanceUID}/{dataset.SeriesInstanceUID}/{dataset.SOPInstanceUID}.dcm"
     upload_pixel_data(storage_key, dataset)
 
