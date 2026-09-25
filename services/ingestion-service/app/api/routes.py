@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pydicom
+from botocore.exceptions import ClientError
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -38,6 +39,32 @@ def _reject_non_dicom(data: bytes) -> None:
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 
+_IMPORTERS = ["data_manager", "admin"]
+
+
+def _owner_key(job_id: str) -> str:
+    return f"_jobs/{job_id}.json"
+
+
+def _record_owner(job_id: str, study_id: str, user: CurrentUser) -> None:
+    """Which study an upload or quick import belongs to, so its status --
+    case ids, titles, file names -- is shown only to those who may import
+    into that study (B-19). Celery's result has no owner of its own."""
+    marker = {"study_id": study_id, "requested_by": user.subject, "requested_at": datetime.now(timezone.utc).isoformat()}
+    upload_export_object(_owner_key(job_id), json.dumps(marker).encode())
+
+
+def _check_owner(db: Session, job_id: str, user: CurrentUser, key: str | None = None) -> None:
+    """404 for an id nobody started, 403 for someone who may not import
+    into its study. A job from before markers existed: global admins only."""
+    try:
+        study_id = json.loads(download_object(key or _owner_key(job_id)))["study_id"]
+    except (ClientError, KeyError, ValueError):  # no marker, or not ours -- storage being down is a 503 instead
+        if "admin" in user.realm_roles:
+            return
+        raise HTTPException(status_code=404, detail="No such job") from None
+    require_study_role(db, study_id, user, allowed_roles=_IMPORTERS)
+
 
 @router.post("/cases/{case_id}/upload")
 async def upload_dicom(
@@ -67,16 +94,18 @@ async def upload_dicom(
     job_id = str(uuid.uuid4())
     staging_key = f"_staging/{job_id}.dcm"
     upload_staged_file(staging_key, data)
+    _record_owner(job_id, str(case.study_id), user)
     # task_id=job_id makes the job pollable via GET /ingestion/jobs/{job_id}
     # (Celery's own result backend), the same way quick imports are.
-    enqueue(ingest_dicom_file, job_id, {"job_id": job_id, "case_id": case_id, "staging_key": staging_key}, staged=[staging_key])
+    enqueue(ingest_dicom_file, job_id, {"job_id": job_id, "case_id": case_id, "staging_key": staging_key}, staged=[staging_key, _owner_key(job_id)])
     return {"job_id": job_id, "status": "queued"}
 
 
 @router.get("/jobs/{job_id}")
-def get_ingestion_job(job_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+def get_ingestion_job(job_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     """Polls one single-file upload job -- completed (with the instance
     id, or "duplicate"), failed (with the reason), or still pending."""
+    _check_owner(db, job_id, user)
     result = AsyncResult(job_id, app=celery_app)
     if result.state == "SUCCESS":
         return {"status": "completed", **(result.result if isinstance(result.result, dict) else {})}
@@ -122,17 +151,19 @@ async def quick_import(
         if file.filename:
             filenames[staging_key] = file.filename
 
-    enqueue(quick_import_batch, import_id, {"study_id": study_id, "staging_keys": staging_keys, "filenames": filenames}, staged=staging_keys)
+    _record_owner(import_id, study_id, user)
+    enqueue(quick_import_batch, import_id, {"study_id": study_id, "staging_keys": staging_keys, "filenames": filenames}, staged=[*staging_keys, _owner_key(import_id)])
     return {"import_id": import_id, "status": "queued", "file_count": len(staging_keys)}
 
 
 @router.get("/quick-imports/{import_id}")
-def get_quick_import(import_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+def get_quick_import(import_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     """Polls one quick-import batch's status/result via Celery's own
     AsyncResult -- no durable object-storage marker needed here (unlike
     the PyTorch export's manifest.json) since this is a short-lived,
     actively-watched foreground action, not something checked back on
     a day later."""
+    _check_owner(db, import_id, user)
     result = AsyncResult(import_id, app=celery_app)
     if result.state == "SUCCESS":
         return {"status": "completed", **result.result}
@@ -223,7 +254,7 @@ def create_pytorch_export(
 
 
 @router.get("/exports/{export_id}")
-def get_pytorch_export(export_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+def get_pytorch_export(export_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     """Polls one export's status.
 
     The manifest itself, once it exists in object storage, is treated as
@@ -233,11 +264,11 @@ def get_pytorch_export(export_id: str, user: CurrentUser = Depends(get_current_u
     AsyncResult is only consulted to tell "still running" from "failed"
     from "never existed" *before* that manifest shows up.
 
-    No extra per-study role check here beyond being an authenticated
-    user: export_id is an unguessable UUID nobody else is handed, the
-    same trust model this platform's own presigned URLs already rely on
-    once a link has been given out.
+    Only those who may export from the export's study read it (the
+    request marker names the study, B-19); an export from before markers
+    existed is for global admins only.
     """
+    _check_owner(db, export_id, user, key=_request_key(export_id))
     try:
         raw = download_object(f"exports/{export_id}/manifest.json")
     except Exception:

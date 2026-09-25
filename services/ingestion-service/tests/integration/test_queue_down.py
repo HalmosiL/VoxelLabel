@@ -61,6 +61,7 @@ def test_a_status_poll_with_the_queue_down_is_a_503(client, monkeypatch):
             raise RedisConnectionError("Error 111 connecting to redis:6379")
 
     monkeypatch.setattr(routes, "AsyncResult", lambda *a, **k: _Down())
+    monkeypatch.setattr(routes, "download_object", lambda key: (_ for _ in ()).throw(KeyError(key)))  # no owner marker; the caller is an admin
     r = client.get(f"/ingestion/quick-imports/{uuid.uuid4()}")
     assert r.status_code == 503, r.text
     r = client.get(f"/ingestion/jobs/{uuid.uuid4()}")
