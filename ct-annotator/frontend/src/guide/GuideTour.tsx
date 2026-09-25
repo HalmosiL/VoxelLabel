@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useCoarsePointer } from "../lib/touch";
@@ -49,6 +49,9 @@ export default function GuideTour({
   const coarse = useCoarsePointer();
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
+  // the card's real height, for placing it (G-21)
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [cardHeight, setCardHeight] = useState(420);
 
   // Only steps whose target exists on this page right now count -- a
   // job without documents, or a surface with no 3D pane, just has fewer
@@ -87,6 +90,8 @@ export default function GuideTour({
 
   const measure = useCallback(() => {
     setViewport({ w: window.innerWidth, h: window.innerHeight });
+    const height = cardRef.current?.offsetHeight;
+    if (height) setCardHeight((prev) => (prev === height ? prev : height));
     const targets = Array.from(document.querySelectorAll("[data-guide]"))
       .map((el) => el.getAttribute("data-guide") ?? "")
       .filter(Boolean)
@@ -156,7 +161,7 @@ export default function GuideTour({
 
   if (!open || !step) return null;
 
-  const cardStyle = placeCard(rect, step.placement, viewport);
+  const cardStyle = placeCard(rect, step.placement, viewport, cardHeight);
 
   return createPortal(
     <div className="fixed inset-0 z-[60]" data-guide-overlay="">
@@ -178,12 +183,13 @@ export default function GuideTour({
       <div className="fixed inset-0" onClick={(e) => e.stopPropagation()} />
 
       <div
+        ref={cardRef}
         role="dialog"
         aria-label={`${assistantName}: ${step.title}`}
         className="fixed flex flex-col overflow-hidden rounded-xl border border-[#3d3d5c] bg-[#1e1e2e] text-gray-200 shadow-2xl"
-        style={{ width: CARD_WIDTH, ...cardStyle }}
+        style={{ width: CARD_WIDTH, maxHeight: viewport.h - 16, ...cardStyle }}
       >
-        <div className="flex items-center gap-2.5 border-b border-[#2f2f48] bg-[#23233a] px-4 py-2.5">
+        <div className="flex flex-shrink-0 items-center gap-2.5 border-b border-[#2f2f48] bg-[#23233a] px-4 py-2.5">
           <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-indigo-600 text-white shadow-inner">
             <SparkIcon />
           </span>
@@ -200,14 +206,14 @@ export default function GuideTour({
 
         {step.image && (
           <img
-            src={`/guide/${step.image}`}
+            src={guideImageSrc(step.image)}
             alt=""
             className="max-h-44 w-full border-b border-[#2f2f48] bg-black object-cover object-top"
             onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
           />
         )}
 
-        <div className="flex flex-col gap-2 px-4 py-3">
+        <div className="flex min-h-0 flex-col gap-2 overflow-y-auto px-4 py-3">
           <h2 className="text-sm font-semibold text-gray-50">{step.title}</h2>
           <div className="text-[12px] leading-relaxed text-gray-300 [&_p+p]:mt-1.5 [&_b]:text-gray-100 [&_kbd]:rounded [&_kbd]:border [&_kbd]:border-[#4a4a6a] [&_kbd]:bg-[#2a2a3e] [&_kbd]:px-1 [&_kbd]:font-mono [&_kbd]:text-[10px]">
             {typeof body === "string" ? <p>{body}</p> : body}
@@ -219,7 +225,7 @@ export default function GuideTour({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-[#2f2f48] px-4 py-2.5">
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-t border-[#2f2f48] px-4 py-2.5">
           <div className="flex items-center gap-1">
             {visibleSteps.map((_, i) => (
               <span key={i} className={`h-1.5 rounded-full transition-all ${i === index ? "w-4 bg-sky-400" : "w-1.5 bg-[#3d3d5c]"}`} />
@@ -247,8 +253,22 @@ export default function GuideTour({
 /** Picks where the card goes: next to the spotlight on the preferred
  * side if there's room, otherwise the first side that fits, otherwise
  * centred. Returns fixed-position CSS. */
-function placeCard(rect: DOMRect | null, preferred: GuideStep["placement"], vp: { w: number; h: number }): { left: number; top: number } {
-  const cardH = 420; // generous estimate; the card is clamped into the viewport anyway
+/** A tour picture under public/guide/, below the app's base path -- an
+ * absolute "/guide/..." broke every picture under a sub-path (G-13). */
+export function guideImageSrc(image: string): string {
+  return `${import.meta.env.BASE_URL}guide/${image}`;
+}
+
+/** Where the card goes: beside the target on the first side where the
+ * card's real height fits (measured once rendered -- a picture makes it
+ * taller than the old fixed 420 px estimate, and on a tablet the Next row
+ * ended up off screen, G-21), clamped into the viewport. */
+export function placeCard(
+  rect: DOMRect | null,
+  preferred: GuideStep["placement"],
+  vp: { w: number; h: number },
+  cardH = 420
+): { left: number; top: number } {
   if (!rect) return { left: Math.max(8, (vp.w - CARD_WIDTH) / 2), top: Math.max(8, (vp.h - cardH) / 2) };
   const order: NonNullable<GuideStep["placement"]>[] = [preferred ?? "right", "right", "bottom", "left", "top"];
   const fits = {

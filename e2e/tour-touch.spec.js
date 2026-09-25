@@ -1,9 +1,10 @@
 // Tours on a touch tablet (G-08, G-20): the viewer's cards name the
 // gestures a tablet has (pinch, two-finger drag) instead of scroll,
 // right-drag and keys, and the admin tour skips steps whose target sits
-// in the closed sidebar drawer, off screen.
+// in the closed sidebar drawer, off screen. G-21: on a tablet every card,
+// pictures included, stays whole on screen with its Next button.
 const { chromium } = require("playwright");
-const { login } = require("./helpers");
+const { F, login, token } = require("./helpers");
 const VIEWER = "http://localhost:5174", UI = "http://localhost:5173";
 
 const results = [];
@@ -51,6 +52,33 @@ async function stepsOf(page) {
     const titles = (await stepsOf(page)).map((s) => s.title);
     check("steps aimed at the closed drawer are skipped", !titles.includes("Getting around") && !titles.includes("Replay any tour"), titles);
     await ctx.close();
+  }
+
+  // ---- G-21: the case page tour's cards stay on screen, Next included ----
+  {
+    const t = await token("dr-test", "Test1234!");
+    const jobs = await (await fetch(`http://localhost:8004/admin/my-jobs`, { headers: { Authorization: `Bearer ${t}` } })).json();
+    const job = jobs.find((j) => j.card_id === F.ANNOT_CARD);
+    for (const viewport of [{ width: 1024, height: 768 }, { width: 768, height: 1024 }]) {
+      const ctx = await browser.newContext({ ...tablet, viewport });
+      const page = await ctx.newPage();
+      await login(page, "dr-test", "Test1234!", `${UI}/studies/${job.study_id}/cases/${job.cases[0].id}?jobId=${F.ANNOT_CARD}`);
+      await page.waitForSelector('[role="dialog"]', { timeout: 20000 });
+      const clipped = [];
+      for (let i = 0; i < 20 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
+        await page.waitForTimeout(700); // the card is placed from its measured height on the next pass
+        const dialog = page.locator('[role="dialog"]');
+        const box = await dialog.boundingBox();
+        const next = await dialog.locator("[data-guide-next]").boundingBox();
+        const title = (await dialog.locator("h2").first().innerText()).trim();
+        if (box.y < 0 || box.y + box.height > viewport.height || !next || next.y + next.height > viewport.height) clipped.push(title);
+        const label = await dialog.locator("[data-guide-next]").innerText();
+        await dialog.locator("[data-guide-next]").click();
+        if (label === "Finish") break;
+      }
+      check(`case tour cards stay on a ${viewport.width}x${viewport.height} screen`, clipped.length === 0, clipped);
+      await ctx.close();
+    }
   }
 
   await browser.close();
