@@ -48,17 +48,46 @@ let volumePromise: Promise<Int16Array> | null = null;
 /** Fetches the whole baked volume once (cached across the app's
  * lifetime, not just one page visit) and returns it as one flat
  * Int16Array of TUTORIAL_SLICES * TUTORIAL_SIZE^2 values, slice-major
- * (z * SIZE * SIZE + y * SIZE + x). */
-export function loadTutorialVolume(): Promise<Int16Array> {
+ * (z * SIZE * SIZE + y * SIZE + x). `onProgress` hears (bytes so far,
+ * total bytes) while the ~12 MB download runs, and a failed load is
+ * forgotten so the next call really tries again -- it used to stay
+ * cached, so only a full page reload could retry (G-14). */
+export function loadTutorialVolume(onProgress?: (loaded: number, total: number) => void): Promise<Int16Array> {
   if (!volumePromise) {
     volumePromise = fetch(`${ASSET_BASE}.bin`)
       .then((r) => {
         if (!r.ok) throw new Error(`Couldn't load the tutorial image (${r.status})`);
-        return r.arrayBuffer();
+        return readWithProgress(r, onProgress);
       })
-      .then((buf) => new Int16Array(buf));
+      .then((buf) => new Int16Array(buf))
+      .catch((err) => {
+        volumePromise = null;
+        throw err;
+      });
   }
   return volumePromise;
+}
+
+async function readWithProgress(r: Response, onProgress?: (loaded: number, total: number) => void): Promise<ArrayBuffer> {
+  const total = Number(r.headers.get("content-length")) || 0;
+  if (!r.body || !onProgress) return r.arrayBuffer();
+  const reader = r.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    onProgress(loaded, total);
+  }
+  const out = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out.buffer;
 }
 
 /** A view into one axial slice of an already-loaded volume -- no copy. */

@@ -4,13 +4,14 @@ import { useSearchParams } from "react-router-dom";
 import DocumentPanel, { DocumentSource } from "../components/DocumentPanel";
 import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnswers } from "../components/ObjectForm";
 import SliceControl from "../components/SliceControl";
+import SliceNumber from "../components/SliceNumber";
 import Viewer3D from "../components/Viewer3D";
 import Tip from "../components/Tip";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import { ADMIN_UI_URL } from "../config";
 import GuideTour from "../guide/GuideTour";
-import { ANNOTATE_STEPS, REVIEW_STEPS } from "../guide/viewerSteps";
+import { ANNOTATE_STEPS, REVIEW_STEPS, tutorialSteps } from "../guide/viewerSteps";
 import {
   axialMaskView,
   axialView,
@@ -221,6 +222,9 @@ export default function TutorialPage() {
   }
   const [volumeLoaded, setVolumeLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // the practice scan's download (bytes so far / total) and retries (G-14)
+  const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [axialIndex, setAxialIndex] = useState(startMode === "review" ? TARGET_SLICE : 10);
   const [sagittalIndex, setSagittalIndex] = useState(Math.round(TARGET_X));
   const [coronalIndex, setCoronalIndex] = useState(Math.round(TARGET_Y));
@@ -478,7 +482,7 @@ export default function TutorialPage() {
   // MPR views below are then just cheap reads out of it, not fetches.
   useEffect(() => {
     let cancelled = false;
-    loadTutorialVolume()
+    loadTutorialVolume((loaded, total) => !cancelled && setLoadProgress({ loaded, total }))
       .then((vol) => {
         if (cancelled) return;
         volumeRef.current = vol;
@@ -488,7 +492,7 @@ export default function TutorialPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   const labelsById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
   const activeObject = objects.find((o) => o.id === activeObjectId) ?? null;
@@ -804,6 +808,25 @@ export default function TutorialPage() {
     if (pane === "sagittal") writeSagittalMaskView(maskRef.current, index, view);
     else writeCoronalMaskView(maskRef.current, index, view);
   }
+  /** Same fill as the real viewer's floodFillSlice: grow through unpainted
+   * pixels from the point, stopping at any paint -- so a closed outline
+   * (brush or Polygon) gets its interior filled. Not brightness-based
+   * (that's what Auto is for). A click that fills nothing (on paint)
+   * leaves the undo/redo history alone: it used to clear Redo and leave
+   * Undo counting one step too many (G-18). */
+  function fillAt(pane: PaneKey, x: number, y: number, objectId: number) {
+    let filled: Uint8Array | null = null;
+    withPaneMask(pane, (view, width, height) => {
+      filled = scanlineFill(width, height, x, y, (px, py) => view[py * width + px] === 0);
+    });
+    const region = filled as Uint8Array | null;
+    if (!region || !region.some((v) => v)) return;
+    pushHistory();
+    withPaneMask(pane, (view) => {
+      for (let i = 0; i < region.length; i++) if (region[i]) view[i] = objectId;
+    });
+    setMaskVersion((v) => v + 1);
+  }
   function toCanvasXY(e: ReactPointerEvent<HTMLCanvasElement>, pane: PaneKey): { x: number; y: number } {
     const { width, height } = paneDims(pane);
     const rect = e.currentTarget.getBoundingClientRect();
@@ -880,23 +903,7 @@ export default function TutorialPage() {
         pendingTapRef.current = { pane, kind: "fill", point: { x, y }, clientX: e.clientX, clientY: e.clientY };
         return;
       }
-      pushHistory();
-      // Same fill as the real viewer's floodFillSlice: grow through
-      // unpainted pixels from the click, stopping at any paint -- so a
-      // closed outline (brush or Polygon) gets its interior filled. Not
-      // brightness-based (that's what Auto is for).
-      let painted = 0;
-      withPaneMask(pane, (view, width, height) => {
-        const filled = scanlineFill(width, height, x, y, (px, py) => view[py * width + px] === 0);
-        for (let i = 0; i < filled.length; i++) {
-          if (filled[i]) {
-            view[i] = activeObjectId;
-            painted++;
-          }
-        }
-      });
-      if (painted === 0) historyRef.current.pop();
-      setMaskVersion((v) => v + 1);
+      fillAt(pane, x, y, activeObjectId);
     } else if (tool === "polygon") {
       if (!canDraw) return;
       const pts = polygonPointsRef.current;
@@ -1104,19 +1111,7 @@ export default function TutorialPage() {
     if (phase !== "annotate") return;
     if (kind === "fill") {
       if (!canDraw || !activeObjectId) return;
-      pushHistory();
-      let painted = 0;
-      withPaneMask(pane, (view, width, height) => {
-        const filled = scanlineFill(width, height, point.x, point.y, (px, py) => view[py * width + px] === 0);
-        for (let i = 0; i < filled.length; i++) {
-          if (filled[i]) {
-            view[i] = activeObjectId;
-            painted++;
-          }
-        }
-      });
-      if (painted === 0) historyRef.current.pop();
-      setMaskVersion((v) => v + 1);
+      fillAt(pane, point.x, point.y, activeObjectId);
       return;
     }
     pushHistory();
@@ -1553,6 +1548,20 @@ export default function TutorialPage() {
     setSavedVersions([]);
     setMaximizedPane(null);
     setOpenDoc(null);
+    // the display the run started with, too -- a slab, hidden panes, opacity,
+    // brush size, an open histogram or Auto panel and half a polygon all
+    // survived a replay (G-16). The crosshair and the pane size are the
+    // user's own preferences and stay.
+    setSlab({ thickness: 1, mode: "avg" });
+    setPaneVisible({ sagittal: true, coronal: true, axial: true, three_d: false });
+    setOverlayOpacity(70);
+    setBrushRadius(10);
+    setHistogram(null);
+    setHistogramDragBox(null);
+    setAutoPanel(null);
+    setHuReadout(null);
+    polygonPointsRef.current = [];
+    setPolygonDraftVersion((v) => v + 1);
     setPhase("annotate");
     setRunId((v) => v + 1);
   }
@@ -1565,15 +1574,32 @@ export default function TutorialPage() {
   // documents: this practice job has no multi-case list or attached
   // documents) are silently skipped by GuideTour itself, not something
   // this page needs to work around.
-  const guideSteps = reviewMode ? REVIEW_STEPS : ANNOTATE_STEPS;
+  const guideSteps = useMemo(() => tutorialSteps(reviewMode ? REVIEW_STEPS : ANNOTATE_STEPS), [reviewMode]);
 
   if (loadError) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#1a1a2e] px-6 text-center text-gray-200">
-        <p className="text-sm text-red-300">{loadError}</p>
-        <a href={`${ADMIN_UI_URL}/my-jobs`} className="rounded border border-[#444] px-3 py-1.5 text-xs text-gray-300 hover:bg-[#2a2a3e]">
-          ← Back to My Jobs
-        </a>
+        <p className="text-sm text-red-300" data-testid="tutorial-load-error">
+          The practice scan couldn&apos;t be loaded. Check your connection and try again.
+        </p>
+        <p className="text-[11px] text-gray-500">{loadError}</p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            data-testid="tutorial-load-retry"
+            onClick={() => {
+              setLoadError(null);
+              setLoadProgress(null);
+              setLoadAttempt((n) => n + 1);
+            }}
+            className="rounded bg-amber-500 px-3 py-1.5 text-xs font-medium text-[#1a1a2e] hover:bg-amber-400"
+          >
+            Try again
+          </button>
+          <a href={`${ADMIN_UI_URL}/my-jobs`} className="rounded border border-[#444] px-3 py-1.5 text-xs text-gray-300 hover:bg-[#2a2a3e]">
+            ← Back to My Jobs
+          </a>
+        </div>
       </div>
     );
   }
@@ -1582,7 +1608,15 @@ export default function TutorialPage() {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#1a1a2e] text-gray-400">
         <span className="h-6 w-6 animate-spin rounded-full border-2 border-gray-600 border-t-amber-400" />
-        <p className="text-xs">Loading the practice scan…</p>
+        <p className="text-xs" data-testid="tutorial-loading">
+          Loading the practice scan…
+          {loadProgress && loadProgress.total > 0 && (
+            <>
+              {" "}
+              {Math.round((loadProgress.loaded / loadProgress.total) * 100)}% ({(loadProgress.loaded / 1e6).toFixed(1)} of {(loadProgress.total / 1e6).toFixed(1)} MB)
+            </>
+          )}
+        </p>
       </div>
     );
   }
@@ -2403,7 +2437,7 @@ function PaneSlider({ cfg, guide, label }: { cfg: { index: number; max: number; 
       guide={guide}
       accentClass="accent-amber-500"
       orientation="vertical"
-      counter={<span className="w-full text-center font-mono text-[10px] leading-tight text-gray-500">{cfg.index + 1}</span>}
+      counter={<SliceNumber index={cfg.index} className="text-gray-500" />}
     />
   );
 }

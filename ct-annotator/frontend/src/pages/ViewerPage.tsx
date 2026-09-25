@@ -32,6 +32,7 @@ import { trackAction } from "../usage/tracker";
 import DocumentPanel, { DocumentSource } from "../components/DocumentPanel";
 import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnswers } from "../components/ObjectForm";
 import SliceControl from "../components/SliceControl";
+import SliceNumber from "../components/SliceNumber";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
 import { nextUndecidedIndex } from "../lib/reviewNav";
 import { handInObjects, isNewThisRound, previousReviewText, REJECT_REASONS, rejectReasonLabel, reviewCommentText } from "../lib/reviewRound";
@@ -4002,7 +4003,7 @@ export default function ViewerPage() {
                     label={PANE_LABELS[pane]}
                     accentClass="accent-blue-500"
                     orientation="vertical"
-                    counter={<span className="w-full text-center font-mono text-[10px] leading-tight text-gray-400">{cfg.index}</span>}
+                    counter={<SliceNumber index={cfg.index} />}
                   />
                 </div>
                 </div>

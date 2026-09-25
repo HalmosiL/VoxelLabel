@@ -71,6 +71,10 @@ async function closeTour(page) {
   await closeTour(t);
   await t.screenshot({ path: "tutorial-4-review.png" });
 
+  // G-16: display settings changed during the run (here the slab) don't survive Replay
+  await t.locator('[data-testid="slab-mode-mip"]').click(); await t.waitForTimeout(250);
+  check("tutorial: MIP is on before the replay", (await t.locator('[data-testid="pane-slab"]').count()) > 0);
+
   // decide and submit
   const acceptBtns = t.locator("aside button", { hasText: "Accept" });
   let guard = 0;
@@ -87,6 +91,7 @@ async function closeTour(page) {
   check("tutorial: replay returns to Annotate phase", /Tutorial · Annotate/.test(await t.locator("header").innerText()));
   check("tutorial: replay reopens the guide", (await t.locator('[role="dialog"]').count()) === 1);
   await closeTour(t);
+  check("tutorial: replay starts with single slices again (no MIP left over)", (await t.locator('[data-testid="pane-slab"]').count()) === 0);
 
   // direct entry in review mode seeds demo objects
   const t2 = await ctx.newPage(); const t2err = [];

@@ -344,3 +344,18 @@ export const REVIEW_STEPS: GuideStep[] = [
     body: "Step through the objects, decide each, submit. Hover any control for a description; press the amber Tutorial button in the top bar to replay this tour.",
   },
 ];
+
+/** The tutorial runs the viewer's own tour, except where the tutorial
+ * page behaves differently: its Back leaves for My Jobs (there is no case
+ * page to return to) and nothing is lost -- the card said "Returns to the
+ * case page ... save first" (G-17). */
+const TUTORIAL_BACK_STEP: GuideStep = {
+  target: "back",
+  title: "Back to My Jobs",
+  body: "Leaves the tutorial for My Jobs. Nothing here needs saving -- it's practice, and the tutorial is always there in your job list to come back to.",
+  placement: "bottom",
+};
+
+export function tutorialSteps(steps: GuideStep[]): GuideStep[] {
+  return steps.map((s) => (s.target === "back" ? TUTORIAL_BACK_STEP : s));
+}

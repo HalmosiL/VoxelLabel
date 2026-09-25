@@ -79,6 +79,21 @@ const results = []; const check = (n, ok, extra) => results.push({ n, ok: Boolea
   await page.keyboard.press("Control+z"); await page.waitForTimeout(300);
   check("Undo after a delete brings back no ownerless paint", await mark.isDisabled());
 
+  // G-18: a Fill click that fills nothing (on paint) leaves the undo/redo history alone
+  await page.locator('button[aria-label="New Structure instance"]').click(); await page.waitForTimeout(200);
+  await page.locator('[data-guide="tool-paint"] button').click();
+  for (const [fx, fy] of [[0.3, 0.3], [0.6, 0.6]]) {
+    await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + box.width * fx + i * 4, box.y + box.height * fy + i * 3);
+    await page.mouse.up(); await page.waitForTimeout(150);
+  }
+  await page.keyboard.press("Control+z"); await page.waitForTimeout(300);
+  const redo = page.locator('button[aria-label="Redo"]');
+  check("Redo is on after an undo", !(await redo.isDisabled()));
+  await page.locator('[data-guide="tool-fill"] button').click();
+  await page.mouse.click(box.x + box.width * 0.3 + 16, box.y + box.height * 0.3 + 12); await page.waitForTimeout(300); // on the first stroke's paint
+  check("a Fill on paint keeps Redo", !(await redo.isDisabled()));
+
   await browser.close();
   const fails = results.filter((r) => !r.ok);
   console.log(`checks ${results.length}, fails ${fails.length}`);
