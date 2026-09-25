@@ -19,6 +19,10 @@ const check = (n, ok, extra) => results.push({ n, ok: Boolean(ok), extra });
   await page.fill("#username", "dr-test"); await page.fill("#password", "Test1234!"); await page.click("#kc-login");
   await page.waitForSelector('[data-testid="tutorial-load-error"]', { timeout: 30000 });
   check("a failed download says so and offers Try again", (await page.locator('[data-testid="tutorial-load-retry"]').count()) === 1);
+  // a local download is too quick to see its progress: slow the retry down (~5 s for 12 MB)
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Network.enable");
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 50, downloadThroughput: 2.5e6, uploadThroughput: 1e6 });
   let sawProgress = false;
   const watch = setInterval(async () => { const t = await page.locator('[data-testid="tutorial-loading"]').innerText().catch(() => ""); if (/\d+% \(/.test(t)) sawProgress = true; }, 50);
   await page.locator('[data-testid="tutorial-load-retry"]').click();
