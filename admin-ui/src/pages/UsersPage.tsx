@@ -80,7 +80,8 @@ export default function UsersPage() {
 
   async function toggleEnabled(u: KeycloakUser) {
     const next = !(u.enabled ?? true);
-    if (!next && !window.confirm(`Disable ${u.username}? They won't be able to sign in until re-enabled.`)) return;
+    // A signed-in session is a short-lived token the services accept until it expires (A-07).
+    if (!next && !window.confirm(`Disable ${u.username}? They won't be able to sign in until re-enabled. A session they already have open keeps working for up to 5 minutes.`)) return;
     try {
       await updateKeycloakUser(u.id, { enabled: next });
       refresh();
@@ -92,7 +93,7 @@ export default function UsersPage() {
   async function handleDelete(u: KeycloakUser) {
     if (
       !window.confirm(
-        `Delete the account "${u.username}"? Their study memberships are removed; annotations they made stay attributed to them. This cannot be undone.`
+        `Delete the account "${u.username}"? Their study memberships are removed; annotations they made stay attributed to them. A session they already have open keeps working for up to 5 minutes. This cannot be undone.`
       )
     ) {
       return;
@@ -529,6 +530,7 @@ function EditUserModal({
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} disabled={isSelf} />
             Account enabled (can sign in)
           </label>
+          <p className="hint -mt-1 pl-6">Disabling ends sign-in at once; a session already open keeps working for up to 5 minutes.</p>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} disabled={isSelf} />
             Platform admin
