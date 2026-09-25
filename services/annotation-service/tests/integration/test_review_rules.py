@@ -134,3 +134,18 @@ def test_concurrent_decisions_record_one_review(client, db):
         assert sorted(codes) == [200] + [409] * 7, codes
     db.expire_all()
     assert db.query(AnnotationReview).count() == 3
+
+
+def test_nobody_reviews_their_own_work(client, db):
+    """F-10: a member holding both roles approved their own submission."""
+    study, series = _setup(db)
+    db.add(StudyMembership(study_id=study, user_id=ALICE, role="reviewer"))
+    db.commit()
+    client.as_user(ALICE)
+    submitted = _save(client, study, series, status="submitted").json()["id"]
+    r = _decide(client, submitted)
+    assert r.status_code == 403 and "your own work" in r.json()["detail"]
+    draft = _save(client, study, series, review_of=submitted)
+    assert draft.status_code == 403
+    client.as_user(REVIEWER)
+    assert _decide(client, submitted).status_code == 200

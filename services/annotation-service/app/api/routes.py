@@ -86,6 +86,9 @@ def _handed_in(db: Session, annotation: Annotation) -> Annotation | None:
     return None
 
 
+_OWN_WORK = "You can't review your own work -- another reviewer has to decide it."
+
+
 def _not_reviewable(annotation: Annotation) -> HTTPException:
     """409 for a version that isn't handed-in work: why, in words."""
     if annotation.status in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED):
@@ -179,6 +182,8 @@ def create_annotation(
             raise HTTPException(status_code=404, detail="The version under review isn't an annotation of this image")
         if reviewed.status != AnnotationStatus.SUBMITTED and "admin" not in user.realm_roles:
             raise _not_reviewable(reviewed)
+        if reviewed.annotator_id == user.subject and "admin" not in user.realm_roles:
+            raise HTTPException(status_code=403, detail=_OWN_WORK)
         _lock_target(db, target_type, target_id)
         latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id)
         if latest is not None and latest.id != reviewed.id and latest.review_of_id != reviewed.id:
@@ -336,8 +341,13 @@ def review_annotation(
         # so two reviewers can't silently flip each other's outcome; and
         # a reviewer can't bypass that by deciding a fresh version made on
         # top of a decided one, or a draft nobody handed in.
-        if _handed_in(db, annotation) is None:
+        handed_in = _handed_in(db, annotation)
+        if handed_in is None:
             raise _not_reviewable(annotation)
+        if handed_in.annotator_id == user.subject:
+            # separation of duties: an annotator who is also a reviewer
+            # approved their own submission (F-10)
+            raise HTTPException(status_code=403, detail=_OWN_WORK)
         latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id)
         if latest is not None and latest.id != annotation.id:
             raise HTTPException(status_code=409, detail="A newer version of this image exists -- reload before deciding.")
