@@ -4,7 +4,7 @@ study-specific: they are dropped on save, and templates stored before
 that are served without them."""
 from shared_models.models import PipelineTemplate
 
-from .conftest import ANNOTATOR_SUBJECT
+from .conftest import ANNOTATOR_SUBJECT, DM_SUBJECT, add_member, make_study
 
 LEAKY_CARDS = [
     {"key": "a", "type": "dataset", "title": "Pinned", "x": 0, "y": 0, "width": 200, "height": 100,
@@ -17,6 +17,12 @@ LEAKY_CARDS = [
 GENERIC = [{"mode": "manual"}, {"materialize_dataset": True, "labels": ["Nodule"]}, {}]
 
 
+def _another_board_builder(client):
+    """Someone else who may read the Store: a data manager of another study (A-09)."""
+    add_member(client, make_study(client, "Their study"), DM_SUBJECT, "data_manager")
+    client.as_user(DM_SUBJECT)
+
+
 def _configs(template):
     return [c["config"] for c in template["cards"]]
 
@@ -27,14 +33,14 @@ def test_saving_a_template_keeps_only_the_structure(client, db):
     assert _configs(r.json()) == GENERIC
     stored = db.query(PipelineTemplate).one()
     assert [c["config"] for c in stored.cards] == GENERIC
-    client.as_user(ANNOTATOR_SUBJECT)
+    _another_board_builder(client)
     assert [_configs(t) for t in client.get("/admin/pipeline-templates").json()] == [GENERIC]
 
 
 def test_a_template_stored_before_the_fix_is_served_without_study_data(client, db):
     db.add(PipelineTemplate(title="old", description="", cards=LEAKY_CARDS, edges=[], created_by="someone"))
     db.commit()
-    client.as_user(ANNOTATOR_SUBJECT)
+    _another_board_builder(client)
     assert [_configs(t) for t in client.get("/admin/pipeline-templates").json()] == [GENERIC]
 
 

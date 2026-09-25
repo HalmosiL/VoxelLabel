@@ -105,3 +105,16 @@ def require_study_role(db: Session, study_id: str, user: CurrentUser, allowed_ro
     # case-insensitively here rather than assuming either casing.
     if not any(row[0].lower() in allowed_roles for row in rows):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient study role")
+
+
+def require_any_study_role(db: Session, user: CurrentUser, allowed_roles: list[str] | None = None) -> None:
+    """Raise 403 unless `user` is a global admin or holds a role in at
+    least one study -- one of `allowed_roles` if given, any role if not.
+    For platform-wide configuration that study work needs but an account
+    belonging to no study has no business reading (A-09)."""
+    if "admin" in user.realm_roles:
+        return
+    rows = db.execute(text("SELECT role FROM study_memberships WHERE user_id = :uid"), {"uid": user.subject}).fetchall()
+    # stored as enum member NAMES -- compared case-insensitively, as above
+    if not any(allowed_roles is None or row[0].lower() in allowed_roles for row in rows):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient study role")

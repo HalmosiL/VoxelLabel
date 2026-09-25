@@ -6,7 +6,7 @@ it here with a JSON Schema, not by changing annotation-service code. See
 ARCHITECTURE.md, "Annotation schema: polymorphic by design".
 """
 from fastapi import APIRouter, Depends, HTTPException
-from shared_auth import CurrentUser, get_current_user
+from shared_auth import CurrentUser, get_current_user, require_any_study_role
 from shared_models.database import get_db
 from shared_models.models import AnnotationType
 from sqlalchemy.orm import Session
@@ -73,5 +73,6 @@ def list_annotation_types(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
+    require_any_study_role(db, user)  # study members only -- the viewer reads this for annotators (A-09)
     types = db.query(AnnotationType).all()
     return [{"id": str(t.id), "name": t.name, "json_schema": t.json_schema} for t in types]

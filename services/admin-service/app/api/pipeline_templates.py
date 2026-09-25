@@ -19,7 +19,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from shared_auth import CurrentUser, get_current_user
+from shared_auth import CurrentUser, get_current_user, require_any_study_role
 from shared_models.database import get_db
 from shared_models.models import PipelineTemplate, WorkflowCardType
 from sqlalchemy.orm import Session
@@ -103,11 +103,17 @@ def _check_insertable(body: PipelineTemplateIn) -> None:
             raise HTTPException(status_code=422, detail="An edge of the template uses a connection point cards don't have")
 
 
+# The Store is for those who build boards somewhere; before, any logged-in
+# account could read and add templates (A-09).
+_BOARD_EDITORS = ["data_manager", "admin"]
+
+
 @router.get("")
 def list_pipeline_templates(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
+    require_any_study_role(db, user, _BOARD_EDITORS)
     templates = db.query(PipelineTemplate).order_by(PipelineTemplate.created_at).all()
     return [_serialize(t) for t in templates]
 
@@ -118,6 +124,7 @@ def create_pipeline_template(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    require_any_study_role(db, user, _BOARD_EDITORS)
     if not body.cards:
         raise HTTPException(status_code=422, detail="A template needs at least one card")
     _check_insertable(body)
