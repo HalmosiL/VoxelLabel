@@ -3,6 +3,7 @@ quick import."""
 import io
 import json
 import uuid
+from datetime import datetime, timezone
 
 import pydicom
 from celery.result import AsyncResult
@@ -14,7 +15,7 @@ from shared_models.models import Case, Study, WorkflowCard, WorkflowCardType
 from sqlalchemy.orm import Session
 
 from app.pipeline import REQUIRED_TAGS
-from app.storage import download_object, presigned_export_url, upload_staged_file
+from app.storage import download_object, object_exists, presigned_export_url, upload_export_object, upload_staged_file
 from app.tasks import celery_app, export_pytorch_dataset, ingest_dicom_file, quick_import_batch
 
 
@@ -171,6 +172,19 @@ def _resolve_dataset_card_case_ids(db: Session, card_id: str, study_id: str) -> 
     return [str(c.id) for c in db.query(Case).filter_by(study_id=study_id).all()]
 
 
+def _request_key(export_id: str) -> str:
+    return f"exports/{export_id}/requested.json"
+
+
+def record_export_request(export_id: str, study_id: str, requested_by: str) -> None:
+    """A small marker stored when an export is requested, so a poll can
+    tell "still running" from "never requested": Celery answers PENDING
+    for any id it has never seen, so an unknown or lost export used to
+    report "pending" forever (C-17)."""
+    marker = {"study_id": study_id, "requested_by": requested_by, "requested_at": datetime.now(timezone.utc).isoformat()}
+    upload_export_object(_request_key(export_id), json.dumps(marker).encode())
+
+
 @router.post("/exports")
 def create_pytorch_export(
     body: PytorchExportIn,
@@ -199,6 +213,7 @@ def create_pytorch_export(
         raise HTTPException(status_code=422, detail="All cases must belong to study_id")
 
     export_id = str(uuid.uuid4())
+    record_export_request(export_id, body.study_id, user.subject)
     # task_id=export_id is what lets the GET route below poll this run via
     # Celery's own AsyncResult, with no dedicated database table for job
     # status.
@@ -225,8 +240,10 @@ def get_pytorch_export(export_id: str, user: CurrentUser = Depends(get_current_u
     try:
         raw = download_object(f"exports/{export_id}/manifest.json")
     except Exception:
-        # Any failure to fetch means "not ready yet" (or never existed) --
-        # fall back to Celery for a more specific in-progress/failed state.
+        # No manifest yet. Never requested -> 404; otherwise Celery tells
+        # "still running" from "failed".
+        if not object_exists(_request_key(export_id)):
+            raise HTTPException(status_code=404, detail="No such export") from None
         result = AsyncResult(export_id, app=celery_app)
         if result.state == "FAILURE":
             return {"status": "failed", "error": str(result.result)}

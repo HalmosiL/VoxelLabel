@@ -53,3 +53,17 @@ def staged(monkeypatch):
     monkeypatch.setattr(pipeline, "upload_thumbnail", lambda key, png: None)
     monkeypatch.setattr(pipeline, "generate_thumbnail", lambda ds: b"png")
     return datasets
+
+
+@pytest.fixture
+def client():
+    """The ingestion API as a global admin (auth as a dependency override)."""
+    from app.main import app
+    from fastapi.testclient import TestClient
+    from shared_auth import CurrentUser, get_current_user
+
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(subject="00000000-0000-4000-8000-0000000000a1", email=None, realm_roles=["admin"])
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
