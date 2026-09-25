@@ -1,7 +1,8 @@
 // The review surface (F-12, F-13, F-14): a case handed in with no objects
 // can be approved as "no findings"; an admin switching View as to Reviewer
 // can no longer draw; and a job whose settings don't load stays read-only
-// instead of opening the full editor. Restores the fixture case's objects.
+// instead of opening the full editor, and neither does one whose saved mask
+// doesn't load (I-07). Restores the fixture case's objects.
 const { chromium } = require("playwright");
 const { F, token, saveMaskAs } = require("./helpers");
 const ADMIN = "http://localhost:8004", VIEWER = "http://localhost:5174", A8010 = "http://localhost:8010";
@@ -56,6 +57,18 @@ async function open(browser, user, pass, url, beforeLogin) {
       const tools = await page.locator('[data-testid^="tool-"]').evaluateAll((els) => els.filter((e) => !e.disabled).map((e) => e.dataset.testid));
       check("... offers no drawing tool", tools.every((t) => t === "tool-cursor"), tools);
       check("... and can't save", await page.locator("header button", { hasText: /^Save$/ }).isDisabled());
+      await ctx.close();
+    }
+
+    // ---- I-07: the saved mask doesn't load -> read-only, not an empty canvas ----
+    {
+      const { ctx, page } = await open(browser, "dr-test", "Test1234!", viewerUrl(F.ANNOT_CARD), (p) =>
+        p.route("**/series/*/mask-volume", (route) => (route.request().method() === "GET" ? route.fulfill({ status: 500, body: "Internal Server Error" }) : route.continue()))
+      );
+      check("a mask that doesn't load says so", (await page.locator('[data-testid="mask-load-failed"]').count()) === 1);
+      const tools = await page.locator('[data-testid^="tool-"]').evaluateAll((els) => els.filter((e) => !e.disabled).map((e) => e.dataset.testid));
+      check("... offers no drawing tool", tools.every((t) => t === "tool-cursor"), tools);
+      check("... and can't save over it", await page.locator("header button", { hasText: /^Save$/ }).isDisabled());
       await ctx.close();
     }
 

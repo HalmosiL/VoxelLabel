@@ -275,6 +275,10 @@ export default function ViewerPage() {
   // allows (a Review job must never fall back to editing), so the viewer
   // stays read-only instead of opening the full annotation surface (F-14).
   const [surfaceFailed, setSurfaceFailed] = useState(false);
+  // The saved segmentation didn't load (e.g. storage down): editing an
+  // empty canvas would only end in a refused save, so stay read-only (I-07).
+  const [maskLoadFailed, setMaskLoadFailed] = useState(false);
+  const readOnlyLocked = surfaceFailed || maskLoadFailed;
   useEffect(() => {
     if (!jobId) return;
     setSurfaceFailed(false);
@@ -317,7 +321,7 @@ export default function ViewerPage() {
     if (reviewMode) setTool("cursor"); // e.g. an admin switching "View as" to Reviewer mid-stroke (F-13)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewMode]);
-  const eraseAllowed = !reviewMode && !surfaceFailed && (!effectiveSurface || effectiveSurface.tools.includes("erase"));
+  const eraseAllowed = !reviewMode && !readOnlyLocked && (!effectiveSurface || effectiveSurface.tools.includes("erase"));
 
   // The job's own todo/in_progress/done status -- editable right here
   // (see the header's status <select>) instead of only from the
@@ -1142,6 +1146,7 @@ export default function ViewerPage() {
     if (!seriesId || !rows || !columns || !numSlices) return;
     let cancelled = false;
     setMaskReady(false);
+    setMaskLoadFailed(false);
     undoStackRef.current = [];
     redoStackRef.current = [];
 
@@ -1165,8 +1170,8 @@ export default function ViewerPage() {
             console.warn("Saved segmentation size doesn't match this series' current dimensions -- starting empty.");
           }
         }
-      } catch (err) {
-        setError(String(err));
+      } catch {
+        setMaskLoadFailed(true);
       }
 
       // Seed from the Annotation Surface's pre-defined labels (e.g.
@@ -3741,7 +3746,7 @@ export default function ViewerPage() {
             <span className="flex" data-guide="save">
               <button
                 onClick={() => handleSave("draft")}
-                disabled={saving || !studyId || !maskReady || reviewBlocked !== null || surfaceFailed}
+                disabled={saving || !studyId || !maskReady || reviewBlocked !== null || readOnlyLocked}
                 className="rounded border border-blue-500 bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save"}
@@ -3756,7 +3761,7 @@ export default function ViewerPage() {
               <span className="flex" data-guide="mark-annotated">
                 <button
                   onClick={() => handleSave("submitted")}
-                  disabled={saving || !studyId || !maskReady || surfaceFailed}
+                  disabled={saving || !studyId || !maskReady || readOnlyLocked}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Mark as Annotated
@@ -3776,7 +3781,7 @@ export default function ViewerPage() {
               <span className="flex" data-guide="submit-review">
                 <button
                   onClick={() => handleSubmitReview()}
-                  disabled={saving || !studyId || !maskReady || surfaceFailed || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
+                  disabled={saving || !studyId || !maskReady || readOnlyLocked || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Submit review
@@ -3798,6 +3803,11 @@ export default function ViewerPage() {
           This job's settings couldn't be loaded, so the viewer stays read-only -- reload the page to try again.
         </div>
       )}
+      {maskLoadFailed && (
+        <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="mask-load-failed">
+          The saved segmentation couldn't be loaded, so the viewer stays read-only -- reload the page to try again.
+        </div>
+      )}
       {reviewBlocked && maskReady && (
         <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="review-blocked">
           {reviewBlocked}
@@ -3811,7 +3821,7 @@ export default function ViewerPage() {
 
       <div className="relative flex min-h-0 flex-1">
         {!reviewMode && (
-          <IconToolbar tool={tool} onSelect={selectTool} canDraw={activeObjectId !== null && !surfaceFailed} allowedTools={surfaceFailed ? [] : (effectiveSurface?.tools ?? null)} />
+          <IconToolbar tool={tool} onSelect={selectTool} canDraw={activeObjectId !== null && !readOnlyLocked} allowedTools={readOnlyLocked ? [] : (effectiveSurface?.tools ?? null)} />
         )}
 
         {/* `safe center`: centred when the panes fit, top-aligned (and
