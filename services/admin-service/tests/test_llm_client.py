@@ -6,9 +6,9 @@ own verification notes for how that part was checked live instead)."""
 from types import SimpleNamespace
 
 from app.llm_client import (
-    _root_cause,
     _looks_like_summary_request,
     _ollama_tools_from_mcp,
+    _root_cause,
     _summarize_tool_result,
     _tool_error_text,
     _tool_result_data,

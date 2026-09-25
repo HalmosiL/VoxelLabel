@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from shared_auth.db_errors import install_db_error_handlers
+from shared_auth.storage_errors import install_storage_error_handlers
 
 from app.api.annotation_types import router as annotation_types_router
 from app.api.audit import router as audit_router
@@ -48,6 +49,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="CT Platform - Admin Service", lifespan=lifespan)
 # Bad values in a request answer 4xx, not 500 (J-01, J-13).
 install_db_error_handlers(app)
+# File storage being unreachable answers 503, not 500 (I-08).
+install_storage_error_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_allowed_origins),

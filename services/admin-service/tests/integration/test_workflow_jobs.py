@@ -495,9 +495,8 @@ def test_a_criterion_run_while_the_model_is_down_is_an_error(client, db, monkeyp
     """I-05: with Ollama down the Run answered 200 and stamped last_run_at,
     so the card looked freshly evaluated and its old (or empty) result
     passed for current -- a model outage read as "no case meets it"."""
-    from shared_models.models import WorkflowCard
-
     from app.api.workflow import engine
+    from shared_models.models import WorkflowCard
 
     async def model_turn(card, history, message):
         return [{"role": "assistant", "content": "Local model unavailable (connection refused)", "tool_call": None, "error": True}], False

@@ -75,3 +75,26 @@ def presigned_mask_url(storage_key: str, expires_in: int = 300) -> str:
     return _client.generate_presigned_url(
         "get_object", Params={"Bucket": OBJECT_STORAGE_BUCKET, "Key": storage_key}, ExpiresIn=expires_in
     )
+
+
+STORAGE_DOWN = "File storage is unavailable right now -- try again in a minute."
+
+
+def install_storage_error_handlers(app) -> None:
+    """Object storage being unreachable answers 503, not a bare 500 after
+    several seconds of retries -- opening a slice, a document, loading or
+    saving a mask (I-08). Only boto's connection-level errors: a refusal
+    from storage itself (ClientError, e.g. a missing key) is left alone.
+    Same as the platform's shared_auth.storage_errors, which this
+    service doesn't depend on."""
+    from botocore.exceptions import ConnectionError as BotoConnectionError
+    from botocore.exceptions import HTTPClientError
+    from fastapi.responses import JSONResponse
+
+    async def storage_down(request, exc):
+        return JSONResponse(status_code=503, content={"detail": STORAGE_DOWN})
+
+    # EndpointConnectionError / ConnectTimeoutError are ConnectionErrors;
+    # ReadTimeoutError / ConnectionClosedError are HTTPClientErrors.
+    for error in (BotoConnectionError, HTTPClientError):
+        app.add_exception_handler(error, storage_down)

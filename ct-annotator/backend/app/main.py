@@ -32,9 +32,19 @@ from app.config import (
     RENDER_CACHE_TTL_SECONDS,
 )
 from app.dicom_render import SLAB_MODES, extract_metadata, parse_dataset, render_plane, render_png, rescaled_pixels, slab_plane
-from app.storage import delete_mask_object, download_bytes, download_object, presigned_mask_url, upload_mask, upload_mask_volume
+from app.storage import (
+    delete_mask_object,
+    download_bytes,
+    download_object,
+    install_storage_error_handlers,
+    presigned_mask_url,
+    upload_mask,
+    upload_mask_volume,
+)
 
 app = FastAPI(title="CT Annotator Viewer -- thin backend")
+# File storage being unreachable answers 503, not 500 (I-08).
+install_storage_error_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
