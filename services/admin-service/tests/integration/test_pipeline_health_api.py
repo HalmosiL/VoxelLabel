@@ -193,3 +193,32 @@ def test_the_learning_curve_follows_the_person_and_study_filters(client, db, mon
     assert loaded == [sid] and [r["actor_id"] for r in rows] == ["someone"]
     everyone = ph.build_learning_curve(db, not_counted={"admin-1"})
     assert [r["actor_id"] for r in everyone] == ["someone", "other"]
+
+
+def test_every_review_round_is_a_leg_and_rework_is_open_work(client, db):
+    """H-05: only the first review of a case was measured, and a case sent
+    back was never open work for the annotator -- in no bottleneck and not
+    in their load."""
+    from app.pipeline_health.api import load_legs
+
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=1)
+    s = series[0]
+    # submit -> reject (admin-ui path) -> submit -> reject (viewer path: the reviewer's own version) -> submit -> approve
+    first = make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")
+    make_review(db, first, REVIEWER_SUBJECT, "reject")
+    make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")
+    reviewer_version = make_annotation(db, sid, s, REVIEWER_SUBJECT, "draft")
+    make_review(db, reviewer_version, REVIEWER_SUBJECT, "reject")
+    third = make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")
+
+    legs = load_legs(db, None, uuid.UUID(sid))
+    reviews = [leg for leg in legs if leg["card_type"] == "review"]
+    rework = [leg for leg in legs if leg["card_type"] == "annotation" and leg.get("round", 0) > 0]
+    assert len(reviews) == 3 and [r["terminal_at"] is not None for r in reviews] == [True, True, False]
+    assert len(rework) == 2 and all(r["terminal_at"] is not None for r in rework)
+
+    make_review(db, third, REVIEWER_SUBJECT, "reject")  # sent back a third time: rework is open now
+    client.as_admin()
+    health = client.get("/admin/pipeline-health/summary").json()
+    assert any(b["card_type"] == "annotation" and b["kind"] == "queue" for b in health["bottlenecks"]), health["bottlenecks"]
+    assert any(a["assignee_id"] == ANNOTATOR_SUBJECT for a in health["assignee_load"])

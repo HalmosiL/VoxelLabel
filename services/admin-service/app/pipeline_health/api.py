@@ -133,18 +133,18 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
         cid = case_by_series.get(str(target_id)) if target_type == "series" else case_by_instance.get(str(target_id))
         if cid:
             # a reviewer's in-progress draft is still handed-in work (see workflow/status.py)
-            annotations_by_case[cid].append((annotation_id, _effective_status(status, review_of_id), created_at, annotator_id))
+            annotations_by_case[cid].append((annotation_id, _effective_status(status, review_of_id), created_at, annotator_id, status, review_of_id))
 
     annotation_ids = [row[0] for rows in annotations_by_case.values() for row in rows]
     reviews_by_annotation: dict = defaultdict(list)
     if annotation_ids:
-        for annotation_id, created_at, reviewer_id in (
-            db.query(AnnotationReview.annotation_id, AnnotationReview.created_at, AnnotationReview.reviewer_id)
+        for annotation_id, created_at, reviewer_id, decision in (
+            db.query(AnnotationReview.annotation_id, AnnotationReview.created_at, AnnotationReview.reviewer_id, AnnotationReview.decision)
             .filter(AnnotationReview.annotation_id.in_(annotation_ids))
             .order_by(AnnotationReview.created_at)
             .all()
         ):
-            reviews_by_annotation[annotation_id].append((created_at, reviewer_id))
+            reviews_by_annotation[annotation_id].append((created_at, reviewer_id, decision))
 
     # When someone first opened the case in the viewer for this job. The
     # viewer stamps job_id/case_id on its page_view (usage tracking);
@@ -172,42 +172,27 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
         present = [v for v in values if v is not None]
         return min(present) if present else None
 
-    legs = []
-    for event in events:
-        card = cards.get(event.card_id)
-        if card is None:
-            continue
-        case_id = str(event.case_id)
-        case = cases.get(case_id)
-        rows = annotations_by_case.get(case_id, [])  # already ordered by created_at
+    def rounds_of(rows: list) -> list[dict]:
+        """Each hand-in of the case and its decision, in order. An
+        annotator's submission -- a SUBMITTED row, or one decided in place
+        from the admin-ui -- opens a round; the first review decision after
+        it, on that row or on the reviewer's own version, closes it. A
+        reviewer's own version (review_of set, or decided by its own author,
+        the viewer's flow before review_of existed) is never a hand-in."""
+        out: list[dict] = []
+        for rid, _effective, at, who, raw, review_of in rows:
+            decisions = reviews_by_annotation.get(rid, [])
+            own_version = review_of is not None or any(reviewer == who for _t, reviewer, _d in decisions)
+            if raw in _EVER_SUBMITTED and not own_version:
+                out.append({"submitted_at": at, "submitter": who, "decided_at": None, "decider": None, "decision": None})
+            for t, reviewer, decision in decisions:
+                if out and out[-1]["decided_at"] is None and t >= out[-1]["submitted_at"]:
+                    out[-1].update(decided_at=t, decider=reviewer, decision=decision)
+        return out
 
-        if card.type == WorkflowCardType.ANNOTATION:
-            queue_start = event.occurred_at
-            after = [r for r in rows if r[2] >= queue_start]
-            submitted = next((r for r in after if r[1] in _EVER_SUBMITTED), None)
-            terminal_at, actor_id = (submitted[2], submitted[3]) if submitted else (None, None)
-            first_touch = earliest(after[0][2] if after else None, first_open(str(card.id), case_id, queue_start))
-            # Review outcome of what this leg produced: how many
-            # submissions were sent back before one was approved.
-            submissions = [r for r in after if r[1] in _EVER_SUBMITTED]
-            first_decision = reviews_by_annotation.get(submissions[0][0], []) if submissions else []
-            quality = {
-                "decided_at": first_decision[0][0] if first_decision else None,
-                "first_pass": submissions[0][1] == AnnotationStatus.APPROVED if first_decision else None,
-                "rejections": sum(1 for r in submissions if r[1] == AnnotationStatus.REJECTED),
-                "approved": any(r[1] == AnnotationStatus.APPROVED for r in submissions),
-            }
-        else:  # REVIEW
-            submitted = next((r for r in rows if r[1] in _EVER_SUBMITTED), None)
-            if submitted is None:
-                continue  # entered the review queue, but the submission that put it there isn't visible (shouldn't happen)
-            queue_start = submitted[2]
-            after = [r for r in rows if r[2] > queue_start]
-            decisions = reviews_by_annotation.get(submitted[0], [])
-            terminal_at, actor_id = decisions[0] if decisions else (None, None)
-            first_touch = earliest(after[0][2] if after else None, first_open(str(card.id), case_id, queue_start))
-            quality = None
+    legs: list[dict] = []
 
+    def add_leg(card, case_id, case, queue_start, first_touch, terminal_at, actor_id, quality, round_no) -> None:
         if first_touch is not None and terminal_at is not None and first_touch > terminal_at:
             first_touch = terminal_at  # opened again only after finishing; the work began no later than the finish
         legs.append(
@@ -219,6 +204,9 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
                 "case_id": case_id,
                 "case_title": case.title if case else None,
                 "assignee_id": (card.config or {}).get("assigned_user_id"),
+                # 0 = the first pass; n = the n-th review (Review) or the
+                # rework after the n-th rejection (Annotation), H-05
+                "round": round_no,
                 "queue_start": queue_start,
                 "first_touch": first_touch,
                 "terminal_at": terminal_at,
@@ -230,6 +218,56 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
                 "work_ms": _ms(terminal_at - first_touch) if (first_touch and terminal_at and first_touch < terminal_at) else None,
             }
         )
+
+    # One leg per round, not per (card, case): a case sent back and handed
+    # in again is reviewed again, and while it waits for rework it is open
+    # work for the annotator. Only the first review and none of the rework
+    # used to be measured (H-05).
+    for event in events:
+        card = cards.get(event.card_id)
+        if card is None:
+            continue
+        case_id = str(event.case_id)
+        case = cases.get(case_id)
+        rows = annotations_by_case.get(case_id, [])  # already ordered by created_at
+        card_key = str(card.id)
+
+        if card.type == WorkflowCardType.ANNOTATION:
+            queue_start = event.occurred_at
+            after = [r for r in rows if r[2] >= queue_start]
+            mine = [rnd for rnd in rounds_of(rows) if rnd["submitted_at"] >= queue_start]
+            first = mine[0] if mine else None
+            quality = {
+                "decided_at": first["decided_at"] if first else None,
+                "first_pass": (first["decision"] == "approve") if first and first["decision"] else None,
+                "rejections": sum(1 for rnd in mine if rnd["decision"] == "reject"),
+                "approved": any(rnd["decision"] == "approve" for rnd in mine),
+            }
+            add_leg(
+                card, case_id, case, queue_start,
+                earliest(after[0][2] if after else None, first_open(card_key, case_id, queue_start)),
+                first["submitted_at"] if first else None, first["submitter"] if first else None, quality, 0,
+            )
+            for k, rnd in enumerate(mine):
+                if rnd["decision"] != "reject":
+                    continue
+                nxt = mine[k + 1] if k + 1 < len(mine) else None
+                start = rnd["decided_at"]
+                touched = [r for r in rows if r[2] > start and r[3] != rnd["decider"]]
+                add_leg(
+                    card, case_id, case, start,
+                    earliest(touched[0][2] if touched else None, first_open(card_key, case_id, start)),
+                    nxt["submitted_at"] if nxt else None, nxt["submitter"] if nxt else None, None, k + 1,
+                )
+        else:  # REVIEW
+            for k, rnd in enumerate(rounds_of(rows)):
+                start = rnd["submitted_at"]
+                touched = [r for r in rows if r[2] > start and r[3] != rnd["submitter"]]
+                add_leg(
+                    card, case_id, case, start,
+                    earliest(touched[0][2] if touched else None, first_open(card_key, case_id, start)),
+                    rnd["decided_at"], rnd["decider"], None, k,
+                )
     return legs
 
 
