@@ -198,7 +198,7 @@ and the approval email carries their one-time password.
 | See what's running / logs | `docker compose ps` · `docker compose logs -f admin-service` |
 | Update to a new version | `git pull` (one checkout, brings both apps), then `scripts/setup-test-server.sh` (rebuilds, restarts, migrates) and `docker compose up -d --build` in `ct-annotator/` |
 | Database backups | Automatic daily, 14 kept, plus **System → Back up now** in the admin UI; files in the `db-backups` volume, downloadable from that page |
-| Restore a backup | `scripts/restore-db.sh <file>` (stops the APIs, restores, restarts) -- for one study's mistake use its **Version history** instead |
+| Restore a backup | `scripts/restore-db.sh <file>` (checks the file against its stored checksum first, then stops the APIs, restores, restarts; `--check-only` just checks) -- for one study's mistake use its **Version history** instead |
 | Object storage backup | MinIO's `minio-data` volume holds every DICOM/document/mask -- back it up separately (e.g. `mc mirror` or a volume snapshot) |
 | Audit trail | **System → Audit log** (who changed what) and **Notifications → Delivery log** (every email) |
 | Stop everything | `docker compose down` in both checkouts (data stays in the volumes; `down -v` deletes it) |
