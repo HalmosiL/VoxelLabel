@@ -196,3 +196,14 @@ def test_a_review_step_that_has_not_run_yet_still_counts_as_next():
     h = stats.case_histories(annotations, [], stage, ONE_REVIEW)
     [row] = stats.cases_table(h, stage, ONE_REVIEW, [], {}, {}, NAMES)
     assert (row["state"], row["waiting_at"]) == ("awaiting_review", "rev")
+
+
+def test_a_review_step_counts_only_cases_handed_in(monkeypatch=None):
+    """H-06: every case got a stage event for the review card when the
+    board was Run, so a case never handed in (D, not started) counted as
+    "In" at the review -- "In 4 · decided 3 · here now 0"."""
+    h, rows = one_review()
+    stage = STAGE + [{"card_id": "rev", "case_id": "D", "occurred_at": at(1)}]  # as the ripple writes it
+    m = stats.card_metrics(ONE_REVIEW, stage, [], EFFORT, h, rows)
+    assert m["rev"]["entered"] == 4  # A, B, C, E -- all handed in at some point; not D
+    assert m["ann"]["entered"] == 5

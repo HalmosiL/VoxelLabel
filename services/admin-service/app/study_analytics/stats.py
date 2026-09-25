@@ -407,6 +407,14 @@ def card_metrics(board: Board, stage: list[dict], legs: list[dict], effort: list
     entered: dict[str, set[str]] = defaultdict(set)
     for s in stage:
         entered[s["card_id"]].add(s["case_id"])
+    # A review step's stage events are written for its whole scope when the
+    # board runs, before anything is handed in: only a case submitted at
+    # some point has entered it. Otherwise a case never handed in showed as
+    # "In" at the review, neither decided nor waiting there (H-06).
+    handed_in = {case_id for case_id, h in histories.items() if any(e["kind"] == "submitted" for e in h["events"])}
+    for cid, card in board.cards.items():
+        if card["type"] == "review":
+            entered[cid] &= handed_in
     here = Counter(row["waiting_at"] for row in cases if row["waiting_at"] and row["state"] != "done")
     legs_by_card: dict[str, list[dict]] = defaultdict(list)
     for leg in legs:
