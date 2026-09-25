@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
     "pyjwt[crypto]>=2.8",
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.1",  # postgresql.distinct_on
 ]
 
 [build-system]

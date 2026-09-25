@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Shared SQLAlchemy ORM models and DB session utilities for the CT annotation platform"
 requires-python = ">=3.11"
 dependencies = [
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.1",  # postgresql.distinct_on
     "psycopg[binary]>=3.1",
 ]
 

@@ -15,6 +15,7 @@ from shared_models.models import (
     WorkflowEdge,
 )
 from sqlalchemy import or_
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
@@ -47,7 +48,7 @@ def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set,
         query = query.filter(or_(Annotation.status != AnnotationStatus.DRAFT, Annotation.review_of_id.isnot(None)))
     if since is not None:
         query = query.filter(Annotation.created_at >= since)
-    rows = query.order_by(Annotation.target_id, Annotation.created_at.desc()).distinct(Annotation.target_id).all()
+    rows = query.order_by(Annotation.target_id, Annotation.created_at.desc()).ext(distinct_on(Annotation.target_id)).all()
     return {row[0]: (row[1], _effective_status(row[2], row[4]), row[3]) for row in rows}
 
 
