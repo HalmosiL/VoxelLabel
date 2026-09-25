@@ -53,7 +53,7 @@ import { useGuide } from "../guide/useGuide";
 import { ANNOTATE_STEPS, REVIEW_STEPS } from "../guide/viewerSteps";
 import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
 import { polygonMask, scanlineFill } from "../lib/scanlineFill";
-import { safeReturnUrl } from "../lib/returnUrl";
+import { returnUrlForCase, safeReturnUrl } from "../lib/returnUrl";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -371,7 +371,8 @@ export default function ViewerPage() {
         return;
       }
       const jobParam = jobId ? `&jobId=${jobId}` : "";
-      const returnParam = returnUrl ? `&returnUrl=${encodeURIComponent(returnUrl)}` : "";
+      const nextReturn = returnUrlForCase(returnUrl, caseId, targetCaseId);
+      const returnParam = nextReturn ? `&returnUrl=${encodeURIComponent(nextReturn)}` : "";
       navigate(`/viewer/series/${series[0].id}?studyId=${studyId}&caseId=${targetCaseId}${jobParam}${returnParam}`);
     } catch (err) {
       setError(String(err));

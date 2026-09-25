@@ -25,3 +25,12 @@ export function safeReturnUrl(raw: string | null, here: string = window.location
   }
   return allowed.has(url.origin) ? url.toString() : null;
 }
+
+/** The Back target after moving from one case to another in the viewer:
+ * a link to the case page of the case being left now points at the case
+ * on screen (D-07 -- it kept returning to the first case opened). Any
+ * other target (the picker, a job page) is kept as it is. */
+export function returnUrlForCase(returnUrl: string | null, fromCaseId: string | null, toCaseId: string): string | null {
+  if (!returnUrl || !fromCaseId) return returnUrl;
+  return returnUrl.replace(`/cases/${fromCaseId}`, `/cases/${toCaseId}`);
+}
