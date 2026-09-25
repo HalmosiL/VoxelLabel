@@ -43,7 +43,8 @@ export default function StudyAnalyticsPage() {
   const [board, setBoard] = useState<WorkflowBoard | null>(null);
   const [tab, setTab] = useState<Tab>("workflow");
   const [error, setError] = useState<string | null>(null);
-  useRegisterGuide("study-analytics", STUDY_ANALYTICS_STEPS, data !== null && board !== null);
+  // opens from the Tutorial button only, like every admin page (G-11)
+  useRegisterGuide("study-analytics", STUDY_ANALYTICS_STEPS, data !== null && board !== null, false);
 
   useEffect(() => {
     getStudy(studyId).then(setStudy).catch((err) => setError(describeApiError(err)));

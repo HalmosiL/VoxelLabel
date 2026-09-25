@@ -69,6 +69,15 @@ const seen = () => { try { for (const k of ["studies", "study", "study-analytics
   await login(page2, "dr-test", "Test1234!", `${F.UI}/studies/${F.STUDY}`);
   await page2.waitForTimeout(3000);
   check("an annotator's study page has no Analytics link", (await page2.locator('[data-testid="study-analytics-link"]').count()) === 0);
+
+  // G-11: a first visit doesn't spring the tour open, like every other admin page
+  const ctx3 = await browser.newContext({ viewport: { width: 1600, height: 950 } });
+  await ctx3.addInitScript(() => { try { for (const k of ["studies", "study"]) localStorage.setItem(`vl.guide.${k}.seen`, "1"); } catch {} });
+  const page3 = await ctx3.newPage();
+  await login(page3, "platform-admin", "platform-admin", `${F.UI}/studies/${F.STUDY}/analytics`);
+  await page3.waitForSelector('[data-testid="analytics-tiles"]', { timeout: 30000 });
+  await page3.waitForTimeout(2500);
+  check("the analytics tour doesn't open by itself on a first visit", (await page3.locator('[role="dialog"]').count()) === 0);
   await browser.close();
 
   const fails = results.filter((r) => !r.ok);
