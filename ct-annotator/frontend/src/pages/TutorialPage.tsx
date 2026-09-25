@@ -161,10 +161,16 @@ function defaultAnnotateObject(): TutObject {
 // Operates on one pane's own flat 2D view of the mask (width x height --
 // see paneDims: square for axial, TUTORIAL_SIZE x TUTORIAL_SLICES for a
 // sagittal/coronal reconstruction), not the 3D volume directly.
-function stampCircle(mask: Uint8Array, width: number, height: number, cx: number, cy: number, r: number, value: number) {
+// `isProtected(v)`: voxels of a locked or hidden object are left alone,
+// by the brush and the eraser alike -- as in the real viewer (G-03).
+function stampCircle(
+  mask: Uint8Array, width: number, height: number, cx: number, cy: number, r: number, value: number,
+  isProtected: (v: number) => boolean = () => false
+) {
   for (let y = Math.max(0, cy - r); y <= Math.min(height - 1, cy + r); y++) {
     for (let x = Math.max(0, cx - r); x <= Math.min(width - 1, cx + r); x++) {
-      if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) mask[y * width + x] = value;
+      const i = y * width + x;
+      if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r && !isProtected(mask[i])) mask[i] = value;
     }
   }
 }
@@ -325,6 +331,7 @@ export default function TutorialPage() {
   const redoRef = useRef<{ mask: Uint8Array; axialIndex: number }[]>([]);
   const drawingRef = useRef(false);
   const erasingRef = useRef(false);
+  const rightClickRef = useRef<{ pane: PaneKey; clientX: number; clientY: number; point: { x: number; y: number }; moved: boolean } | null>(null);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const dragStartRef = useRef<{ pane: PaneKey; x: number; y: number } | null>(null);
   // Which pane a paint/erase stroke started on -- tracked separately
@@ -781,6 +788,10 @@ export default function TutorialPage() {
   // The axial case is a live subarray (see axialMaskView) so the
   // "commit" is a no-op there; sagittal/coronal need an explicit
   // gather-edit-scatter since their voxels aren't contiguous.
+  // Locked or hidden objects' voxels: no tool writes over them (G-03).
+  const protectedIds = new Set(objects.filter((o) => o.locked || o.hidden).map((o) => o.id));
+  const isProtected = (v: number) => v !== 0 && protectedIds.has(v);
+
   function withPaneMask(pane: PaneKey, fn: (view: Uint8Array, width: number, height: number) => void) {
     const { width, height } = paneDims(pane);
     const index = currentPaneIndex(pane);
@@ -838,6 +849,14 @@ export default function TutorialPage() {
     }
     if (phase !== "annotate") return;
     const { x, y } = toCanvasXY(e, pane);
+    if (e.button === 2) {
+      // Right button, like the real viewer: a click without dragging opens
+      // the object's form under the pointer; a drag erases (Paint/Eraser
+      // only). It used to erase, fill or add a point at once (G-04).
+      e.currentTarget.setPointerCapture(e.pointerId);
+      rightClickRef.current = { pane, clientX: e.clientX, clientY: e.clientY, point: { x, y }, moved: false };
+      return;
+    }
     if (tool === "paint" || tool === "erase") {
       if (tool === "paint" && !canDraw) return;
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -853,7 +872,7 @@ export default function TutorialPage() {
       pushHistory();
       drawingRef.current = true;
       lastPointRef.current = { x, y };
-      withPaneMask(pane, (view, width, height) => stampCircle(view, width, height, Math.round(x), Math.round(y), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0)));
+      withPaneMask(pane, (view, width, height) => stampCircle(view, width, height, Math.round(x), Math.round(y), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0), isProtected));
       setMaskVersion((v) => v + 1);
     } else if (tool === "fill") {
       if (!canDraw || !activeObjectId) return;
@@ -881,7 +900,12 @@ export default function TutorialPage() {
     } else if (tool === "polygon") {
       if (!canDraw) return;
       const pts = polygonPointsRef.current;
-      if (pts.length >= 3 && pane === polygonPaneRef.current && Math.hypot(x - pts[0].x, y - pts[0].y) < 8) {
+      // a polygon lives on one pane: clicks elsewhere are ignored, as in the viewer (G-02)
+      if (pts.length > 0 && pane !== polygonPaneRef.current) return;
+      // 8 screen px, whatever the zoom (a fixed 8 voxels closed a small outline early)
+      const rect = e.currentTarget.getBoundingClientRect();
+      const closeRadius = rect.width > 0 ? 8 * (e.currentTarget.width / rect.width) : 8;
+      if (pts.length >= 3 && Math.hypot(x - pts[0].x, y - pts[0].y) < closeRadius) {
         closePolygon(pane);
       } else {
         if (pts.length === 0) polygonPaneRef.current = pane;
@@ -896,6 +920,18 @@ export default function TutorialPage() {
   }
 
   function handlePanePointerMove(e: ReactPointerEvent<HTMLCanvasElement>) {
+    const right = rightClickRef.current;
+    if (right && !right.moved && Math.hypot(e.clientX - right.clientX, e.clientY - right.clientY) > 6) {
+      right.moved = true;
+      if (tool === "paint" || tool === "erase") {
+        pushHistory();
+        drawPaneRef.current = right.pane;
+        erasingRef.current = true;
+        drawingRef.current = true;
+        lastPointRef.current = right.point;
+        withPaneMask(right.pane, (view, width, height) => stampCircle(view, width, height, Math.round(right.point.x), Math.round(right.point.y), brushRadius, 0, isProtected));
+      }
+    }
     if (panStartRef.current) {
       const start = panStartRef.current;
       setZoom((z) => ({ ...z, [start.pane]: { ...z[start.pane], panX: start.panX + (e.clientX - start.clientX), panY: start.panY + (e.clientY - start.clientY) } }));
@@ -911,7 +947,7 @@ export default function TutorialPage() {
       drawingRef.current = true;
       lastPointRef.current = pending.point;
       withPaneMask(pending.pane, (view, width, height) =>
-        stampCircle(view, width, height, Math.round(pending.point.x), Math.round(pending.point.y), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0))
+        stampCircle(view, width, height, Math.round(pending.point.x), Math.round(pending.point.y), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0), isProtected)
       );
     }
     if (drawingRef.current && (tool === "paint" || tool === "erase")) {
@@ -928,7 +964,7 @@ export default function TutorialPage() {
         for (let i = 1; i <= steps; i++) {
           const px = last.x + ((x - last.x) * i) / steps;
           const py = last.y + ((y - last.y) * i) / steps;
-          stampCircle(view, width, height, Math.round(px), Math.round(py), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0));
+          stampCircle(view, width, height, Math.round(px), Math.round(py), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0), isProtected);
         }
       });
       lastPointRef.current = { x, y };
@@ -1009,7 +1045,21 @@ export default function TutorialPage() {
     setMaskVersion((v) => v + 1);
   }
 
+  /** Right-click without drag: open the form of the object under the pointer. */
+  function openFormAt(pane: PaneKey, point: { x: number; y: number }) {
+    let value = 0;
+    withPaneMask(pane, (view, width) => {
+      value = view[Math.round(point.y) * width + Math.round(point.x)] ?? 0;
+    });
+    if (!value || !objects.some((o) => o.id === value)) return;
+    setActiveObjectId(value);
+    setOpenForms((prev) => new Set(prev).add(value));
+  }
+
   function handlePanePointerUp(e: ReactPointerEvent<HTMLCanvasElement>) {
+    const right = rightClickRef.current;
+    rightClickRef.current = null;
+    if (right && !right.moved) openFormAt(right.pane, right.point);
     if (e.pointerType === "touch" && pendingTapRef.current) finishPendingTap(pendingTapRef.current.pane);
     if (panStartRef.current) {
       panStartRef.current = null;
@@ -1071,7 +1121,7 @@ export default function TutorialPage() {
     }
     pushHistory();
     withPaneMask(pane, (view, width, height) =>
-      stampCircle(view, width, height, Math.round(point.x), Math.round(point.y), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0))
+      stampCircle(view, width, height, Math.round(point.x), Math.round(point.y), brushRadius, erasingRef.current ? 0 : (activeObjectId ?? 0), isProtected)
     );
     setMaskVersion((v) => v + 1);
   }
@@ -1212,7 +1262,7 @@ export default function TutorialPage() {
     const data = octx.getImageData(0, 0, width, height).data;
     withPaneMask(pane, (view) => {
       for (let i = 0; i < width * height; i++) {
-        if (data[i * 4 + 3] > 0) view[i] = activeObjectId;
+        if (data[i * 4 + 3] > 0 && !isProtected(view[i])) view[i] = activeObjectId;
       }
     });
     polygonPointsRef.current = [];
@@ -1226,7 +1276,17 @@ export default function TutorialPage() {
     setAutoPanel(null);
     setMaskVersion((v) => v + 1);
   }
+  /** Keeps the previewed Auto region as one undoable step: the snapshot is
+   * the mask from before the preview, so Undo takes back exactly the
+   * region (it was never on the history, G-01). */
   function commitAuto() {
+    if (autoBaseRef.current) {
+      historyRef.current.push({ mask: autoBaseRef.current, axialIndex });
+      if (historyRef.current.length > 30) historyRef.current.shift();
+      redoRef.current = [];
+      setHistoryLen(historyRef.current.length);
+      setRedoLen(0);
+    }
     autoBaseRef.current = null;
     setAutoPanel(null);
   }
@@ -1446,6 +1506,13 @@ export default function TutorialPage() {
   // ── Review phase ───────────────────────────────────────────────────
   const reviewObjects = useMemo(() => labels.flatMap((l) => objects.filter((o) => o.labelId === l.id)), [labels, objects]);
   const clampedReviewIndex = Math.max(0, Math.min(reviewIndex, reviewObjects.length - 1));
+  // Review: the panes follow the object on the card, as the tour says and
+  // the viewer does (G-05).
+  const reviewObjectId = phase === "review" ? reviewObjects[clampedReviewIndex]?.id : undefined;
+  useEffect(() => {
+    if (reviewObjectId !== undefined) jumpToObject(reviewObjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewObjectId]);
   const currentReviewObject = reviewObjects[clampedReviewIndex] ?? null;
   const reviewPending = reviewObjects.filter((o) => o.reviewStatus === "pending").length;
 
