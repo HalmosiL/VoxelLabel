@@ -112,17 +112,17 @@ ol.steps li { margin: 8px 0; }
   <div class="eyebrow">Átvizsgálás · zárójelentés</div>
   <h1>A VoxelLabel teljes átvizsgálásának eredménye</h1>
   <p class="lede">Mit találtunk, mit javítottunk, mi maradt nyitva, és mit kell tenni a telepítésnél. A terv: <a href="https://claude.ai/artifact/8V2wgedRHMgtDC5X21PBkY">VoxelLabel átvizsgálási terv</a>.</p>
-  <div class="meta"><span><b>Dátum</b> 2026-09-25</span><span><b>Ág</b> feature/clinical-trial-consort-and-store</span><span><b>Kiindulás</b> 85df0fe</span><span><b>Változás</b> 74 commit · 183 fájl</span></div>
+  <div class="meta"><span><b>Dátum</b> 2026-09-25</span><span><b>Ág</b> feature/clinical-trial-consort-and-store</span><span><b>Kiindulás</b> 85df0fe</span><span><b>Változás</b> 91 commit · 219 fájl</span></div>
 </header>
 
-<div class="rule-box"><p><b>Teendő elsőként:</b> a 73 commit még nincs feltöltve. Futtasd: <code>git push</code> (itt nincs GitHub-hozzáférés). Utána a telepítési lépések a <a href="#deploy">7. pontban</a>.</p></div>
+<div class="rule-box"><p><b>Teendő elsőként:</b> az S4 javítások 17 commitja még nincs feltöltve (a korábbiak már fent vannak). Futtasd: <code>git push</code> (itt nincs GitHub-hozzáférés). Utána a telepítési lépések a <a href="#deploy">7. pontban</a>.</p></div>
 
 <div class="stats">
   <div class="stat"><div class="v">148</div><div class="l">megállapítás (142 a feltárásban, 6 a kizárólagos ablakban)</div></div>
-  <div class="stat"><div class="v">129</div><div class="l">javítva (3 csak részben), előbb bukó regressziós teszttel</div></div>
+  <div class="stat"><div class="v">146</div><div class="l">javítva (3 csak részben), előbb bukó regressziós teszttel</div></div>
   <div class="stat"><div class="v">2</div><div class="l">szándékos működés a döntésed szerint (D-05, F-15)</div></div>
   <div class="stat"><div class="v">6</div><div class="l">döntési pont vár rád</div></div>
-  <div class="stat"><div class="v">17</div><div class="l">nyitott S4 (kis súlyú) tétel</div></div>
+  <div class="stat"><div class="v">0</div><div class="l">nyitott S4 tétel (mind a 17 javítva, plusz 4 megfigyelés)</div></div>
 </div>
 
 <nav class="toc" aria-label="Tartalom"><ol>
@@ -131,7 +131,7 @@ ol.steps li { margin: 8px 0; }
   <li><a href="#excl">Kizárólagos ablak</a></li>
   <li><a href="#reg">Teljes regresszió</a></li>
   <li><a href="#decide">Döntési pontok</a></li>
-  <li><a href="#s4">Nyitott S4 tételek és megfigyelések</a></li>
+  <li><a href="#s4">Az S4 tételek javítása</a></li>
   <li><a href="#deploy">Telepítés</a></li>
   <li><a href="#data">Tesztadatok</a></li>
 </ol></nav>
@@ -143,7 +143,7 @@ ol.steps li { margin: 8px 0; }
 <tr><td><span class="sev s1">S1</span></td><td class="num">8</td><td>Mind javítva (adatvédelem, jogosultság, tanulmányok közötti szivárgás).</td></tr>
 <tr><td><span class="sev s2">S2</span></td><td class="num">26</td><td>24 javítva. D-05 és F-15 szándékos: a maszk és az eset állapota esetenként közös (a döntésed, 2026-09-24).</td></tr>
 <tr><td><span class="sev s3">S3</span></td><td class="num">88</td><td>Mind kezelve (javítva vagy duplikátumként összevonva). Háromnál csak a hibás rész javult, a maradék döntés: A-07, C-17, C-20.</td></tr>
-<tr><td><span class="sev s4">S4</span></td><td class="num">20</td><td>3 javult menet közben (G-19, J-15 = E-04, F-03 = F-17), 17 nyitott, a listát te rangsorolod.</td></tr>
+<tr><td><span class="sev s4">S4</span></td><td class="num">20</td><td>Mind javítva: 3 menet közben (G-19, J-15 = E-04, F-03 = F-17), a többi 17 a <a href="#s4">6. pontban</a>.</td></tr>
 <tr><td><span class="sev s3">Új (I-04…I-09)</span></td><td class="num">6</td><td>A kizárólagos ablakban találtuk, mind javítva.</td></tr>
 </tbody></table></div>
 <p>Szabály volt: hibánként egy commit, előbb a regressziós teszt, amit bukni láttunk, utána a javítás, majd élő ellenőrzés a helyi stacken. Az ágensek csak jelentettek, minden javítás központilag készült.</p>
@@ -223,18 +223,18 @@ ol.steps li { margin: 8px 0; }
 <div class="table-wrap"><table>
 <thead><tr><th>Csomag</th><th>Eredmény</th></tr></thead>
 <tbody>
-<tr><td>admin-service (ruff + pytest, eldobható Postgres)</td><td class="num">301 sikeres</td></tr>
-<tr><td>ingestion-service</td><td class="num">63 sikeres</td></tr>
+<tr><td>admin-service (ruff + pytest, eldobható Postgres)</td><td class="num">310 sikeres</td></tr>
+<tr><td>ingestion-service</td><td class="num">65 sikeres</td></tr>
 <tr><td>data-service</td><td class="num">21 sikeres</td></tr>
 <tr><td>annotation-service</td><td class="num">18 sikeres</td></tr>
-<tr><td>ct-annotator backend</td><td class="num">39 sikeres</td></tr>
-<tr><td>admin-ui (tsc + vitest + build)</td><td class="num">69 sikeres</td></tr>
-<tr><td>ct-annotator frontend (tsc + vitest + build)</td><td class="num">41 sikeres</td></tr>
+<tr><td>ct-annotator backend</td><td class="num">42 sikeres</td></tr>
+<tr><td>admin-ui (tsc + vitest + build)</td><td class="num">78 sikeres</td></tr>
+<tr><td>ct-annotator frontend (tsc + vitest + build)</td><td class="num">48 sikeres</td></tr>
 <tr><td>Séma-egyezés (migrációk és modellek)</td><td class="num">0 eltérés</td></tr>
 <tr><td>mcp-server</td><td>nincs tesztje</td></tr>
-<tr><td>Böngészős e2e (Playwright, a helyi stacken)</td><td class="num">41/41 spec · 673 ellenőrzés</td></tr>
+<tr><td>Böngészős e2e (Playwright, a helyi stacken)</td><td class="num">42/42 spec · 688 ellenőrzés</td></tr>
 </tbody></table></div>
-<p>Az első teljes futásban két spec bukott, mindkettő a tesztben volt hibás: egy túraszöveg a G-09 javítás óta másképp fogalmaz, és egy spec nem kezelte, ha a tesztmunka minden esete kész. Javítva, újrafuttatva zöld.</p>
+<p>Az első teljes futásban két spec bukott, mindkettő a tesztben volt hibás: egy túraszöveg a G-09 javítás óta másképp fogalmaz, és egy spec nem kezelte, ha a tesztmunka minden esete kész. Javítva, újrafuttatva zöld. Az S4 javítások utáni teljes futásban egy új spec időzítés miatt bukott (a helyi letöltés gyorsabb volt, mint a figyelése); lassított letöltéssel háromszor egymás után zöld. A számok a S4 javítások utáni állapotot mutatják.</p>
 
 <h2 id="decide">5. Döntési pontok</h2>
 <p>Ezeknél a javítás termékdöntést vagy üzemeltetési kompromisszumot jelent, ezért nem döntöttünk helyetted.</p>
@@ -249,31 +249,32 @@ ol.steps li { margin: 8px 0; }
 <tr><td class="id">Értesítés</td><td>A sikertelen e-mail nem megy ki újra, csak a naplóban látszik. Néma (nem elutasító) szerver esetén levelenként 20 másodpercet vár, így sok eseménynél percekig tart egy kör.</td><td>Sikertelen levelek újrapróbálása a következő körben, és az első kapcsolódási hiba után a kör többi levelének kihagyása.</td></tr>
 </tbody></table></div>
 
-<h2 id="s4">6. Nyitott S4 tételek és megfigyelések</h2>
+<h2 id="s4">6. Az S4 tételek és megfigyelések javítása</h2>
+<p>A zárójelentés első változatában ezek nyitottak voltak; a kérésedre mind a 21 javítva, ugyanazzal a szabállyal (előbb bukó teszt, utána a javítás, élő ellenőrzés).</p>
 <div class="table-wrap"><table>
-<thead><tr><th>Azonosító</th><th>Leírás</th></tr></thead>
+<thead><tr><th>Tétel</th><th>Mi változott</th><th>Commit</th></tr></thead>
 <tbody>
-<tr><td class="id">A-09</td><td>A pipeline-sablonokat és az annotációtípusokat bármely bejelentkezett felhasználó olvashatja, nem tag is.</td></tr>
-<tr><td class="id">B-14</td><td>Tanulmány kényszerített törlése vagy borítóképcsere után a régi borítókép a MinIO-ban marad.</td></tr>
-<tr><td class="id">B-19</td><td>Import- és gyorsimport-állapot bármely bejelentkezett felhasználó számára olvasható (az azonosító nem kitalálható).</td></tr>
-<tr><td class="id">C-18</td><td>„Mode” nélküli Dataset minden esetet számol, de az új eseteket nem küldi tovább.</td></tr>
-<tr><td class="id">C-21</td><td>A Könyvtár „+” gombja minden új kártyát ugyanarra a helyre, egymásra tesz.</td></tr>
-<tr><td class="id">D-09</td><td>A review munka oldala és a viewer számlálója annotációs szöveget és elavult számot mutat.</td></tr>
-<tr><td class="id">D-14</td><td>A munka oldalon az érintési célpontok 16 px-es szöveglinkek.</td></tr>
-<tr><td class="id">F-16</td><td>A bíráló hosszú megjegyzése nincs levágva, lejjebb tolja az esetlistát.</td></tr>
-<tr><td class="id">G-11</td><td>A tanulmány-analitika túrája első látogatáskor magától megnyílik, más admin oldalon nem.</td></tr>
-<tr><td class="id">G-13</td><td>A túrakártyák képei abszolút „/guide/…” útvonalat használnak (alútvonalas telepítésnél eltörnek).</td></tr>
-<tr><td class="id">G-14</td><td>Oktató mód lassú hálózaton: nincs haladásjelzés, nincs újrapróbálás.</td></tr>
-<tr><td class="id">G-15</td><td>A szeletszámozás eltér: viewer 0-tól, oktató mód 1-től.</td></tr>
-<tr><td class="id">G-16</td><td>Az oktató mód „Replay” gombja nem állít vissza minden megjelenítési beállítást.</td></tr>
-<tr><td class="id">G-17</td><td>Az oktató mód „Back” túralépése azt írja, hogy az eset oldalára visz.</td></tr>
-<tr><td class="id">G-18</td><td>Oktató mód: az üres kitöltés törli az újra-előzményt, és a Visszavonás aktív marad.</td></tr>
-<tr><td class="id">G-21</td><td>Képes túrakártya tableten kilóg a képernyőről (a Tovább gomb levágva).</td></tr>
-<tr><td class="id">H-07</td><td>Az „events.csv” mindig <code>usage-events.csv</code> néven mentődik, a dátumos név elvész.</td></tr>
-<tr><td class="id">—</td><td>MinIO kiesésnél a boto újrapróbálásai miatt minden hiba 4–13 másodperc után jön.</td></tr>
-<tr><td class="id">—</td><td>A <code>/health</code> végpontok akkor is 200-at adnak, ha a Redis vagy a MinIO nem érhető el.</td></tr>
-<tr><td class="id">—</td><td>A <code>scripts/restore-db.sh</code> nem ellenőrzi a mentés ellenőrzőösszegét visszaállítás előtt.</td></tr>
-<tr><td class="id">—</td><td>SQLAlchemy DISTINCT ON elavulási figyelmeztetés (<code>workflow/status.py</code>, kb. 200 figyelmeztetés a tesztekben).</td></tr>
+<tr><td class="id">A-09</td><td>A Store (pipeline-sablonok) és az annotációtípusok csak tanulmány-szereppel olvashatók; a sablonokhoz táblaszerkesztő szerep kell. A viewer közös gyorsítótára sem adja ki őket kívülállónak.</td><td class="hash">6118683 · cca6105</td></tr>
+<tr><td class="id">B-14</td><td>Kényszerített tanulmánytörlés és borítóképcsere után a régi kép törlődik, kivéve, ha egy mentett verzió még mutatja.</td><td class="hash">cbc254d</td></tr>
+<tr><td class="id">B-19</td><td>Feltöltés, gyorsimport és export állapotát csak az adott tanulmány data managere vagy adminja olvashatja; ismeretlen azonosító 404.</td><td class="hash">e270979</td></tr>
+<tr><td class="id">C-18</td><td>A „mode” nélküli Dataset is továbbadja az új eseteket, mint az „all cases”.</td><td class="hash">31a1375</td></tr>
+<tr><td class="id">C-21</td><td>A Könyvtár „+” gombja nem teszi egymásra az új kártyákat.</td><td class="hash">494995c</td></tr>
+<tr><td class="id">D-09</td><td>A review munka oldala „N / M eset eldöntve”, Approved / Sent back / Awaiting review / Not handed in yet feliratokkal; a viewer esetszámlálója frissül a döntés után.</td><td class="hash">2ebb1d9</td></tr>
+<tr><td class="id">D-14</td><td>Érintőképernyőn az Open case, a Vissza linkek és a Board legalább 44 px magasak.</td><td class="hash">2ebb1d9</td></tr>
+<tr><td class="id">F-16</td><td>A hosszú bírálói megjegyzés rövidítve jelenik meg, „Show more” gombbal.</td><td class="hash">2ebb1d9</td></tr>
+<tr><td class="id">G-11</td><td>A tanulmány-analitika túrája csak a gombra nyílik meg.</td><td class="hash">22d4f15</td></tr>
+<tr><td class="id">G-13</td><td>A túraképek az alkalmazás alútvonala alól töltődnek (admin-ui és viewer).</td><td class="hash">c547e74</td></tr>
+<tr><td class="id">G-14</td><td>Az oktató mód letöltése haladást mutat, hiba után „Try again” gomb; a hibát nem jegyzi meg.</td><td class="hash">97e187e</td></tr>
+<tr><td class="id">G-15</td><td>A szeletszámozás mindkét oldalon 1-től indul.</td><td class="hash">97e187e</td></tr>
+<tr><td class="id">G-16</td><td>A Replay a megjelenítést is alaphelyzetbe teszi (slab, panelek, átlátszóság, ecset, hisztogram, félkész poligon).</td><td class="hash">97e187e</td></tr>
+<tr><td class="id">G-17</td><td>Az oktató mód „Back” kártyája a My Jobs oldalt említi.</td><td class="hash">97e187e</td></tr>
+<tr><td class="id">G-18</td><td>Az üres kitöltés nem törli az újra-előzményt, és nem számol plusz lépést.</td><td class="hash">97e187e</td></tr>
+<tr><td class="id">G-21</td><td>A túrakártya a mért magassága szerint kerül a helyére, és sosem magasabb a képernyőnél (tableten is látszik a Tovább).</td><td class="hash">c547e74</td></tr>
+<tr><td class="id">H-07</td><td>Az events.csv dátumos néven mentődik (a szerver kiadja a Content-Disposition fejlécet).</td><td class="hash">4c7a85f</td></tr>
+<tr><td class="id">MinIO</td><td>Tárolókiesésnél egy kérés kb. 1 másodperc alatt ad 503-at a korábbi 4–13 helyett.</td><td class="hash">dc1ab25</td></tr>
+<tr><td class="id">/health</td><td>Új <code>/health/ready</code> végpont minden szolgáltatáson: megnevezi, melyik függőség nem érhető el (adatbázis, tároló, sor, platformszolgáltatás).</td><td class="hash">4cd6bf9</td></tr>
+<tr><td class="id">Mentés</td><td>A <code>restore-db.sh</code> a visszaállítás előtt ellenőrzi a mentés ellenőrzőösszegét; <code>--check-only</code> csak ellenőriz.</td><td class="hash">62c309c</td></tr>
+<tr><td class="id">SQLAlchemy</td><td>A DISTINCT ON elavulási figyelmeztetés megszűnt (kb. 400 figyelmeztetés tesztfutásonként).</td><td class="hash">f0e3ff9</td></tr>
 </tbody></table></div>
 
 <h2 id="deploy">7. Telepítés</h2>
@@ -285,6 +286,10 @@ ol.steps li { margin: 8px 0; }
   <li>Opcionális: <code>OBJECT_LINK_SECRET</code> a <code>.env</code>-ben (e nélkül a <code>MINIO_ROOT_PASSWORD</code>-ből származik).</li>
   <li>Több példánynál a <code>NEW_CASES_POLLER_ENABLED=1</code> csak egy admin-service példányon legyen (a compose most fixen 1-et ad).</li>
   <li>A meglévő de-identifikációs profilok új hash-sót kapnak, így az új importok hash-elt értékei eltérnek a korábbiaktól. Ez szándékos, de egy tanulmányon belül vegyes lehet.</li>
+  <li>Az S4 javítások nem hoznak új migrációt. A közös könyvtárak SQLAlchemy 2.1-et kérnek: a képek újraépítése (a setup-szkript megteszi) elég.</li>
+  <li>Figyeléshez: <code>curl http://&lt;host&gt;:&lt;port&gt;/health/ready</code> szolgáltatásonként (8001, 8002, 8003, 8004, 8010) megnevezi, mi nem érhető el. A <code>/health</code> továbbra is csak azt mondja, hogy a folyamat fut.</li>
+  <li>Visszaállítás előtt: <code>scripts/restore-db.sh &lt;fájl&gt; --check-only</code> csak ellenőrzi a mentést.</li>
+  <li>A frissítés pillanatában futó feltöltések és gyorsimportok állapotát (tulajdonosjelölő nélkül) csak globális admin láthatja. A tanulmányhoz nem tartozó fiókok már nem látják az annotációtípusokat és a Store-t.</li>
   <li>Régi JPEG Lossless importok bélyegképei: <code>docker compose exec ingestion-service python -m app.thumbnail_backfill</code> (a setup-szkript is futtatja).</li>
 </ol>
 
