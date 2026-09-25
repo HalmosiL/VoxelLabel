@@ -1,0 +1,296 @@
+<title>VoxelLabel zárójelentés</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f3f5f7;
+  --paper: #ffffff;
+  --ink: #16202b;
+  --ink-2: #3c4a58;
+  --muted: #6b7885;
+  --rule: #d9dfe5;
+  --tint: #e8edf2;
+  --accent: #b86e0a;
+  --accent-soft: #fbf0df;
+  --s1: #b42318; --s1-bg: #fdecea;
+  --s2: #b54708; --s2-bg: #fef1e6;
+  --s3: #1d5fa8; --s3-bg: #e8f1fb;
+  --s4: #53606d; --s4-bg: #eef1f4;
+  --code-bg: #eef2f6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0f141a; --paper: #151c24; --ink: #e6ebf0; --ink-2: #bcc6d0; --muted: #8b98a5;
+    --rule: #26313c; --tint: #1b242e; --accent: #e3a246; --accent-soft: #2a2114;
+    --s1: #f97066; --s1-bg: #3a1714; --s2: #f3a45c; --s2-bg: #36220f; --s3: #7cb4f5; --s3-bg: #13263a; --s4: #a3afbb; --s4-bg: #1d2630;
+    --code-bg: #1b242e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0f141a; --paper: #151c24; --ink: #e6ebf0; --ink-2: #bcc6d0; --muted: #8b98a5;
+  --rule: #26313c; --tint: #1b242e; --accent: #e3a246; --accent-soft: #2a2114;
+  --s1: #f97066; --s1-bg: #3a1714; --s2: #f3a45c; --s2-bg: #36220f; --s3: #7cb4f5; --s3-bg: #13263a; --s4: #a3afbb; --s4-bg: #1d2630;
+  --code-bg: #1b242e; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font: 400 15.5px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding-inline: 16px; padding-block: 0 64px; }
+.wrap { max-width: 980px; margin: 0 auto; }
+header.top { padding-block: 44px 28px; border-bottom: 1px solid var(--rule); margin-bottom: 28px; }
+.eyebrow { font: 500 12px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1, h2, h3 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif; font-weight: 600; text-wrap: balance; letter-spacing: -.005em; }
+h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.1; margin: 12px 0 14px; }
+h2 { font-size: 25px; line-height: 1.2; margin: 48px 0 12px; }
+h3 { font-size: 18.5px; line-height: 1.3; margin: 26px 0 8px; }
+p { margin: 0 0 12px; max-width: 68ch; }
+.lede { font-size: 17px; color: var(--ink-2); max-width: 64ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 18px; font: 400 13px/1.4 "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); }
+.meta b { color: var(--ink-2); font-weight: 500; }
+code, kbd, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 400 13px/1.55 "IBM Plex Mono", ui-monospace, monospace; margin: 8px 0 16px; }
+ul, ol { margin: 0 0 14px; padding-left: 22px; max-width: 72ch; }
+li { margin: 4px 0; }
+a { color: var(--accent); }
+nav.toc { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 20px; }
+nav.toc ol { columns: 2 260px; column-gap: 32px; margin: 6px 0 0; }
+nav.toc li { break-inside: avoid; }
+.table-wrap { overflow-x: auto; margin: 10px 0 18px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 12px/1.3 "IBM Plex Sans Condensed", system-ui, sans-serif; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--tint); }
+tr:last-child td { border-bottom: none; }
+td.id { font: 500 13px/1.4 "IBM Plex Mono", monospace; color: var(--accent); white-space: nowrap; }
+.sev { display: inline-block; font: 600 11.5px/1 "IBM Plex Mono", monospace; padding: 4px 7px; border-radius: 5px; white-space: nowrap; }
+.sev.s1 { color: var(--s1); background: var(--s1-bg); } .sev.s2 { color: var(--s2); background: var(--s2-bg); }
+.sev.s3 { color: var(--s3); background: var(--s3-bg); } .sev.s4 { color: var(--s4); background: var(--s4-bg); }
+.rule-box { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 14px 0 18px; }
+.rule-box p:last-child, .rule-box ul:last-child { margin-bottom: 0; }
+details.ws { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; margin: 12px 0; }
+details.ws > summary { cursor: pointer; list-style: none; padding: 14px 18px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+details.ws > summary::-webkit-details-marker { display: none; }
+details.ws > summary .wid { font: 600 14px/1 "IBM Plex Mono", monospace; color: var(--accent); min-width: 2.2em; }
+details.ws > summary .wt { font: 600 18px/1.25 "IBM Plex Sans Condensed", system-ui, sans-serif; }
+details.ws > summary .ws-meta { margin-left: auto; font: 400 12.5px/1.3 "IBM Plex Mono", monospace; color: var(--muted); }
+details.ws > summary::after { content: "+"; font: 500 18px/1 "IBM Plex Mono", monospace; color: var(--muted); }
+details.ws[open] > summary::after { content: "–"; }
+details.ws > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+.ws-body { padding: 2px 20px 18px; border-top: 1px solid var(--rule); }
+.ws-body h4 { font: 600 12.5px/1.3 "IBM Plex Sans Condensed", system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; }
+.checks { list-style: none; padding-left: 0; }
+.checks li { position: relative; padding-left: 26px; }
+.checks li::before { content: ""; position: absolute; left: 2px; top: .45em; width: 12px; height: 12px; border: 1.5px solid var(--muted); border-radius: 3px; }
+.risk li::marker { color: var(--s2); }
+.brief { background: var(--code-bg); border: 1px dashed var(--rule); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--ink-2); }
+.brief .copy { float: right; font: 500 12px/1 "IBM Plex Sans", sans-serif; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); border-radius: 6px; padding: 6px 9px; cursor: pointer; margin: 0 0 6px 10px; }
+.brief .copy:focus-visible { outline: 2px solid var(--accent); }
+.phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 12px 0 18px; }
+.phase { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; }
+.phase .n { font: 600 12px/1 "IBM Plex Mono", monospace; color: var(--accent); }
+.phase h3 { margin: 8px 0 6px; font-size: 16.5px; }
+.phase p { font-size: 14px; color: var(--ink-2); margin: 0; }
+.tag { display: inline-block; font: 500 11.5px/1 "IBM Plex Mono", monospace; color: var(--ink-2); background: var(--tint); border-radius: 4px; padding: 3px 6px; margin: 1px 2px 1px 0; }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13px; }
+@media (max-width: 560px) { details.ws > summary .ws-meta { margin-left: 0; width: 100%; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+<style>
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 22px 0 8px; }
+.stat { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; }
+.stat .v { font: 600 30px/1 "IBM Plex Sans Condensed", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 13px; color: var(--ink-2); margin-top: 6px; }
+.st { display: inline-block; font: 600 11.5px/1 "IBM Plex Mono", monospace; padding: 4px 7px; border-radius: 5px; white-space: nowrap; }
+.st.ok { color: #1a7f4b; background: #e5f5ec; } .st.part { color: var(--s2); background: var(--s2-bg); } .st.open { color: var(--s4); background: var(--s4-bg); } .st.dec { color: var(--accent); background: var(--accent-soft); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .st.ok { color: #6fd3a0; background: #12291e; } }
+:root[data-theme="dark"] .st.ok { color: #6fd3a0; background: #12291e; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.hash { font: 400 12.5px/1.4 "IBM Plex Mono", monospace; color: var(--muted); white-space: nowrap; }
+ol.steps li { margin: 8px 0; }
+</style>
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">Átvizsgálás · zárójelentés</div>
+  <h1>A VoxelLabel teljes átvizsgálásának eredménye</h1>
+  <p class="lede">Mit találtunk, mit javítottunk, mi maradt nyitva, és mit kell tenni a telepítésnél. A terv: <a href="https://claude.ai/artifact/8V2wgedRHMgtDC5X21PBkY">VoxelLabel átvizsgálási terv</a>.</p>
+  <div class="meta"><span><b>Dátum</b> 2026-09-25</span><span><b>Ág</b> feature/clinical-trial-consort-and-store</span><span><b>Kiindulás</b> 85df0fe</span><span><b>Változás</b> 74 commit · 183 fájl</span></div>
+</header>
+
+<div class="rule-box"><p><b>Teendő elsőként:</b> a 73 commit még nincs feltöltve. Futtasd: <code>git push</code> (itt nincs GitHub-hozzáférés). Utána a telepítési lépések a <a href="#deploy">7. pontban</a>.</p></div>
+
+<div class="stats">
+  <div class="stat"><div class="v">148</div><div class="l">megállapítás (142 a feltárásban, 6 a kizárólagos ablakban)</div></div>
+  <div class="stat"><div class="v">129</div><div class="l">javítva (3 csak részben), előbb bukó regressziós teszttel</div></div>
+  <div class="stat"><div class="v">2</div><div class="l">szándékos működés a döntésed szerint (D-05, F-15)</div></div>
+  <div class="stat"><div class="v">6</div><div class="l">döntési pont vár rád</div></div>
+  <div class="stat"><div class="v">17</div><div class="l">nyitott S4 (kis súlyú) tétel</div></div>
+</div>
+
+<nav class="toc" aria-label="Tartalom"><ol>
+  <li><a href="#sum">Összefoglaló súlyosság szerint</a></li>
+  <li><a href="#fixed">Mit javítottunk</a></li>
+  <li><a href="#excl">Kizárólagos ablak</a></li>
+  <li><a href="#reg">Teljes regresszió</a></li>
+  <li><a href="#decide">Döntési pontok</a></li>
+  <li><a href="#s4">Nyitott S4 tételek és megfigyelések</a></li>
+  <li><a href="#deploy">Telepítés</a></li>
+  <li><a href="#data">Tesztadatok</a></li>
+</ol></nav>
+
+<h2 id="sum">1. Összefoglaló súlyosság szerint</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Súlyosság</th><th>Talált</th><th>Eredmény</th></tr></thead>
+<tbody>
+<tr><td><span class="sev s1">S1</span></td><td class="num">8</td><td>Mind javítva (adatvédelem, jogosultság, tanulmányok közötti szivárgás).</td></tr>
+<tr><td><span class="sev s2">S2</span></td><td class="num">26</td><td>24 javítva. D-05 és F-15 szándékos: a maszk és az eset állapota esetenként közös (a döntésed, 2026-09-24).</td></tr>
+<tr><td><span class="sev s3">S3</span></td><td class="num">88</td><td>Mind kezelve (javítva vagy duplikátumként összevonva). Háromnál csak a hibás rész javult, a maradék döntés: A-07, C-17, C-20.</td></tr>
+<tr><td><span class="sev s4">S4</span></td><td class="num">20</td><td>3 javult menet közben (G-19, J-15 = E-04, F-03 = F-17), 17 nyitott, a listát te rangsorolod.</td></tr>
+<tr><td><span class="sev s3">Új (I-04…I-09)</span></td><td class="num">6</td><td>A kizárólagos ablakban találtuk, mind javítva.</td></tr>
+</tbody></table></div>
+<p>Szabály volt: hibánként egy commit, előbb a regressziós teszt, amit bukni láttunk, utána a javítás, majd élő ellenőrzés a helyi stacken. Az ágensek csak jelentettek, minden javítás központilag készült.</p>
+
+<h2 id="fixed">2. Mit javítottunk</h2>
+<h3>Biztonság és adatvédelem (1. csoport)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Azonosító</th><th>Mi változott a felhasználó szemével</th><th>Commit</th></tr></thead>
+<tbody>
+<tr><td class="id">A-02, A-03, A-04</td><td>Annotáció csak a saját tanulmány célpontjára menthető és olvasható; a tárolókulcsokat ellenőrzi a szerver.</td><td class="hash">efd75b8</td></tr>
+<tr><td class="id">A-01</td><td>A viewer minden gyorsítótárazott kép előtt ellenőrzi, hogy a néző hozzáférhet-e.</td><td class="hash">8dc652b</td></tr>
+<tr><td class="id">J-03</td><td>A „vissza” link csak saját vagy ismert címre visz.</td><td class="hash">fcbf2a2</td></tr>
+<tr><td class="id">B-01, B-02</td><td>A de-identifikációs profil tanulmányhoz rendelhető és minden importnál érvényes; import nem kerülhet másik tanulmány esetéhez.</td><td class="hash">38d08f1 · e1efd1d</td></tr>
+<tr><td class="id">C-08, C-19</td><td>A Dataset kártya és az AI-asszisztens eszközei csak a saját tanulmány eseteit látják.</td><td class="hash">bc1a4b8 · ff95824</td></tr>
+<tr><td class="id">A-05 / J-06</td><td>Kép- és dokumentumlinkek: rövid lejárat, kötelező titok, útvonalhoz kötve.</td><td class="hash">5f6d79b</td></tr>
+<tr><td class="id">J-04, J-09, J-10</td><td>Feltöltött dokumentum nem futhat a böngészőben; a képernyőképek tisztítója nem kerülhető meg.</td><td class="hash">8d71699 · 7d74b0f</td></tr>
+<tr><td class="id">J-08</td><td>Az ideiglenes jelszó kimegy e-mailben, de a kézbesítési naplóban nem marad meg.</td><td class="hash">036bc99</td></tr>
+</tbody></table></div>
+
+<h3>Adatvesztés és törött funkciók (2. csoport)</h3>
+<ul>
+  <li><b>Maszk mentése</b> (J-11, E-13): mindig a legújabb verzió töltődik be, két egyidejű mentés nem írja felül egymást. <span class="tag">1268744</span></li>
+  <li><b>Nem mentett munka</b> (E-04): eset váltásakor, Vissza gombnál, újratöltéskor figyelmeztet. <span class="tag">0da74b6</span></li>
+  <li><b>Viewer eszközök</b> (E-01, E-05, E-06, E-09, G-19): rejtett objektum védett, törlés utáni visszavonás nem hagy „árva” festést, Enter alkalmazza az előnézetet. <span class="tag">b935c47</span></li>
+  <li><b>Importálás</b> (B-03, B-04, B-12, B-20, B-22): párhuzamos gyors import egy esetet hoz létre, a duplikált tanulmány új DICOM UID-ket kap, a JPEG Lossless is betölt, a gyors importált eset a táblára kerül. <span class="tag">d625199</span> <span class="tag">2eae132</span> <span class="tag">484273e</span> <span class="tag">bfadd53</span></li>
+  <li><b>Munkafolyamat-tábla</b> (C-01, C-11, C-12): a tábla betölt futtatatlan AI-kártyával is, eltávolított tag nem látja a munkáit, a Store-sablon nem visz át tanulmányhoz kötött beállítást. <span class="tag">5c14c79</span> <span class="tag">c8285fa</span> <span class="tag">c0d11d8</span></li>
+  <li><b>De-identifikáció</b> (B-08, B-09, B-10): a szabályokat mentéskor ellenőrzi, az eset kiválasztása előtt alkalmazza, kulcsolt hash-sel. <span class="tag">bab4500</span></li>
+  <li><b>Review szabályok</b> (F-01, F-07, F-09): csak beadott munka bírálható, a döntés érvényes marad, a bíráló mentése nem veszi vissza a beadást. <span class="tag">54afa41</span></li>
+</ul>
+
+<h3>S3 javítások területenként (3. csoport)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Terület</th><th>Azonosítók</th><th>Lényeg</th></tr></thead>
+<tbody>
+<tr><td>Hibás bemenet</td><td class="mono">J-01, J-02, J-05, J-13, J-14, B-15, B-18, C-06, C-07, F-08</td><td>Rossz érték 4xx-et és okot kap, soha 500-at (közös <code>shared_auth.db_errors</code>).</td></tr>
+<tr><td>Párhuzamosság</td><td class="mono">B-04, B-05, J-12, I-02, D-04, C-13, C-15</td><td>Két fül vagy két kérés egyszerre nem ront el adatot és nem vesz el szerkesztést.</td></tr>
+<tr><td>Tábla</td><td class="mono">C-02…C-05, C-09, C-10, C-14, C-16, C-17, C-20, D-12, D-13</td><td>Élek ellenőrzése, Store beszúrás mindent vagy semmit, Visszavonás visszaadja a munkát.</td></tr>
+<tr><td>Munkák, állapot</td><td class="mono">D-01, D-02, D-03, D-07</td><td>Piszkozat nem számít beadásnak, visszaküldött eset visszaküldött marad, a Vissza a látott esetre visz.</td></tr>
+<tr><td>Viewer</td><td class="mono">E-02, E-03, E-07, E-08, E-10, E-11, E-12</td><td>Visszavonás, görgetés, szelet törlése csak az aktív objektumot, vegyes méretű sorozat jelzése.</td></tr>
+<tr><td>Oktató mód, túrák</td><td class="mono">G-01…G-06, G-08, G-09, G-10, G-12, G-20</td><td>Az oktató mód úgy viselkedik, mint a viewer; a túrák szövege pontos, tableten is működik.</td></tr>
+<tr><td>Adatok, importok</td><td class="mono">B-06, B-07, B-11, B-13, B-16, B-17, B-21, B-23</td><td>Sérült fájlok világos hibát adnak, sorozat törlése viszi az annotációit, beteg törölhető.</td></tr>
+<tr><td>Review folyamat</td><td class="mono">F-02, F-04…F-06, F-10…F-14, F-17, F-18</td><td>Külön bírálói megjegyzés, látszik az elutasítás oka, senki nem bírálja a saját munkáját.</td></tr>
+<tr><td>Használat, analitika</td><td class="mono">H-01…H-06, H-08, H-09</td><td>Exportok és riport követik a szűrőket, minden review-kör mérve van.</td></tr>
+<tr><td>Üzemeltetés</td><td class="mono">A-07, A-08, J-07, I-01, I-03</td><td>CI séma-egyezés ellenőrzés, hiánytalan audit napló.</td></tr>
+</tbody></table></div>
+
+<h2 id="excl">3. Kizárólagos ablak</h2>
+<p>A globális vagy romboló ellenőrzések a végén futottak, amikor más nem használta a stacket. Minden beállítást visszaállítottunk pontosan a korábbi állapotra.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Ellenőrzés</th><th>Eredmény</th><th>Állapot</th></tr></thead>
+<tbody>
+<tr><td>Használat-rögzítés kapcsolói (kategóriák, főkapcsoló, személyenként)</td><td>Kikapcsolva a szerver sem fogad adatot. Az „adminok kihagyása” rögzít, de nem számol (szándékos). A képernyőkép-képek kapcsolója működik.</td><td><span class="st ok">rendben</span></td></tr>
+<tr><td>Használati napló törlése és visszaállítása</td><td>43 755 esemény és 1 360 kép törlődött, majd mind visszajött, a közben rögzített esemény is megmaradt. Üres naplót nem enged törölni (409). Mindkét lépés auditálva.</td><td><span class="st ok">rendben</span></td></tr>
+<tr><td>Mentés letöltése és visszaállítása eldobható adatbázisba</td><td>Az ellenőrzőösszeg egyezik, nem admin 403-at kap, furcsa fájlnév 404-et. A visszaállított adatbázis számai és migrációs feje megegyezik az élővel, meglévő adatbázisra is lefut.</td><td><span class="st ok">rendben</span></td></tr>
+<tr><td>Tanulmány-verzió visszaállítása futó munka mellett</td><td>A munka a visszaállítás visszavonásával visszajön, de az esetek sorba kerülési ideje elveszett. Ugyanez történt tábla-kártya törlése és Visszavonás után.</td><td><span class="st ok">I-04 javítva</span></td></tr>
+<tr><td>Értesítések elérhetetlen levelezőszerverrel</td><td>Nem omlik össze, a hiba a naplóba kerül, párhuzamos futtatás 409, az API válaszol. Hiányosság: a sikertelen levelet nem küldi újra (lásd <a href="#decide">döntések</a>).</td><td><span class="st part">részben</span></td></tr>
+<tr><td>Ollama leállítva, illetve lefagyva</td><td>A csevegés érthető üzenetet ad. A Criterion futtatás viszont sikeresnek látszott, így a régi eredmény frissnek tűnt.</td><td><span class="st ok">I-05 javítva</span></td></tr>
+<tr><td>Celery worker leállítva, illetve megölve export közben</td><td>Leállított workernél a feladat megvárja az újraindulást. Futás közben megölt workernél az export elveszik, és örökké „pending” marad.</td><td><span class="st dec">döntés</span></td></tr>
+<tr><td>Redis leállítva</td><td>Feltöltés, gyors import, export és állapotlekérdezés csupasz 500-at adott, és a feltöltött fájl árván maradt.</td><td><span class="st ok">I-06 javítva</span></td></tr>
+<tr><td>MinIO leállítva</td><td>A viewer üres, szerkeszthető maszkot nyitott, ha a mentett maszk nem töltött be. Minden tárolóhívás csupasz 500-at adott.</td><td><span class="st ok">I-07, I-08 javítva</span></td></tr>
+<tr><td>Annotációs szolgáltatás újraindítása mentés közben</td><td>Csupasz 500, és a feltöltött maszkfájl árván maradt.</td><td><span class="st ok">I-09 javítva</span></td></tr>
+<tr><td>Telepítés (<code>setup-test-server.sh</code>, INSTALL.md)</td><td>Csak átnézéssel, friss gép nem volt. A szkript migrál, regisztrálja a sémát, pótolja a bélyegképeket. Megjegyzés a <a href="#deploy">telepítésnél</a>.</td><td><span class="st part">átnézve</span></td></tr>
+<tr><td>Terheléses teszt</td><td>Nem futott. A 90 napos használati végpontok és a viewer memóriája mérve rendben volt a feltárásban.</td><td><span class="st open">nem futott</span></td></tr>
+</tbody></table></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Új hiba</th><th>Javítás</th><th>Commit</th></tr></thead>
+<tbody>
+<tr><td class="id">I-04</td><td>Visszavonással vagy verzió-visszaállítással visszahozott munka megtartja az esetek sorba kerülési idejét (a ciklusidő és a szűk keresztmetszetek nem veszítik el őket). Migráció: <code>b1c3d5e7f9a1</code>.</td><td class="hash">f65b35b</td></tr>
+<tr><td class="id">I-05</td><td>Criterion futtatás elérhetetlen modellnél 503-at ad a valódi okkal, és nem jelöli frissen kiértékeltnek a kártyát; a beszélgetés megmarad.</td><td class="hash">bf3298b</td></tr>
+<tr><td class="id">I-06</td><td>Elérhetetlen feladatsor (Redis): 503 „próbáld újra”, és a feltöltött fájlok törlődnek.</td><td class="hash">230c171</td></tr>
+<tr><td class="id">I-07</td><td>Ha a mentett maszk nem tölt be, a viewer csak olvasható, és újratöltést kér.</td><td class="hash">c20fa02</td></tr>
+<tr><td class="id">I-08</td><td>Elérhetetlen fájltároló (MinIO): 503 „a fájltároló nem érhető el” minden szolgáltatásban.</td><td class="hash">bd316df</td></tr>
+<tr><td class="id">I-09</td><td>Nem válaszoló platformszolgáltatás a viewerben 503; a sikertelen mentés nem hagy árva maszkfájlt.</td><td class="hash">3da509f</td></tr>
+</tbody></table></div>
+
+<h2 id="reg">4. Teljes regresszió</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Csomag</th><th>Eredmény</th></tr></thead>
+<tbody>
+<tr><td>admin-service (ruff + pytest, eldobható Postgres)</td><td class="num">301 sikeres</td></tr>
+<tr><td>ingestion-service</td><td class="num">63 sikeres</td></tr>
+<tr><td>data-service</td><td class="num">21 sikeres</td></tr>
+<tr><td>annotation-service</td><td class="num">18 sikeres</td></tr>
+<tr><td>ct-annotator backend</td><td class="num">39 sikeres</td></tr>
+<tr><td>admin-ui (tsc + vitest + build)</td><td class="num">69 sikeres</td></tr>
+<tr><td>ct-annotator frontend (tsc + vitest + build)</td><td class="num">41 sikeres</td></tr>
+<tr><td>Séma-egyezés (migrációk és modellek)</td><td class="num">0 eltérés</td></tr>
+<tr><td>mcp-server</td><td>nincs tesztje</td></tr>
+<tr><td>Böngészős e2e (Playwright, a helyi stacken)</td><td class="num">41/41 spec · 673 ellenőrzés</td></tr>
+</tbody></table></div>
+<p>Az első teljes futásban két spec bukott, mindkettő a tesztben volt hibás: egy túraszöveg a G-09 javítás óta másképp fogalmaz, és egy spec nem kezelte, ha a tesztmunka minden esete kész. Javítva, újrafuttatva zöld.</p>
+
+<h2 id="decide">5. Döntési pontok</h2>
+<p>Ezeknél a javítás termékdöntést vagy üzemeltetési kompromisszumot jelent, ezért nem döntöttünk helyetted.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Téma</th><th>Mi a helyzet</th><th>Javaslat</th></tr></thead>
+<tbody>
+<tr><td class="id">A-07</td><td>A letiltott fiók a meglévő hozzáférési tokenjével legfeljebb 5 percig még dolgozhat. Most csak egy figyelmeztetés jelenik meg a Felhasználók oldalon.</td><td>Ha kell azonnali kizárás: a szolgáltatások kérjenek Keycloak token-introspekciót, vagy tartsanak tiltólistát (minden kérésre plusz egy hívás).</td></tr>
+<tr><td class="id">C-17</td><td>A PyTorch export linkjei közvetlenül a MinIO portjára mutatnak. Proxy mögötti szerveren ezek nem nyílnak meg.</td><td>A telepítésnél a MinIO-t publikus címen kell elérhetővé tenni, vagy az exportot az API-n keresztül kell letölteni (fejlesztés).</td></tr>
+<tr><td class="id">C-20</td><td>A helyi modell percekig fut, közben lefoglal egy worker-szálat, és a Builder néha kéretlen kártyákat is létrehoz.</td><td>Erősebb modell vagy szigorúbb eszközkészlet a Buildernek; a futtatás háttérfeladatba tétele.</td></tr>
+<tr><td class="id">H-05</td><td>A régi adatoknál (a review-jelölő bevezetése előttről) a saját szerző által eldöntött verziót a bíráló saját példányának tekintjük, nem beadásnak.</td><td>Hagyd így, hacsak régi adatoknál nem láttál a valóságnak ellentmondó review-köröket.</td></tr>
+<tr><td class="id">Celery</td><td>Futás közben megölt worker (összeomlás, memóriahiány) elveszíti az importot vagy az exportot, és az állapot „pending” marad.</td><td><code>task_acks_late</code> + <code>task_reject_on_worker_lost</code>. Kockázat: egy workert rendszeresen összeomlasztó sorozat végtelen újrapróbálásba kerülhet, ezért újrapróbálási korlát is kell.</td></tr>
+<tr><td class="id">Értesítés</td><td>A sikertelen e-mail nem megy ki újra, csak a naplóban látszik. Néma (nem elutasító) szerver esetén levelenként 20 másodpercet vár, így sok eseménynél percekig tart egy kör.</td><td>Sikertelen levelek újrapróbálása a következő körben, és az első kapcsolódási hiba után a kör többi levelének kihagyása.</td></tr>
+</tbody></table></div>
+
+<h2 id="s4">6. Nyitott S4 tételek és megfigyelések</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Azonosító</th><th>Leírás</th></tr></thead>
+<tbody>
+<tr><td class="id">A-09</td><td>A pipeline-sablonokat és az annotációtípusokat bármely bejelentkezett felhasználó olvashatja, nem tag is.</td></tr>
+<tr><td class="id">B-14</td><td>Tanulmány kényszerített törlése vagy borítóképcsere után a régi borítókép a MinIO-ban marad.</td></tr>
+<tr><td class="id">B-19</td><td>Import- és gyorsimport-állapot bármely bejelentkezett felhasználó számára olvasható (az azonosító nem kitalálható).</td></tr>
+<tr><td class="id">C-18</td><td>„Mode” nélküli Dataset minden esetet számol, de az új eseteket nem küldi tovább.</td></tr>
+<tr><td class="id">C-21</td><td>A Könyvtár „+” gombja minden új kártyát ugyanarra a helyre, egymásra tesz.</td></tr>
+<tr><td class="id">D-09</td><td>A review munka oldala és a viewer számlálója annotációs szöveget és elavult számot mutat.</td></tr>
+<tr><td class="id">D-14</td><td>A munka oldalon az érintési célpontok 16 px-es szöveglinkek.</td></tr>
+<tr><td class="id">F-16</td><td>A bíráló hosszú megjegyzése nincs levágva, lejjebb tolja az esetlistát.</td></tr>
+<tr><td class="id">G-11</td><td>A tanulmány-analitika túrája első látogatáskor magától megnyílik, más admin oldalon nem.</td></tr>
+<tr><td class="id">G-13</td><td>A túrakártyák képei abszolút „/guide/…” útvonalat használnak (alútvonalas telepítésnél eltörnek).</td></tr>
+<tr><td class="id">G-14</td><td>Oktató mód lassú hálózaton: nincs haladásjelzés, nincs újrapróbálás.</td></tr>
+<tr><td class="id">G-15</td><td>A szeletszámozás eltér: viewer 0-tól, oktató mód 1-től.</td></tr>
+<tr><td class="id">G-16</td><td>Az oktató mód „Replay” gombja nem állít vissza minden megjelenítési beállítást.</td></tr>
+<tr><td class="id">G-17</td><td>Az oktató mód „Back” túralépése azt írja, hogy az eset oldalára visz.</td></tr>
+<tr><td class="id">G-18</td><td>Oktató mód: az üres kitöltés törli az újra-előzményt, és a Visszavonás aktív marad.</td></tr>
+<tr><td class="id">G-21</td><td>Képes túrakártya tableten kilóg a képernyőről (a Tovább gomb levágva).</td></tr>
+<tr><td class="id">H-07</td><td>Az „events.csv” mindig <code>usage-events.csv</code> néven mentődik, a dátumos név elvész.</td></tr>
+<tr><td class="id">—</td><td>MinIO kiesésnél a boto újrapróbálásai miatt minden hiba 4–13 másodperc után jön.</td></tr>
+<tr><td class="id">—</td><td>A <code>/health</code> végpontok akkor is 200-at adnak, ha a Redis vagy a MinIO nem érhető el.</td></tr>
+<tr><td class="id">—</td><td>A <code>scripts/restore-db.sh</code> nem ellenőrzi a mentés ellenőrzőösszegét visszaállítás előtt.</td></tr>
+<tr><td class="id">—</td><td>SQLAlchemy DISTINCT ON elavulási figyelmeztetés (<code>workflow/status.py</code>, kb. 200 figyelmeztetés a tesztekben).</td></tr>
+</tbody></table></div>
+
+<h2 id="deploy">7. Telepítés</h2>
+<ol class="steps">
+  <li><code>git push</code> a <code>feature/clinical-trial-consort-and-store</code> ágra.</li>
+  <li>A szerveren <code>git pull</code>, majd <code>scripts/setup-test-server.sh</code>. Ez újraépít, migrál, regisztrálja az annotációs sémát és pótolja a bélyegképeket. Utána <code>docker compose up -d --build</code> a <code>ct-annotator/</code> mappában.</li>
+  <li>Új migrációk sorrendben: <code>d7e9f1a3b5c7</code> (naplózott ideiglenes jelszavak kitakarása), <code>e8f0a2b4c6d8</code> (de-id profil hash-só), <code>f9a1b3c5d7e9</code> (review_of_id), <code>a0b2c4d6e8f0</code> (értesítési állapot túléli a kártyát), <code>b1c3d5e7f9a1</code> (sorba kerülési idő túléli a kártyát). Ellenőrzés: <code>scripts/migrate.sh current</code> → <code>b1c3d5e7f9a1</code>.</li>
+  <li>Az annotációs séma 4-es verziója (<code>segmentation_volume</code>). A setup-szkript ezt a lépést <code>|| true</code>-val futtatja, ezért nézd meg a kimenetét, vagy futtasd kézzel: <code>python3 ct-annotator/scripts/register_annotation_type.py --username … --password …</code>.</li>
+  <li>Opcionális: <code>OBJECT_LINK_SECRET</code> a <code>.env</code>-ben (e nélkül a <code>MINIO_ROOT_PASSWORD</code>-ből származik).</li>
+  <li>Több példánynál a <code>NEW_CASES_POLLER_ENABLED=1</code> csak egy admin-service példányon legyen (a compose most fixen 1-et ad).</li>
+  <li>A meglévő de-identifikációs profilok új hash-sót kapnak, így az új importok hash-elt értékei eltérnek a korábbiaktól. Ez szándékos, de egy tanulmányon belül vegyes lehet.</li>
+  <li>Régi JPEG Lossless importok bélyegképei: <code>docker compose exec ingestion-service python -m app.thumbnail_backfill</code> (a setup-szkript is futtatja).</li>
+</ol>
+
+<h2 id="data">8. Tesztadatok a helyi stacken</h2>
+<p>Minden tesztadat <code>QA-</code> / <code>qa-</code> előtaggal készült, a valódi adatokhoz nem nyúltunk. Megmaradt: a QA-A, QA-C, QA-H és társaik tanulmányai, a <code>qa-*</code> felhasználók, próbakártyák és próba-exportok a MinIO-ban, szintetikus használati események 2026-08-02/03-án, és egy üres piszkozat-maszk a QA-C-board egyik sorozatán. Ha kéred, egy lépésben eltakarítom.</p>
+<p>A saját feljegyzések (<code>.qa-review/</code>) git-en kívül maradtak, ahogy kérted.</p>
+
+<footer>VoxelLabel átvizsgálás · 2026-09-25 · a <code>docs/tesztjelentes.html</code> fájlból</footer>
+</div>
