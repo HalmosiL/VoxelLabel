@@ -336,6 +336,9 @@ def _run_criterion(db: Session, card: WorkflowCard, now: datetime) -> None:
     # handles that itself. asyncio.run() is safe because the Run endpoint
     # is a sync `def`, executed by FastAPI in a worker thread with no
     # event loop of its own.
+    if not db.query(WorkflowEdge).filter_by(target_card_id=card.id, target_handle="input").count():
+        # nothing to judge -- never a minutes-long model call for it (C-20)
+        raise HTTPException(status_code=422, detail="Criterion requires at least one incoming connection")
     history = list(card.config.get("messages", []))
     new_messages, _ = asyncio.run(
         run_llm_turn(card, history, "Look at every case connected to your input, and evaluate this criterion now.")

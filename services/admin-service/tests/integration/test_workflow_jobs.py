@@ -466,3 +466,21 @@ def test_consort_follows_the_criterion_and_flags_a_changed_population(client, db
     client.patch(f"/admin/workflow-cards/{root['id']}", json={"config": {"case_ids": ids[:2]}})  # the population changed
     stage = client.get(url).json()["stages"][0]
     assert stage["input_count"] == 2 and stage["needs_reevaluation"]
+
+
+def test_a_criterion_with_no_input_is_not_run(client, db, monkeypatch):
+    """C-20: a Criterion with nothing wired in still made a minutes-long
+    model call with nothing to judge, instead of the 422 every other card gives."""
+    from app.api.workflow import engine
+
+    calls = []
+
+    async def model_turn(card, history, message):
+        calls.append(1)
+        return [], False
+
+    monkeypatch.setattr(engine, "run_llm_turn", model_turn)
+    sid = make_study(client)
+    crit = _card(client, sid, "criterion", "Lonely", {"criterion": "age >= 18"})
+    r = client.post(f"/admin/workflow-cards/{crit['id']}/run")
+    assert r.status_code == 422 and calls == []
