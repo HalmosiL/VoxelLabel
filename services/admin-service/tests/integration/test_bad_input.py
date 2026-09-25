@@ -1,6 +1,8 @@
 """Bad input gets a 4xx with a reason, never a 500 (J-01, J-13, J-14,
 B-18): malformed ids, over-long or NUL-containing text, duplicates,
 unparsable dates, blank names and padded patient identifiers."""
+import uuid
+
 import pytest
 
 from .conftest import make_case, make_study
@@ -62,3 +64,22 @@ def test_blank_names_and_patient_ids_are_refused_and_ids_are_trimmed(client):
     one = make_case(client, sid, external="QA-TRIM")["patient_id"]
     two = make_case(client, sid, external=" QA-TRIM ")["patient_id"]
     assert one == two  # one person, one pseudonym
+
+
+def test_a_patient_without_cases_can_be_deleted_with_their_identity(client, db):
+    """B-23: patients could be created but never deleted -- case-less
+    patients and the hash of their real identifier stayed forever."""
+    from shared_models.models import Patient, PatientIdentityMap
+
+    lone = client.post("/admin/patients", params={"external_patient_id": "MRN-LONE"}).json()["id"]
+    sid = make_study(client)
+    busy = make_case(client, sid, external="MRN-BUSY")["patient_id"]
+    r = client.delete(f"/admin/patients/{busy}")
+    assert r.status_code == 409 and "1 case" in r.json()["detail"]
+    assert client.delete(f"/admin/patients/{lone}").status_code == 204
+    db.expire_all()
+    assert db.get(Patient, uuid.UUID(lone)) is None
+    assert db.query(PatientIdentityMap).filter_by(patient_id=uuid.UUID(lone)).count() == 0
+    # the identifier is free again: registering it gives a new pseudonym, not the old one
+    again = client.post("/admin/patients", params={"external_patient_id": "MRN-LONE"}).json()["id"]
+    assert again != lone

@@ -341,6 +341,16 @@ export function addClinicalDataTag(itemId: string, label: string): Promise<{ id:
   return apiFetch(base, `/admin/clinical-data-items/${itemId}/tags?${qs}`, { method: "POST" });
 }
 
+/** Deletes a patient who has no cases, with their identity hash (B-23). */
+export function deletePatient(patientId: string): Promise<void> {
+  return apiFetch(base, `/admin/patients/${patientId}`, { method: "DELETE" });
+}
+
+export function removeClinicalDataTag(itemId: string, label: string): Promise<void> {
+  const qs = new URLSearchParams({ label });
+  return apiFetch(base, `/admin/clinical-data-items/${itemId}/tags?${qs}`, { method: "DELETE" });
+}
+
 export function addClinicalDataConsent(
   itemId: string,
   consentType: string,

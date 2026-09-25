@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { deletePatient } from "../api/adminApi";
 import { listPatientCases, PatientCase } from "../api/dataApi";
 import DocumentModal from "../components/DocumentModal";
 import EmptyState from "../components/EmptyState";
@@ -14,6 +15,7 @@ import { useRegisterGuide } from "../guide/GuideContext";
 
 export default function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
+  const navigate = useNavigate();
   const [cases, setCases] = useState<PatientCase[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -31,6 +33,15 @@ export default function PatientDetailPage() {
 
   useEffect(refresh, [patientId]);
 
+  // A patient with no cases can be removed, identity hash and all -- an
+  // erasure request, or an identifier registered by mistake (B-23).
+  function handleDelete() {
+    if (!patientId || !window.confirm("Delete this patient? Their pseudonym and the link to their real identifier are removed for good.")) return;
+    deletePatient(patientId)
+      .then(() => navigate("/patients"))
+      .catch((err) => setError(describeApiError(err)));
+  }
+
   if (!patientId) return null;
 
   return (
@@ -38,6 +49,13 @@ export default function PatientDetailPage() {
       <PageHeader
         title={`Patient ${patientId.slice(0, 8)}…`}
         subtitle="Every case for this patient, across every study. Click an image or document to edit or delete it."
+        action={
+          loaded && cases.length === 0 ? (
+            <button type="button" onClick={handleDelete} className="btn-secondary text-red-700" data-testid="delete-patient">
+              Delete patient
+            </button>
+          ) : undefined
+        }
       />
       {error && <p className="alert-error">{error}</p>}
 
