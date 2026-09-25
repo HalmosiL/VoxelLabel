@@ -147,6 +147,8 @@ def delete_series(
     series = _series_or_404(db, series_id)
     require_study_role(db, str(series.imaging_study.case.study_id), user, allowed_roles=["data_manager", "admin"])
 
+    # its annotations go too, as for an imaging study or a case (B-11)
+    _delete_annotations_targeting(db, [series.id, *(instance.id for instance in series.instances)])
     for instance in series.instances:
         _delete_instance(db, instance)
     db.delete(series)
