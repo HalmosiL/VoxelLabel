@@ -162,6 +162,37 @@ def test_a_save_forwards_its_base_version_and_a_refused_one_leaves_no_object(api
     assert r.status_code == 409 and deleted == ["annotation-masks/new.gz"]
 
 
+
+def test_with_a_platform_service_down_a_save_is_a_503_and_leaves_no_object(api, monkeypatch):
+    """I-09: with annotation-service restarting, the save answered a bare 500
+    and its uploaded mask object stayed behind in storage."""
+    import httpx
+
+    deleted = []
+    monkeypatch.setattr(main, "upload_mask_volume", lambda data: "annotation-masks/new.gz")
+    monkeypatch.setattr(main, "delete_mask_object", lambda key: deleted.append(key))
+
+    async def post(url, **_):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    api.fake.post = post
+    api.as_user(MEMBER)
+    r = api.post(f"/series/{SERIES}/mask-volume", json=_save_body("v1"))
+    assert r.status_code == 503 and "try again" in r.json()["detail"], r.text
+    assert deleted == ["annotation-masks/new.gz"]
+
+
+def test_with_a_platform_service_down_a_read_is_a_503(api):
+    import httpx
+
+    async def get(url, **_):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    api.fake.get = get
+    main._access_cache.clear()
+    r = api.get(f"/series/{SERIES}/mask-volume")
+    assert r.status_code == 503 and "try again" in r.json()["detail"], r.text
+
 def test_nothing_is_stored_for_someone_without_access_or_for_garbage(api, monkeypatch):
     uploaded = []
     monkeypatch.setattr(main, "upload_mask_volume", lambda data: uploaded.append(data) or "annotation-masks/x.gz")

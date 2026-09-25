@@ -19,7 +19,7 @@ import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from scipy import ndimage
 
@@ -45,6 +45,15 @@ from app.storage import (
 app = FastAPI(title="CT Annotator Viewer -- thin backend")
 # File storage being unreachable answers 503, not 500 (I-08).
 install_storage_error_handlers(app)
+
+PLATFORM_DOWN = "A platform service is unavailable right now -- try again in a minute."
+
+
+@app.exception_handler(httpx.TransportError)
+async def _platform_down(request: Request, exc: httpx.TransportError):
+    """A platform service (data, annotation) not answering -- restarting,
+    say -- is a 503 that says to try again, not a bare 500 (I-09)."""
+    return JSONResponse(status_code=503, content={"detail": PLATFORM_DOWN})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
@@ -671,12 +680,16 @@ async def save_mask_volume(
         params["base_version_id"] = body.base_version_id or "none"
     if body.review_of:
         params["review_of"] = body.review_of
-    resp = await _http_client.post(
-        f"{ANNOTATION_SERVICE_URL}/annotations/studies/{body.study_id}",
-        params=params,
-        json={"mask_volume_key": storage_key, "labels": body.labels, "objects": body.objects},
-        headers=_auth_headers(user),
-    )
+    try:
+        resp = await _http_client.post(
+            f"{ANNOTATION_SERVICE_URL}/annotations/studies/{body.study_id}",
+            params=params,
+            json={"mask_volume_key": storage_key, "labels": body.labels, "objects": body.objects},
+            headers=_auth_headers(user),
+        )
+    except httpx.TransportError:
+        delete_mask_object(storage_key)  # no version points at it (I-09)
+        raise
     if resp.status_code >= 400:
         delete_mask_object(storage_key)
         raise _upstream_error(resp)
