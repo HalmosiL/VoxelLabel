@@ -16,7 +16,7 @@ const SIDEBAR_STEP: GuideStep = {
         <b>Workspace</b> is the day-to-day: your own jobs, the studies, and every patient across them.{" "}
         <b>Configuration</b> is platform-wide setup -- annotation types, de-identification, accounts, email, backups.
       </p>
-      <p>Each page has its own short tour the first time you open it.</p>
+      <p>Each page has its own short tour -- open it any time with the Tutorial button.</p>
     </>
   ),
   placement: "right",
@@ -379,7 +379,7 @@ export const BOARD_STEPS: GuideStep[] = [
           Where a study's cases become work. Cards are steps -- a Dataset of cases, a Split into parts, a Filter, an{" "}
           <b>Annotation</b> or <b>Review</b> job with an assignee -- and edges carry cases from one card to the next.
         </p>
-        <p>Drag on empty canvas to pan, scroll to zoom, hold Ctrl and drag to select several cards.</p>
+        <p>Drag on empty canvas or scroll to pan, Ctrl+scroll (or pinch) to zoom, hold Ctrl and drag to select several cards.</p>
       </>
     ),
   },

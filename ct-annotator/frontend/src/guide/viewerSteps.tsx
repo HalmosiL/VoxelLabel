@@ -63,15 +63,32 @@ export const ANNOTATE_STEPS: GuideStep[] = [
           set by the job.
         </p>
         <p>
-          <b>Scroll</b> changes slice (or drag the strip along the pane&apos;s right edge) · <kbd>Ctrl</kbd>+scroll zooms · <b>right- or middle-drag</b>{" "}
-          windows the image (up/down level, left/right width) · <b>drag</b> pans when zoomed · <b>double-click</b> resets ·{" "}
-          <kbd>Ctrl</kbd>+click jumps every pane to that point, with any tool · <kbd>Alt</kbd>+click reads the Hounsfield value. The coloured
-          crosshair shows where the other planes cut (<kbd>C</kbd> hides it).
+          With any tool: <b>scroll</b> changes slice (or drag the strip along the pane&apos;s right edge) · <kbd>Ctrl</kbd>+scroll zooms ·{" "}
+          <b>middle-drag</b> windows the image (up/down level, left/right width) · <kbd>Ctrl</kbd>+click jumps every pane to that point ·{" "}
+          <kbd>Alt</kbd>+click reads the Hounsfield value.
+        </p>
+        <p>
+          With the <b>Cursor</b> tool only: right-drag windows too, <b>drag</b> pans when zoomed, <b>double-click</b> resets. (With a drawing
+          tool, drag draws and right-drag erases.) The coloured crosshair shows where the other planes cut (<kbd>C</kbd> hides it).
+        </p>
+      </>
+    ),
+    touchBody: (
+      <>
+        <p>
+          Each pane is one plane through the volume (Axial, Sagittal, Coronal) plus an optional 3D view. Which panes you see is
+          set by the job.
+        </p>
+        <p>
+          The <b>strip</b> along a pane&apos;s edge (or its arrows) changes slice · <b>pinch</b> zooms · <b>two-finger drag</b> pans ·{" "}
+          <b>two-finger tap</b> jumps every pane to that point · <b>long-press</b> reads the Hounsfield value · <b>double-tap</b> with the
+          Cursor tool resets. The coloured crosshair shows where the other planes cut.
         </p>
       </>
     ),
     placement: "right",
     tip: "Scroll on a pane to page through its slices, or press and drag the strip along its right edge; Ctrl+scroll zooms.",
+    touchTip: "Drag the strip along a pane's edge to page through its slices; pinch to zoom.",
   },
   {
     target: "objects",
@@ -106,6 +123,7 @@ export const ANNOTATE_STEPS: GuideStep[] = [
         </p>
       </>
     ),
+    touchBody: "Adds another instance of the currently selected object's label and makes it active -- the fast way to start the second nodule when you've just finished the first.",
     placement: "bottom",
   },
   {
@@ -124,9 +142,22 @@ export const ANNOTATE_STEPS: GuideStep[] = [
         <p>The job may show only some of these -- the workflow decides which tools each surface gets.</p>
       </>
     ),
+    touchBody: (
+      <>
+        <p>Top to bottom:</p>
+        <p>
+          <b>Cursor</b> -- navigate only, nothing is drawn. <b>Paint</b> -- brush; drag a finger to paint. <b>Eraser</b> -- removes paint
+          from any object. <b>Fill</b> -- tap inside a closed outline to fill it. <b>Polygon</b> -- tap points around a structure, tap the
+          first point to close. <b>Auto</b> -- drag a box and the viewer segments by intensity; adjust the range and tap Apply.{" "}
+          <b>Histogram</b> -- drag a box to see its HU distribution (measurement only).
+        </p>
+        <p>The job may show only some of these -- the workflow decides which tools each surface gets.</p>
+      </>
+    ),
     image: "viewer-toolbar.png",
     placement: "right",
     tip: "Right-click on a painted area without dragging to attach a comment to that object.",
+    touchTip: "Open an object's form (the small tab on its row in Objects) to add a comment to it.",
   },
   {
     target: "draw",
@@ -145,6 +176,7 @@ export const ANNOTATE_STEPS: GuideStep[] = [
         </p>
       </>
     ),
+    touchBody: "Every paint, erase, fill and polygon is one step: these two buttons undo and redo it. History is per session -- it doesn't survive a reload, but a saved draft does.",
     placement: "bottom",
   },
   {
@@ -157,8 +189,10 @@ export const ANNOTATE_STEPS: GuideStep[] = [
     target: "window",
     title: "Window / level",
     body: "Presets (Soft tissue, Lung, Bone, Brain) set the greyscale mapping for the structure you're looking at; the sliders fine-tune it. Quicker still, on the image: drag with the right mouse button (Cursor tool) or the middle button (any tool) -- up/down moves the level, left/right the width. This only changes how you see the image, never the data or your annotation. Reset to original puts the scan's own window back.",
+    touchBody: "Presets (Soft tissue, Lung, Bone, Brain) set the greyscale mapping for the structure you're looking at; the Center and Width sliders fine-tune it. This only changes how you see the image, never the data or your annotation. Reset to original puts the scan's own window back.",
     placement: "left",
     tip: "Pick the Cursor tool and right-drag on a pane: down darkens, right widens.",
+    touchTip: "Tap Lung, then move the Width slider to fine-tune.",
   },
   {
     target: "slab",
@@ -252,6 +286,15 @@ export const REVIEW_STEPS: GuideStep[] = [
           right edge) · <kbd>Ctrl</kbd>+scroll zooms · <b>right-drag</b> windows the image · <b>drag</b> pans · <b>double-click</b>{" "}
           resets · <kbd>Alt</kbd>+click reads the HU value. Window/level presets and the slab (MIP) on the right change only how
           you see the image.
+        </p>
+      </>
+    ),
+    touchBody: (
+      <>
+        <p>
+          The annotator's objects are drawn over the scan. The <b>strip</b> along a pane&apos;s edge changes slice · <b>pinch</b> zooms ·{" "}
+          <b>two-finger drag</b> pans · <b>double-tap</b> resets · <b>long-press</b> reads the HU value. Window/level presets and the
+          slab (MIP) on the right change only how you see the image.
         </p>
       </>
     ),

@@ -25,6 +25,24 @@ const PAD = 6;
  * dimmed page with a cut-out spotlight over the current step's element
  * and a card where the guide explains it. → / Enter next, ← back, Esc
  * closes. The page underneath stays inert while the tour is open. */
+/** The data-guide targets a step can really point at: on the page and not
+ * parked off screen sideways -- the compact layout's closed
+ * sidebar drawer sits at x = -256, and its steps were shown with the
+ * spotlight off screen (G-20). Vertically off screen is fine: the tour
+ * scrolls a target into view. */
+function onScreenTargets(): string {
+  return Array.from(document.querySelectorAll("[data-guide]"))
+    .filter((el) => {
+      const r = el.getBoundingClientRect();
+      // only a target measurably parked sideways is dropped (an unmeasured one -- no layout -- stays)
+      return !(r.width > 0 && (r.right <= 0 || r.left >= window.innerWidth));
+    })
+    .map((el) => el.getAttribute("data-guide") ?? "")
+    .filter(Boolean)
+    .sort()
+    .join("|");
+}
+
 export default function GuideTour({
   steps,
   open,
@@ -59,11 +77,7 @@ export default function GuideTour({
   // opens, so the first render already has the right step count.
   useLayoutEffect(() => {
     if (!open) return;
-    const targets = Array.from(document.querySelectorAll("[data-guide]"))
-      .map((el) => el.getAttribute("data-guide") ?? "")
-      .filter(Boolean)
-      .sort()
-      .join("|");
+    const targets = onScreenTargets();
     setPresent(targets);
   }, [open]);
 
@@ -72,11 +86,7 @@ export default function GuideTour({
 
   const measure = useCallback(() => {
     setViewport({ w: window.innerWidth, h: window.innerHeight });
-    const targets = Array.from(document.querySelectorAll("[data-guide]"))
-      .map((el) => el.getAttribute("data-guide") ?? "")
-      .filter(Boolean)
-      .sort()
-      .join("|");
+    const targets = onScreenTargets();
     setPresent((prev) => (prev === targets ? prev : targets));
     if (!step?.target) {
       setRect(null);

@@ -1,6 +1,7 @@
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useCoarsePointer } from "../lib/touch";
 import { trackAction } from "../usage/tracker";
 
 /** One stop of a guided tour. `target` names a `data-guide="..."`
@@ -17,6 +18,11 @@ export interface GuideStep {
   placement?: "right" | "left" | "bottom" | "top";
   /** A short "try it" hint rendered under the body. */
   tip?: string;
+  /** On a touch screen (coarse pointer): the body and tip to show instead,
+   * naming the gestures a tablet actually has -- the mouse/keyboard text
+   * sent tablet users to scroll, right-drag and press keys (G-08). */
+  touchBody?: ReactNode;
+  touchTip?: string;
 }
 
 const CARD_WIDTH = 380;
@@ -40,6 +46,7 @@ export default function GuideTour({
   assistantName?: string;
 }) {
   const [index, setIndex] = useState(0);
+  const coarse = useCoarsePointer();
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight });
 
@@ -74,6 +81,8 @@ export default function GuideTour({
   }, [open]);
 
   const step = visibleSteps[Math.min(index, visibleSteps.length - 1)];
+  const body = coarse && step?.touchBody ? step.touchBody : step?.body;
+  const tip = coarse && step?.touchBody ? step.touchTip : step?.tip;
   const isLast = index >= visibleSteps.length - 1;
 
   const measure = useCallback(() => {
@@ -201,11 +210,11 @@ export default function GuideTour({
         <div className="flex flex-col gap-2 px-4 py-3">
           <h2 className="text-sm font-semibold text-gray-50">{step.title}</h2>
           <div className="text-[12px] leading-relaxed text-gray-300 [&_p+p]:mt-1.5 [&_b]:text-gray-100 [&_kbd]:rounded [&_kbd]:border [&_kbd]:border-[#4a4a6a] [&_kbd]:bg-[#2a2a3e] [&_kbd]:px-1 [&_kbd]:font-mono [&_kbd]:text-[10px]">
-            {typeof step.body === "string" ? <p>{step.body}</p> : step.body}
+            {typeof body === "string" ? <p>{body}</p> : body}
           </div>
-          {step.tip && (
+          {tip && (
             <p className="rounded-md border border-sky-900/60 bg-sky-950/40 px-2.5 py-1.5 text-[11px] text-sky-200">
-              <span className="font-semibold">Try it:</span> {step.tip}
+              <span className="font-semibold">Try it:</span> {tip}
             </p>
           )}
         </div>

@@ -33,6 +33,7 @@ import DocumentPanel, { DocumentSource } from "../components/DocumentPanel";
 import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnswers } from "../components/ObjectForm";
 import SliceControl from "../components/SliceControl";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
+import { nextUndecidedIndex } from "../lib/reviewNav";
 import { reviewBlockedMessage, ReviewState, reviewStateOf } from "../lib/reviewState";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import {
@@ -2931,11 +2932,19 @@ export default function ViewerPage() {
     setReviewIndex((i) => Math.min(reviewOrderedObjects.length - 1, i + 1));
   }
 
+  /** Records the decision and moves on to the next object still undecided
+   * (after this one, wrapping round) -- as the tour and the Accept/Reject
+   * tooltips say, and as the tutorial does. It went to index + 1, often an
+   * object already decided (G-06). */
   function decideCurrentReviewObject(status: "accepted" | "rejected") {
     if (!currentReviewObject) return;
-    setObjectReviewStatus(currentReviewObject.id, status);
-    setLastRejectedId(status === "rejected" ? currentReviewObject.id : null);
-    goToNextReviewObject();
+    const decidedId = currentReviewObject.id;
+    setObjectReviewStatus(decidedId, status);
+    setLastRejectedId(status === "rejected" ? decidedId : null);
+    const start = reviewOrderedObjects.findIndex((o) => o.id === decidedId);
+    const next = nextUndecidedIndex(reviewOrderedObjects.map((o) => o.review_status), start);
+    if (next !== null) setReviewIndex(next);
+    else goToNextReviewObject();
   }
 
   /** The review-mode "editor card" -- a fixed-corner floating panel
