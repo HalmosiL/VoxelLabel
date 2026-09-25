@@ -6,6 +6,7 @@ own verification notes for how that part was checked live instead)."""
 from types import SimpleNamespace
 
 from app.llm_client import (
+    _root_cause,
     _looks_like_summary_request,
     _ollama_tools_from_mcp,
     _summarize_tool_result,
@@ -192,3 +193,12 @@ def test_looks_like_summary_request_matches_english_and_hungarian() -> None:
 def test_looks_like_summary_request_does_not_match_a_plain_question() -> None:
     assert not _looks_like_summary_request("How many cases are connected?")
     assert not _looks_like_summary_request("Create a dataset of everything connected")
+
+
+def test_root_cause_unwraps_nested_exception_groups() -> None:
+    """I-05: the outage message read "unhandled errors in a TaskGroup
+    (1 sub-exception)" -- the mcp client nests groups, one unwrap wasn't enough."""
+    inner = ConnectionRefusedError(111, "Connection refused")
+    nested = ExceptionGroup("outer", [ExceptionGroup("inner", [inner])])
+    assert _root_cause(nested) is inner
+    assert _root_cause(inner) is inner

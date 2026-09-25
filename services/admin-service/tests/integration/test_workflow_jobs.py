@@ -490,6 +490,31 @@ def test_a_criterion_with_no_input_is_not_run(client, db, monkeypatch):
     assert r.status_code == 422 and calls == []
 
 
+
+def test_a_criterion_run_while_the_model_is_down_is_an_error(client, db, monkeypatch):
+    """I-05: with Ollama down the Run answered 200 and stamped last_run_at,
+    so the card looked freshly evaluated and its old (or empty) result
+    passed for current -- a model outage read as "no case meets it"."""
+    from shared_models.models import WorkflowCard
+
+    from app.api.workflow import engine
+
+    async def model_turn(card, history, message):
+        return [{"role": "assistant", "content": "Local model unavailable (connection refused)", "tool_call": None, "error": True}], False
+
+    monkeypatch.setattr(engine, "run_llm_turn", model_turn)
+    sid = make_study(client)
+    make_case(client, sid, external="p0")
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    crit = _card(client, sid, "criterion", "Adult", {"criterion": "age >= 18"}, x=300)
+    _edge(client, sid, ds["id"], crit["id"])
+    r = client.post(f"/admin/workflow-cards/{crit['id']}/run")
+    assert r.status_code == 503 and "not evaluated" in r.json()["detail"], r.text
+    db.expire_all()
+    card = db.get(WorkflowCard, uuid.UUID(crit["id"]))
+    assert card.last_run_at is None
+    assert card.config["messages"][-1]["content"].startswith("Local model unavailable")  # the transcript still says why
+
 def test_undoing_a_card_delete_restores_the_job_as_it_was(client, db, outbox):
     """D-12: the board's Undo recreates a deleted card with its original id,
     but it got a new created_at -- every earlier annotation stopped

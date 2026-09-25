@@ -636,7 +636,10 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     setRunningCardId(cardId);
     runWorkflowCard(cardId)
       .then(() => refreshBoard())
-      .catch((err) => setError(describeApiError(err)))
+      .catch((err) => {
+        setError(describeApiError(err));
+        refreshBoard(); // a failed Criterion Run still saved its transcript (I-05)
+      })
       .finally(() => setRunningCardId(null));
   }
 

@@ -311,6 +311,15 @@ def _system_prompt_for(card) -> str:
     return _LLM_SYSTEM_PROMPT.format(card_id=card.id)
 
 
+def _root_cause(exc: BaseException) -> BaseException:
+    """The first real exception inside (possibly nested) ExceptionGroups --
+    the mcp client runs its session in a task group inside another, so one
+    unwrap still read "unhandled errors in a TaskGroup" (I-05)."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
 async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[list[dict], bool]:
     """Runs one user turn through the real model + MCP tool loop, using
     the system prompt and tool subset appropriate to this card's role
@@ -554,16 +563,17 @@ async def run_llm_turn(card, history: list[dict], user_message: str) -> tuple[li
         # friendly message). Unwrap to the first real exception for a
         # readable message, but still catch the group as a whole so
         # nothing here can 500 the request.
-        if isinstance(exc, ExceptionGroup):
-            exc = exc.exceptions[0] if exc.exceptions else exc
+        # `error` marks the turn as failed, so a Criterion Run can tell
+        # "the model never answered" from "evaluated" (I-05).
         new_messages.append(
             {
                 "role": "assistant",
                 "content": (
-                    f"Local model unavailable ({exc}) -- is Ollama running and has "
+                    f"Local model unavailable ({_root_cause(exc)}) -- is Ollama running and has "
                     f'"{settings.ollama_model}" been pulled?'
                 ),
                 "tool_call": None,
+                "error": True,
             }
         )
         return new_messages, board_changed

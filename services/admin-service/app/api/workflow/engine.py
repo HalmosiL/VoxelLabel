@@ -344,6 +344,11 @@ def _run_criterion(db: Session, card: WorkflowCard, now: datetime) -> None:
         run_llm_turn(card, history, "Look at every case connected to your input, and evaluate this criterion now.")
     )
     _append_messages(db, card, new_messages)
+    if any(m.get("error") for m in new_messages):
+        # the model never answered: keep the transcript, but don't stamp
+        # the card as run -- its old result would pass for current (I-05)
+        db.commit()
+        raise HTTPException(status_code=503, detail=f"{new_messages[-1]['content']} The criterion was not evaluated.")
 
 
 def _append_messages(db: Session, card: WorkflowCard, new_messages: list[dict]) -> None:
