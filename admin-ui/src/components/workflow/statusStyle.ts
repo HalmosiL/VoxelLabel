@@ -25,3 +25,34 @@ export const CASE_STATUS_STYLE: Record<"done" | "rejected" | "pending", { badge:
  * CASE_STATUS_STYLE.pending whenever a case's `pending_annotation_id`
  * is set (i.e. there's a real submitted annotation awaiting review). */
 export const AWAITING_REVIEW_STYLE = { badge: "badge-blue", dot: "bg-blue-500", label: "Awaiting review" };
+
+type JobCase = { status: "done" | "rejected" | "pending"; pending_annotation_id?: string | null };
+
+/** A Review job's cases in review words: approved / sent back / awaiting
+ * a decision / nothing handed in yet. The page used the annotation words
+ * ("Annotated", "Not annotated") for both job types (D-09). */
+const REVIEW_CASE_STYLE = {
+  done: { badge: "badge-green", dot: "bg-emerald-500", label: "Approved" },
+  rejected: { badge: "badge-red", dot: "bg-red-500", label: "Sent back" },
+  pending: { badge: "badge-gray", dot: "bg-gray-400", label: "Not handed in yet" },
+};
+
+export function jobCaseStyle(cardType: string, c: JobCase): { badge: string; dot: string; label: string } {
+  if (cardType !== "review") return CASE_STATUS_STYLE[c.status];
+  if (c.status === "pending" && c.pending_annotation_id) return AWAITING_REVIEW_STYLE;
+  return REVIEW_CASE_STYLE[c.status];
+}
+
+/** "2 of 4 cases decided" for a Review job -- a sent-back case is decided
+ * too, the old count was approved-only -- "1 of 3 cases annotated" for an
+ * Annotation job. */
+export function jobProgressText(cardType: string, cases: JobCase[]): string {
+  const n = finishedCount(cardType, cases);
+  return `${n} of ${cases.length} case${cases.length === 1 ? "" : "s"} ${cardType === "review" ? "decided" : "annotated"}`;
+}
+
+/** Cases this job is finished with: annotated, or for a Review job decided
+ * either way. */
+export function finishedCount(cardType: string, cases: JobCase[]): number {
+  return cases.filter((c) => c.status === "done" || (cardType === "review" && c.status === "rejected")).length;
+}

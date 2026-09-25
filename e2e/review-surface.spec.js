@@ -41,7 +41,11 @@ async function open(browser, user, pass, url, beforeLogin) {
       const { ctx, page } = await open(browser, "dr-review", "Test1234!", viewerUrl(F.REVIEW_CARD));
       const empty = page.locator('[data-testid="empty-review"]');
       check("a case with no objects offers a decision", (await empty.count()) === 1);
-      await empty.getByRole("button", { name: "Approve: no findings" }).click(); await page.waitForTimeout(2000);
+      await empty.getByRole("button", { name: "Approve: no findings" }).click();
+      // D-09: the header's counter follows the decision (before the viewer moves on to the next case)
+      const counter = await page.waitForFunction(() => /decided/.test(document.querySelector('[data-testid="case-counter"]')?.textContent || ""), null, { timeout: 1300 }).then(() => true, () => false);
+      check("the case counter says the case is decided", counter);
+      await page.waitForTimeout(2000);
       const latest = await api(rt, `${A8010}/series/${seriesId}/mask-volume`);
       check("... and approving it works", latest.version_status === "approved", latest.version_status);
       await ctx.close();

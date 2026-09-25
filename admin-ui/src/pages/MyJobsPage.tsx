@@ -9,7 +9,7 @@ import { refreshViewerHandoffOnClick, withViewerHandoff } from "../auth/viewerHa
 import { ANNOTATOR_UI_URL } from "../config";
 import { useRegisterGuide } from "../guide/GuideContext";
 import { MY_JOBS_STEPS } from "../guide/workbenchSteps";
-import { TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
+import { finishedCount, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
 import { DocumentIcon, PencilIcon, SparklesIcon } from "../components/icons";
 
 // todo/in_progress surface first -- those are the jobs actually waiting
@@ -164,7 +164,7 @@ function JobCard({ job, showBoardLink, guideExample }: { job: MyJob; showBoardLi
   const Icon = isReview ? DocumentIcon : PencilIcon;
   const total = job.cases.length;
   const open = openCases(job);
-  const finished = job.cases.filter((c) => c.status === "done").length;
+  const finished = finishedCount(job.card_type, job.cases); // a sent-back case is reviewed too (D-09)
   const doneShare = total === 0 ? 0 : Math.round((finished / total) * 100);
   const cases = `${total} case${total === 1 ? "" : "s"}`;
   const progress = isReview
@@ -206,7 +206,7 @@ function JobCard({ job, showBoardLink, guideExample }: { job: MyJob; showBoardLi
       </div>
       <div className="flex flex-shrink-0 items-center gap-3">
         {showBoardLink && (
-          <Link to={`/studies/${job.study_id}/workflow`} className="text-xs font-medium text-gray-400 hover:text-brand-700">
+          <Link to={`/studies/${job.study_id}/workflow`} className="link-action text-xs font-medium text-gray-400 hover:text-brand-700">
             Board
           </Link>
         )}

@@ -88,12 +88,12 @@ export default function CaseDetailPage() {
 
       <nav className="flex items-center gap-1.5 text-xs text-gray-400">
         {jobId ? (
-          <Link to={`/my-jobs/${jobId}`} className="font-medium text-brand-600 hover:text-brand-700" data-guide="back-to-job">
+          <Link to={`/my-jobs/${jobId}`} className="link-action font-medium text-brand-600 hover:text-brand-700" data-guide="back-to-job">
             ← Back to the job
           </Link>
         ) : (
           !jobsOnly && (
-            <Link to={`/studies/${caseInfo.study_id}`} className="font-medium text-brand-600 hover:text-brand-700">
+            <Link to={`/studies/${caseInfo.study_id}`} className="link-action font-medium text-brand-600 hover:text-brand-700">
               ← Back to the study
             </Link>
           )

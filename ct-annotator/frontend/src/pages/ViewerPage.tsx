@@ -2405,6 +2405,11 @@ export default function ViewerPage() {
    * so instead. */
   function advanceToNextOpenCase() {
     if (!jobId || !jobCases || jobCaseIndex < 0) return;
+    // the counter and the arrows show the case as handed in / decided now,
+    // not the list as it was when the viewer opened (D-09)
+    fetchJobCases(jobId)
+      .then(setJobCases)
+      .catch(() => undefined);
     // Forward from here first, then wrap around to the start -- the queue
     // has no inherent order, so "next open case" shouldn't depend on
     // where in the list this one happened to sit.

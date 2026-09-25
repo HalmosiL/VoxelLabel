@@ -29,6 +29,11 @@
   .btn-sm {
     @apply px-2.5 py-1 text-xs;
   }
+  /* A text link that is a page's main action (Open case, Back to ...):
+     finger-sized on a touch screen, see the pointer: coarse block (D-14). */
+  .link-action {
+    @apply inline-flex items-center;
+  }
 
   .card {
     @apply rounded-2xl border border-gray-100 bg-white/90 p-6 shadow-sm backdrop-blur-sm transition-shadow;
@@ -175,6 +180,9 @@
   }
   .btn-sm {
     min-height: 2.25rem;
+  }
+  .link-action {
+    min-height: 2.75rem;
   }
   .input,
   select.input {

@@ -327,6 +327,24 @@ async function tabletContext(browser, landscape) {
     await ctx.close();
   }
 
+  // D-14: the job page's one action per case, and the way back, are finger-sized links
+  {
+    const ctx = await browser.newContext({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+    await ctx.addInitScript(seenGuides);
+    const page = await ctx.newPage();
+    await login(page, F.ANNOTATOR.username, F.ANNOTATOR.password, `${UI}/my-jobs/${F.ANNOT_CARD}`);
+    await page.waitForSelector('[data-guide="open-case"]', { timeout: 30000 });
+    const h = async (loc) => ((await loc.count()) ? (await loc.first().boundingBox()).height : 0);
+    const open = await h(page.locator('[data-guide="open-case"]'));
+    const back = await h(page.locator("a", { hasText: "Back to My Jobs" }));
+    check("job page: Open case is finger-sized (>= 40px)", open >= 40, open);
+    check("job page: Back to My Jobs is finger-sized (>= 40px)", back >= 40, back);
+    await page.locator('[data-guide="open-case"]').first().click(); await page.waitForTimeout(2500);
+    const toJob = await h(page.locator("a", { hasText: "Back to the job" }));
+    check("case page: Back to the job is finger-sized (>= 40px)", toJob >= 40, toJob);
+    await ctx.close();
+  }
+
   await browser.close();
   const fails = results.filter((r) => !r.ok);
   console.log(`checks ${results.length}, fails ${fails.length}`);

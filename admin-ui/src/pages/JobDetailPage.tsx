@@ -3,10 +3,11 @@ import { Link, useParams } from "react-router-dom";
 
 import { describeApiError } from "../api/client";
 import { listMyJobs, MyJob } from "../api/workflowApi";
-import { AWAITING_REVIEW_STYLE, CASE_STATUS_STYLE, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
+import { jobCaseStyle, jobProgressText, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
 import { useMe } from "../auth/MeContext";
 import { useRegisterGuide } from "../guide/GuideContext";
 import { JOB_STEPS } from "../guide/workbenchSteps";
+import ClampedText from "../components/ClampedText";
 import EmptyState from "../components/EmptyState";
 
 /** Full-page view of a single job assigned to the calling user -- reuses
@@ -35,7 +36,7 @@ export default function JobDetailPage() {
   if (!job) {
     return (
       <div className="flex flex-col gap-4">
-        <Link to="/my-jobs" className="text-sm font-medium text-brand-600 hover:text-brand-700">
+        <Link to="/my-jobs" className="link-action text-sm font-medium text-brand-600 hover:text-brand-700">
           ← Back to My Jobs
         </Link>
         <EmptyState message="This job isn't assigned to you (or no longer exists)." />
@@ -44,11 +45,10 @@ export default function JobDetailPage() {
   }
 
   const style = TASK_STATUS_STYLE[job.status] ?? TASK_STATUS_STYLE.todo;
-  const annotatedCount = job.cases.filter((c) => c.status === "done").length;
 
   return (
     <div className="flex flex-col gap-6">
-      <Link to="/my-jobs" className="text-sm font-medium text-brand-600 hover:text-brand-700">
+      <Link to="/my-jobs" className="link-action text-sm font-medium text-brand-600 hover:text-brand-700">
         ← Back to My Jobs
       </Link>
 
@@ -69,13 +69,13 @@ export default function JobDetailPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <p className="section-title">
-            {annotatedCount} of {job.cases.length} case{job.cases.length === 1 ? "" : "s"} annotated
+            {jobProgressText(job.card_type, job.cases)}
           </p>
           {/* The workflow board is study-wide structure/editing surface --
               outside the reduced workbench (just this one person's own
               jobs); the route itself redirects there too. */}
           {!jobsOnly && (
-            <Link to={`/studies/${job.study_id}/workflow`} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+            <Link to={`/studies/${job.study_id}/workflow`} className="link-action text-xs font-medium text-brand-600 hover:text-brand-700">
               Open workflow board
             </Link>
           )}
@@ -102,8 +102,7 @@ export default function JobDetailPage() {
                 // The tour uses the first row (and the first reviewer
                 // comment on the page) as its examples.
                 const firstComment = job.cases.findIndex((x) => x.latest_review_comment) === i;
-                const caseStyle =
-                  job.card_type === "review" && c.pending_annotation_id ? AWAITING_REVIEW_STYLE : CASE_STATUS_STYLE[c.status];
+                const caseStyle = jobCaseStyle(job.card_type, c);
                 return (
                   <tr key={c.id}>
                     <td>
@@ -111,7 +110,7 @@ export default function JobDetailPage() {
                         <span>{c.title || `${c.id.slice(0, 8)}…`}</span>
                         {c.latest_review_comment && (
                           <span className="text-xs text-gray-500" data-guide={firstComment ? "reviewer-comment" : undefined}>
-                            <span className="font-medium text-gray-600">Reviewer:</span> {c.latest_review_comment}
+                            <span className="font-medium text-gray-600">Reviewer:</span> <ClampedText text={c.latest_review_comment} />
                           </span>
                         )}
                       </div>
@@ -125,7 +124,7 @@ export default function JobDetailPage() {
                     <td>
                       <Link
                         to={`/studies/${job.study_id}/cases/${c.id}?jobId=${job.card_id}`}
-                        className="text-xs font-medium text-brand-600 hover:text-brand-700"
+                        className="link-action text-xs font-medium text-brand-600 hover:text-brand-700"
                         data-guide={i === 0 ? "open-case" : undefined}
                       >
                         Open case →
