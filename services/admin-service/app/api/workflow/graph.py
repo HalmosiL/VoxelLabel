@@ -25,8 +25,15 @@ def _has_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles
         return False
 
 
+def is_all_cases_dataset(card: WorkflowCard) -> bool:
+    """A Dataset is "all cases" unless its mode says manual -- a card made
+    with no mode (API, tool) counts every case, so it has to pass new ones
+    on like an explicit "all_cases" does (C-18)."""
+    return card.type == WorkflowCardType.DATASET and (card.config or {}).get("mode") != "manual"
+
+
 def _dataset_output_ids(db: Session, card: WorkflowCard) -> list[str]:
-    if card.config.get("mode") == "manual":
+    if not is_all_cases_dataset(card):
         # Only this study's cases, whatever a stored config says (the write
         # routes refuse foreign ids; this also covers rows written before).
         wanted = []

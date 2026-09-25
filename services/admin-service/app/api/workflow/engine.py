@@ -27,6 +27,7 @@ from .graph import (
     _materialized_children,
     _resolve_output,
     _single_incoming_edge,
+    is_all_cases_dataset,
 )
 from .status import _case_ids_with_status
 
@@ -512,7 +513,7 @@ def _cascade_new_case(db: Session, study_id: uuid.UUID) -> None:
         .all()
     )
     for dataset_card in dataset_cards:
-        if dataset_card.config.get("mode") != "all_cases":
+        if not is_all_cases_dataset(dataset_card):
             continue
         for downstream in _downstream_cards(db, dataset_card):
             try:

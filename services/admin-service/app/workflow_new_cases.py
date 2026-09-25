@@ -42,7 +42,7 @@ from sqlalchemy.orm import Session
 
 from app.api.workflow import _cascade_new_case
 from app.api.workflow.constants import _NO_RUN_TYPES
-from app.api.workflow.graph import _downstream_cards
+from app.api.workflow.graph import _downstream_cards, is_all_cases_dataset
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _studies_with_new_cases(db: Session) -> dict[uuid.UUID, datetime]:
     "all cases" Dataset."""
     found: dict[uuid.UUID, datetime] = {}
     for dataset in db.query(WorkflowCard).filter(WorkflowCard.type == WorkflowCardType.DATASET).all():
-        if (dataset.config or {}).get("mode") != "all_cases":
+        if not is_all_cases_dataset(dataset):
             continue
         runs = [c.last_run_at for c in _downstream_cards(db, dataset) if _cascaded_card(c) and c.last_run_at is not None]
         if not runs:

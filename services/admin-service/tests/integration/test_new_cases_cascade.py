@@ -63,3 +63,24 @@ def test_a_board_nobody_has_run_yet_is_not_started_by_an_import(client, db):
 
     assert cascade_new_cases(db) == []
     assert _job_case_ids(client, ann["id"]) == set()
+
+
+def test_a_dataset_without_a_mode_passes_new_cases_on_too(client, db):
+    """C-18: a Dataset created with no "mode" (through the API or a tool)
+    counts every case, like "all cases", but a new case never reached what
+    was wired after it -- neither from create_case nor from the poller."""
+    from app.workflow_new_cases import cascade_new_cases
+
+    sid = make_study(client)
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    first = make_case(client, sid, external="p0")["id"]
+    ds = _card(client, sid, "dataset", "No mode", {})
+    ann = _card(client, sid, "annotation", "Annotate", {"assigned_user_id": ANNOTATOR_SUBJECT, "labels": ["Nodule"]}, x=300)
+    _edge(client, sid, ds["id"], ann["id"])
+    assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
+
+    made = make_case(client, sid, external="p1")["id"]  # through create_case
+    assert _job_case_ids(client, ann["id"]) == {first, made}
+    imported = _imported_case(db, sid)  # written straight to the database
+    assert cascade_new_cases(db) == [uuid.UUID(sid)]
+    assert _job_case_ids(client, ann["id"]) == {first, made, imported}
