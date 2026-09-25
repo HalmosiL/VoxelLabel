@@ -13,7 +13,10 @@ from app.validation import PayloadValidationError, validate_payload
 
 router = APIRouter(prefix="/annotations", tags=["annotations"])
 
-_READ_ROLES = ["viewer", "annotator", "reviewer", "admin"]
+# data_manager reads too, as in data-service and admin-service: the role
+# that manages a study's data got 403 on its annotations (A-08). Writing
+# stays with annotators, reviewers and admins.
+_READ_ROLES = ["viewer", "annotator", "reviewer", "data_manager", "admin"]
 
 
 def _has_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles: list[str]) -> bool:

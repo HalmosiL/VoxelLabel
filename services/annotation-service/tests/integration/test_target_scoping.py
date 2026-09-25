@@ -90,3 +90,18 @@ def test_a_save_based_on_an_old_version_is_refused_not_buried(client, db):
     assert str(db.get(Annotation, second.json()["id"]).parent_version_id) == v1
     # no base given: legacy callers still just append
     assert _create(client, study_a, series_a).status_code == 200
+
+
+def test_a_data_manager_reads_the_studys_annotations(client, db):
+    """A-08: data_manager, a full study-management role everywhere else,
+    got 403 on reading annotations."""
+    study_a, series_a, _ = make_study_with_series(db, "A", ALICE)
+    client.as_user(ALICE)
+    assert _create(client, study_a, series_a).status_code == 200
+    from shared_models.models import StudyMembership
+
+    db.add(StudyMembership(study_id=study_a, user_id=BOB, role="data_manager"))
+    db.commit()
+    client.as_user(BOB)
+    assert client.get(f"/annotations/studies/{study_a}").status_code == 200
+    assert client.get(f"/annotations/series/{series_a}").status_code == 200
