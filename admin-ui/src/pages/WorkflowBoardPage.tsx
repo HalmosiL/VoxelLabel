@@ -45,6 +45,7 @@ import {
   WorkflowEdge,
 } from "../api/workflowApi";
 import { CARD_TEMPLATES, DRAG_DATA_FORMAT } from "../components/workflow/CardLibrarySidebar";
+import { freeSpot } from "../components/workflow/freeSpot";
 import CardLibrarySidebar from "../components/workflow/CardLibrarySidebar";
 import PipelineStore from "../components/workflow/PipelineStore";
 import {
@@ -516,7 +517,10 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     if (!canEdit) return;
     const cardTemplate = CARD_TEMPLATES.find((t) => t.type === type);
     if (!cardTemplate) return;
-    const position = viewportCenterFlowPosition(cardTemplate.defaultWidth / 2, cardTemplate.defaultHeight / 2);
+    const position = freeSpot(
+      viewportCenterFlowPosition(cardTemplate.defaultWidth / 2, cardTemplate.defaultHeight / 2),
+      nodes.map((n) => n.position)
+    );
     history.record(nodes, realEdges);
     createWorkflowCard(studyId, {
       type: cardTemplate.type,
