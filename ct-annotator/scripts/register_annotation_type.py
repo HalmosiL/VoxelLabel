@@ -50,8 +50,11 @@ FREEHAND_MASK_VOLUME_SCHEMA = {
 # reason for a rejected object) after it; a label's `fields` (its
 # per-object form: tick / pick one / scale, see the frontend's
 # components/ObjectForm.tsx) and an object's `attributes` (the answers)
-# with the per-object form. Every addition is optional so older saved
-# payloads still validate.
+# with the per-object form; `review_comment` (the reviewer's words, kept
+# apart from the annotator's own `comment`) and `previous_review` (the
+# last round's verdict, kept when the case is handed in again) with the
+# review rounds (F-02, F-05, F-06). Every addition is optional so older
+# saved payloads still validate.
 OBJECT_FIELD_SCHEMA = {
     "type": "object",
     "properties": {
@@ -100,6 +103,19 @@ SEGMENTATION_VOLUME_SCHEMA = {
                     # REJECT_REASONS keys (ViewerPage.tsx); kept a plain
                     # short string so a new reason doesn't need a schema bump
                     "reject_reason": {"type": "string", "maxLength": 32},
+                    # the reviewer's comment to the annotator on this object
+                    "review_comment": {"type": "string"},
+                    # the previous review round's verdict on this object
+                    "previous_review": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "enum": ["accepted", "rejected"]},
+                            "reject_reason": {"type": "string", "maxLength": 32},
+                            "review_comment": {"type": "string"},
+                        },
+                        "required": ["status"],
+                        "additionalProperties": False,
+                    },
                     "attributes": {
                         "type": "object",
                         "additionalProperties": {"type": ["string", "boolean", "number"]},

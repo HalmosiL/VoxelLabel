@@ -34,6 +34,7 @@ import { ObjectAnswers, ObjectField, ObjectFormEditor, ObjectFormTab, formatAnsw
 import SliceControl from "../components/SliceControl";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
 import { nextUndecidedIndex } from "../lib/reviewNav";
+import { handInObjects, isNewThisRound, previousReviewText, REJECT_REASONS, rejectReasonLabel, reviewCommentText } from "../lib/reviewRound";
 import { reviewBlockedMessage, ReviewState, reviewStateOf } from "../lib/reviewState";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import {
@@ -109,17 +110,6 @@ const ALL_PANE_VISIBILITY_KEYS: VisiblePaneKey[] = ["sagittal", "coronal", "axia
 type DrawTool = "cursor" | "paint" | "erase" | "fill" | "polygon" | "auto" | "histogram";
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"];
 
-/** Why a reviewer rejects an object -- one tap after Reject, optional.
- * Fixed categories so the Usage page can count them; the free-text
- * comment still says the specifics. */
-const REJECT_REASONS: { key: string; label: string }[] = [
-  { key: "boundary", label: "Boundary off" },
-  { key: "missed", label: "Missed finding" },
-  { key: "wrong_label", label: "Wrong label" },
-  { key: "not_a_finding", label: "Not a finding" },
-  { key: "form", label: "Form answers" },
-  { key: "other", label: "Other" },
-];
 
 // Same 3-value set the admin-ui workflow board's Annotation/Review
 // TaskFields Status dropdown uses (see WorkflowPropertiesPanel.tsx) --
@@ -1299,6 +1289,11 @@ export default function ViewerPage() {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, comment } : o)));
   }
 
+  /** The reviewer's own comment on an object -- never the annotator's note (F-02). */
+  function setObjectReviewComment(id: number, review_comment: string) {
+    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, review_comment } : o)));
+  }
+
   function setObjectRejectReason(id: number, reason: string) {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, reject_reason: reason } : o)));
     trackAction("review.reject_reason", { reason, case_id: caseId ?? undefined, job_id: jobId ?? undefined });
@@ -2446,11 +2441,11 @@ export default function ViewerPage() {
     setError(null);
     try {
       const gzipBytes = await gzipUint8Array(volume);
-      // A (re)submission is a fresh request for review: any Accept/Reject
-      // marks a reviewer left on the previous round are cleared, so the
-      // reviewer starts from "pending" instead of seeing stale verdicts.
-      const objectsToSave =
-        status === "submitted" ? objects.map((o) => ({ ...o, review_status: undefined, reject_reason: undefined })) : objects;
+      // A (re)submission is a fresh request for review: the verdicts of the
+      // round just finished move to each object's previous_review, and the
+      // new round starts from "pending" with no reviewer comments (F-05,
+      // F-06; see lib/reviewRound.ts).
+      const objectsToSave = status === "submitted" ? handInObjects(objects) : objects;
       if (status === "submitted") setObjects(objectsToSave);
       const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current, reviewSaveOf());
       loadedVersionRef.current = saved.id;
@@ -2513,16 +2508,7 @@ export default function ViewerPage() {
       // viewer: "Nodule 1: boundary too generous; Nodule 3: not a nodule".
       // The object's form answers (see components/ObjectForm.tsx) go in
       // the same line: "Nodule 1 [Type: solid · Calcified]: boundary too generous".
-      const comment = reviewOrderedObjects
-        .filter((o) => (o.comment && o.comment.trim()) || formatAnswers(o.attributes) || (o.review_status === "rejected" && o.reject_reason))
-        .map((o) => {
-          const name = `${labels.find((l) => l.id === o.label_id)?.name ?? "Object"} ${o.instance_number}`;
-          const answers = formatAnswers(o.attributes);
-          const text = (o.comment ?? "").trim();
-          const reason = o.review_status === "rejected" ? REJECT_REASONS.find((r) => r.key === o.reject_reason)?.label : undefined;
-          return `${name}${reason ? ` (${reason.toLowerCase()})` : ""}${answers ? ` [${answers}]` : ""}${text ? `: ${text}` : ""}`;
-        })
-        .join("; ");
+      const comment = reviewCommentText(reviewOrderedObjects, labels);
       await submitAnnotationReview(saved.id, decision, comment || undefined);
       trackAction("submit_review");
       refreshAnnotations();
@@ -2990,11 +2976,22 @@ export default function ViewerPage() {
             <ObjectFormEditor fields={fieldsOfLabel(label)} answers={obj.attributes} onChange={(next) => setObjectAttributes(obj.id, next)} />
           </div>
         )}
+        {obj?.comment && obj.comment.trim() && (
+          <p className="mt-1.5 text-[11px] text-gray-400" data-testid="annotator-note">
+            <span className="text-gray-500">Annotator&apos;s note:</span> {obj.comment}
+          </p>
+        )}
+        {obj && previousReviewText(obj) && (
+          <p className="mt-1 text-[11px] text-gray-400" data-testid="previous-review">
+            <span className="text-gray-500">Last round:</span> {previousReviewText(obj)}
+          </p>
+        )}
         <textarea
-          value={obj?.comment ?? ""}
-          onChange={(e) => obj && setObjectComment(obj.id, e.target.value)}
+          value={obj?.review_comment ?? ""}
+          onChange={(e) => obj && setObjectReviewComment(obj.id, e.target.value)}
           title="Shown to the annotator next to this object when the case goes back to them"
           placeholder="Comment for the annotator…"
+          data-testid="review-comment"
           rows={2}
           className="mt-1.5 w-full resize-none rounded border border-[#444] bg-[#2a2a3e] p-1.5 text-[11px] text-amber-200 placeholder:text-gray-500"
         />
@@ -4293,9 +4290,14 @@ function ReviewObjectsList({
               }`}
             >
               <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: label?.color ?? "#666" }} />
-              <span className="flex-1 truncate">
+              <span className="flex-1 truncate" title={previousReviewText(obj) ? `Last round: ${previousReviewText(obj)}` : undefined}>
                 {label?.name ?? "?"} {obj.instance_number}
               </span>
+              {isNewThisRound(obj, orderedObjects) && (
+                <span className="rounded bg-sky-900/60 px-1 text-[9px] uppercase text-sky-200" data-testid={`new-object-${obj.id}`}>
+                  new
+                </span>
+              )}
               <span
                 className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${REVIEW_STATUS_DOT[obj.review_status ?? "pending"]}`}
                 title={obj.review_status ?? "pending"}
@@ -4450,6 +4452,15 @@ function ObjectsPanel({
                       <span className="flex-1 truncate">
                         {label.name} {obj.instance_number}
                       </span>
+                      {obj.review_status === "rejected" && (
+                        <span
+                          className="rounded bg-red-900/60 px-1 text-[9px] text-red-200"
+                          title={obj.review_comment ? `Reviewer: ${obj.review_comment}` : "Rejected by the reviewer"}
+                          data-testid={`rejected-${obj.id}`}
+                        >
+                          {rejectReasonLabel(obj.reject_reason)?.toLowerCase() ?? "rejected"}
+                        </span>
+                      )}
                       <ObjectFormTab open={formOpen} filled={filled} onToggle={() => toggleForm(obj.id)} testId={`form-toggle-${obj.id}`} />
                       <button
                         data-testid={`hide-${obj.id}`}
@@ -4518,9 +4529,12 @@ function ObjectsPanel({
 function reviewedNote(obj: SegObject) {
   const status = obj.review_status;
   if (!status || status === "pending") return null;
+  const reason = status === "rejected" ? rejectReasonLabel(obj.reject_reason)?.toLowerCase() : undefined;
   return (
     <p className={`text-[10px] ${status === "accepted" ? "text-emerald-400" : "text-red-400"}`}>
       Reviewer: {status}
+      {reason ? ` (${reason})` : ""}
+      {obj.review_comment ? ` -- ${obj.review_comment}` : ""}
     </p>
   );
 }

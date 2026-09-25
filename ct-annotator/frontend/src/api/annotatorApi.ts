@@ -356,6 +356,12 @@ export interface SegObject {
   // Why the reviewer rejected it, picked from REJECT_REASONS (ViewerPage)
   // -- the categories the Usage page counts.
   reject_reason?: string;
+  // The reviewer's comment to the annotator on this object -- apart from
+  // the annotator's own `comment` (F-02).
+  review_comment?: string;
+  // The last finished review round's verdict, kept when the case is
+  // handed in again (see lib/reviewRound.ts, F-06).
+  previous_review?: { status: "accepted" | "rejected"; reject_reason?: string; review_comment?: string };
   // The label's form filled for this object (field name -> true for a
   // tick, the chosen option, or the scale's number) -- see
   // components/ObjectForm.tsx.
