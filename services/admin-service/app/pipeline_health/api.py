@@ -321,11 +321,19 @@ def read_summary(
     return {"days": days, **build_summary(db, window_since, window_until, card_id, user_id)}
 
 
-def build_learning_curve(db: Session) -> list[dict]:
+def build_learning_curve(
+    db: Session, person_id: str | None = None, study_id: uuid.UUID | None = None, not_counted: set[str] | None = None
+) -> list[dict]:
     """Every person's week-of-tenure medians, usernames resolved -- the
     /learning-curve payload, also consumed by app/usage's findings and
-    report so the two never disagree."""
-    rows = stats.learning_curve(_load_legs(db, None), _tenure_start(db))
+    report so the two never disagree. With the Usage page's filters: one
+    person, one study's work, and without the accounts it doesn't count
+    (admins, test accounts). They were ignored, so a report filtered to
+    one reviewer showed everyone else's curve, admins included (H-03).
+    Tenure itself stays all-time: a week of tenure is counted from the
+    person's first work anywhere."""
+    rows = stats.learning_curve(_load_legs(db, None, study_id), _tenure_start(db))
+    rows = [r for r in rows if r["actor_id"] not in (not_counted or set()) and (person_id is None or r["actor_id"] == person_id)]
     names = _usernames()
     for row in rows:
         row["username"] = names.get(row["actor_id"], {}).get("username", row["actor_id"])

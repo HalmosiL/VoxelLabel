@@ -177,3 +177,19 @@ def test_review_quality_and_the_person_filter(client, db):
     assert other["quality"]["decided"] == 0 and other["bottlenecks"] == [] and other["assignee_load"] == []
     mine = client.get("/admin/pipeline-health/summary", params={"user_id": ANNOTATOR_SUBJECT}).json()
     assert mine["quality"]["decided"] == 2
+
+
+def test_the_learning_curve_follows_the_person_and_study_filters(client, db, monkeypatch):
+    """H-03: the curve in the overview and the report ignored the person
+    and study picked, and showed accounts the page says are not counted."""
+    from app.pipeline_health import api as ph
+
+    loaded = []
+    monkeypatch.setattr(ph, "_load_legs", lambda db_, card_id, study_id=None: loaded.append(study_id) or [])
+    monkeypatch.setattr(ph.stats, "learning_curve", lambda legs, tenure: [{"actor_id": a, "week": 0} for a in ("someone", "admin-1", "other")])
+    monkeypatch.setattr(ph, "_usernames", lambda: {})
+    sid = uuid.UUID(make_study(client))
+    rows = ph.build_learning_curve(db, person_id="someone", study_id=sid, not_counted={"admin-1"})
+    assert loaded == [sid] and [r["actor_id"] for r in rows] == ["someone"]
+    everyone = ph.build_learning_curve(db, not_counted={"admin-1"})
+    assert [r["actor_id"] for r in everyone] == ["someone", "other"]

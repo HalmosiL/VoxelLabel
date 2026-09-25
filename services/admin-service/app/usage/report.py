@@ -37,11 +37,18 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
     return line + "".join("| " + " | ".join(str(c) for c in row) + " |\n" for row in rows)
 
 
-def render_markdown(since, until, usage: dict, pipeline: dict | None, findings: list[dict], learning_curve: list[dict] | None) -> str:
+def render_markdown(
+    since, until, usage: dict, pipeline: dict | None, findings: list[dict], learning_curve: list[dict] | None, scope: str | None = None
+) -> str:
+    """`scope`: the person / study the page was filtered to, e.g. "person
+    qa-h-rev · study QA-H" -- said up front, so a pasted report isn't read
+    as platform-wide (H-02)."""
     totals = usage.get("totals", {})
     effort = usage.get("effort", {})
     basis = usage.get("basis", {})
     parts = [f"# Usage report · {_date(since)} – {_date(until)}\n"]
+    if scope:
+        parts.append(f"_Filtered to: {scope}._\n")
     if basis:
         parts.append(
             f"_Based on {basis.get('events', 0)} events from {basis.get('people', 0)} people in {basis.get('sessions', 0)} sessions"

@@ -82,3 +82,16 @@ def test_report_carries_releases_cases_reasons_and_performance():
     assert "median hands-on time per object 30s. Moves with hands-on time: objects drawn (r = 0.8)." in md
     assert "Felt difficulty: 3.2 of 5 from 4 answers." in md
     assert "| boundary | 3 | 100% |" in md and "| /volume | 10 | 1s | 3s | 30% | 0% |" in md
+
+
+def test_a_filtered_report_says_what_it_is_filtered_to():
+    """H-02: a report for one reviewer in one study read as platform-wide
+    once pasted into Jira or Slack."""
+    from datetime import datetime, timezone
+
+    from app.usage.report import render_markdown
+
+    t = datetime(2026, 8, 3, tzinfo=timezone.utc)
+    text = render_markdown(t, t, {"basis": {"events": 4, "people": 1, "sessions": 1}}, None, [], None, scope="person qa-h-rev · study QA-H")
+    assert "_Filtered to: person qa-h-rev · study QA-H._" in text.split("## Findings")[0]
+    assert "Filtered to" not in render_markdown(t, t, {}, None, [], None)

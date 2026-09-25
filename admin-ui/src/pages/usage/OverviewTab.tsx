@@ -518,7 +518,7 @@ function ExportCard({
   const bundle = () =>
     run("bundle", async () => {
       const name = exportFilename("bundle", summary.since, summary.until, "json");
-      downloadJson(name, { range, user_filter: userFilter || null, exported_at: new Date().toISOString(), summary, previous, findings, pipeline_health: pipelineHealth, pipeline_health_previous: pipelineHealthPrevious, learning_curve: learningCurve });
+      downloadJson(name, { range, user_filter: userFilter || null, study_filter: studyFilter || null, exported_at: new Date().toISOString(), summary, previous, findings, pipeline_health: pipelineHealth, pipeline_health_previous: pipelineHealthPrevious, learning_curve: learningCurve });
       return `Downloaded ${name}`;
     });
 

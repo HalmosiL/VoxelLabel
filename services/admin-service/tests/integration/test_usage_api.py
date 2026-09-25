@@ -610,3 +610,23 @@ def test_case_images_ride_along_only_while_the_switch_is_on(client, db):
     off, on = (client.get(f"/admin/usage/snapshots/{db.query(UsageSnapshot).filter_by(session_id=sid).one().id}").json() for sid in ("i1", "i2"))
     assert off["has_images"] is False and on["has_images"] is True
     assert "data-vl-shot" not in off["document"] and shot in on["document"]
+
+
+def test_the_study_filtered_csv_holds_only_the_studys_pages(client):
+    """H-01: with a study picked, the export held every event of every
+    session that ever opened a page of the study -- /my-jobs clicks too --
+    so a spreadsheet never matched the page's study-filtered figures."""
+    sid = "11111111-2222-4333-8444-555555555555"
+    client.as_user(ANNOTATOR_SUBJECT)
+    post(client, [
+        ev("page_view", "/my-jobs", session="h1", at_s=0),
+        ev("click", "/my-jobs", session="h1", at_s=1, name="Open job", detail={"x": 1, "y": 1}),
+        ev("page_view", "/studies/:id", session="h1", at_s=2, detail={"study_id": sid}),
+        ev("click", "/studies/:id", session="h1", at_s=3, name="Open case", detail={"x": 2, "y": 2}),
+        ev("page_view", "/my-jobs", session="h1", at_s=4),
+        ev("click", "/my-jobs", session="h1", at_s=5, name="Back", detail={"x": 3, "y": 3}),
+    ])
+    client.as_admin()
+    body = client.get("/admin/usage/export/events.csv", params={"days": 7, "study_id": sid}).text
+    rows = [line for line in body.splitlines()[1:] if line.strip()]
+    assert len(rows) == 2 and all("/studies/:id" in r for r in rows), rows

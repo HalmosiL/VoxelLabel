@@ -25,6 +25,7 @@ from shared_models.models import (
     ImagingStudy,
     Instance,
     Series,
+    Study,
     UsageClear,
     UsageEvent,
     UsageSnapshot,
@@ -713,7 +714,12 @@ def _build_findings_bundle(db: Session, window_since: datetime, window_until: da
     usage_previous = build_usage_summary(db, prev_since, prev_until, user_id, people, study_id)
     pipeline = build_pipeline_summary(db, window_since, window_until, person_id=user_id, study_id=study_id)
     pipeline_previous = build_pipeline_summary(db, prev_since, prev_until, person_id=user_id, study_id=study_id)
-    learning = build_learning_curve(db)
+    not_counted = _not_counted(get_settings(db), people)
+    try:
+        study_uuid = uuid.UUID(study_id) if study_id else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"'{study_id}' is not a valid id") from None
+    learning = build_learning_curve(db, person_id=user_id, study_id=study_uuid, not_counted=not_counted)
     return {
         "since": window_since.isoformat(),
         "until": window_until.isoformat(),
@@ -831,7 +837,15 @@ def read_report(
     _require_global_admin(user)
     window_since, window_until = _window(days, since, until)
     bundle = _build_findings_bundle(db, window_since, window_until, user_id, study_id)
-    text = render_markdown(window_since, window_until, bundle["usage"], bundle["pipeline"], bundle["findings"], bundle["learning_curve"])
+    scope = []
+    if user_id:
+        scope.append(f"person {_people().get(user_id, {}).get('username', user_id)}")
+    if study_id:
+        study = db.get(Study, uuid.UUID(study_id))
+        scope.append(f"study {study.name if study else study_id}")
+    text = render_markdown(
+        window_since, window_until, bundle["usage"], bundle["pipeline"], bundle["findings"], bundle["learning_curve"], scope=" · ".join(scope) or None
+    )
     return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
 
@@ -868,10 +882,19 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
     if not_counted:
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
     if study_id:
-        # every event of the sittings that opened a page of the study
+        # the sittings that opened a page of the study; within them, only
+        # the events on its pages -- stats.within_study's rule, which every
+        # study-filtered figure uses. Whole sessions made the spreadsheet
+        # disagree with the page (H-01).
         sessions_of_study = db.query(UsageEvent.session_id).filter(UsageEvent.event_type == "page_view", UsageEvent.detail["study_id"].astext == study_id).distinct()
         query = query.filter(UsageEvent.session_id.in_(sessions_of_study))
-    for e in query.order_by(UsageEvent.occurred_at).yield_per(1000):
+    page_study: dict[str, str | None] = {}  # session -> the study of its current page
+    for e in query.order_by(UsageEvent.occurred_at, UsageEvent.id).yield_per(1000):
+        if study_id:
+            if e.event_type == "page_view":
+                page_study[e.session_id] = (e.detail or {}).get("study_id")
+            if page_study.get(e.session_id) != study_id:
+                continue
         writer.writerow(
             [_safe_cell(v) for v in [
                 e.occurred_at.isoformat() if e.occurred_at else "",
