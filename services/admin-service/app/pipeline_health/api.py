@@ -91,7 +91,8 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
     if not cards:
         return []
 
-    events = db.query(CaseStageEvent).filter(CaseStageEvent.card_id.in_(cards.keys())).all()
+    # a row's card may be gone and its id reused elsewhere (no FK, I-04): only the card's own study counts
+    events = [e for e in db.query(CaseStageEvent).filter(CaseStageEvent.card_id.in_(cards.keys())).all() if e.study_id == cards[e.card_id].study_id]
     if not events:
         return []
 

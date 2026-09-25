@@ -1020,6 +1020,10 @@ class CaseStageEvent(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     study_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="CASCADE"), nullable=False)
+    # No foreign key to the card: the rows outlive a deleted card, so a
+    # card that comes back with its id (the board's Undo, a study version
+    # restore) keeps its cases' queue-start times (I-04). They go with
+    # their case (and so with the study).
+    card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
     occurred_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

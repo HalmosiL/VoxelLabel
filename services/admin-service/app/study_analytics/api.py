@@ -162,7 +162,7 @@ def build(db: Session, study_id: uuid.UUID) -> dict:
     stage = (
         [
             {"card_id": str(s.card_id), "case_id": str(s.case_id), "occurred_at": s.occurred_at}
-            for s in db.query(CaseStageEvent).filter(CaseStageEvent.card_id.in_([uuid.UUID(j) for j in job_ids])).all()
+            for s in db.query(CaseStageEvent).filter(CaseStageEvent.card_id.in_([uuid.UUID(j) for j in job_ids]), CaseStageEvent.study_id == uuid.UUID(str(study_id))).all()
         ]
         if job_ids
         else []
