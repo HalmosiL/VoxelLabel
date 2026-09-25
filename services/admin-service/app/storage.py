@@ -77,6 +77,16 @@ def delete_object(storage_key: str) -> None:
     _client.delete_object(Bucket=settings.object_storage_bucket, Key=storage_key)
 
 
+def delete_prefix(prefix: str) -> None:
+    """Delete every object whose key starts with `prefix` -- e.g. all of a
+    deleted study's cover images (B-14)."""
+    paginator = _client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=settings.object_storage_bucket, Prefix=prefix):
+        keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+        if keys:
+            _client.delete_objects(Bucket=settings.object_storage_bucket, Delete={"Objects": keys})
+
+
 def upload_study_cover_image(storage_key: str, data: bytes) -> None:
     _client.put_object(Bucket=settings.object_storage_bucket, Key=storage_key, Body=data)
 

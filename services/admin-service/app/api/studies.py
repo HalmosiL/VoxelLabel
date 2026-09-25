@@ -5,6 +5,7 @@ A `Study` here is the platform's top-level, admin-created RBAC container
 `ImagingStudy`, the DICOM per-session imaging entity that hangs off a Case
 (see `app/api/imaging.py`).
 """
+import logging
 import time
 import uuid
 
@@ -12,15 +13,17 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
-from shared_models.models import Annotation, AnnotationReview, Case, DeidentificationProfile, Study, StudyMembership, StudyRole
+from shared_models.models import Annotation, AnnotationReview, Case, DeidentificationProfile, Study, StudyMembership, StudyRole, StudyVersion
 from sqlalchemy.orm import Session
 
 from app.api import audit
 from app.api.input_checks import required_text, safe_filename
 from app.duplication import duplicate_study
 from app.keycloak_admin import list_realm_users
-from app.storage import study_cover_image_link, upload_study_cover_image
+from app.storage import delete_object, delete_prefix, study_cover_image_link, upload_study_cover_image
 from app.versioning import autosave
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/studies", tags=["admin:studies"])
 
@@ -280,6 +283,8 @@ def delete_study(
     audit.record(db, user, "study.delete", "study", study.id, {"name": study.name, "cases_deleted": len(cases)})
     db.delete(study)
     db.commit()
+    # its cover images -- the current one and any a saved version showed (B-14)
+    _forget_objects(lambda: delete_prefix(f"study-covers/{study_id}/"))
 
 
 class StudyDuplicateIn(BaseModel):
@@ -315,6 +320,26 @@ def duplicate_study_route(
     return _serialize_study(new_study, "admin")
 
 
+def _cover_on_a_version(db: Session, study_id, key: str) -> bool:
+    """Whether a saved version of the study shows this cover -- restoring
+    it brings the key back, so the image has to stay."""
+    return (
+        db.query(StudyVersion.id)
+        .filter(StudyVersion.study_id == study_id, StudyVersion.snapshot["study"]["cover_image_key"].astext == key)
+        .first()
+        is not None
+    )
+
+
+def _forget_objects(delete) -> None:
+    """Storage cleanup after the change is committed: a failure leaves a
+    stray object behind, never an error for a change that already happened."""
+    try:
+        delete()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not remove a study cover image from storage", exc_info=True)
+
+
 @router.post("/{study_id}/cover-image")
 async def upload_cover_image(
     study_id: str,
@@ -332,9 +357,12 @@ async def upload_cover_image(
     storage_key = f"study-covers/{study_id}/{uuid.uuid4()}-{safe_filename(file.filename)}"  # as for documents (J-05)
     upload_study_cover_image(storage_key, await file.read())
 
+    previous = study.cover_image_key
     study.cover_image_key = storage_key
     audit.record(db, user, "study.cover_image", "study", study.id)
     db.commit()
+    if previous and not _cover_on_a_version(db, study.id, previous):
+        _forget_objects(lambda: delete_object(previous))  # B-14
     return {"id": str(study.id), "cover_image_url": study_cover_image_link(storage_key)}
 
 
