@@ -46,3 +46,28 @@ def test_a_bad_date_on_edit_is_a_422(client, bucket):
     case_id = make_case(client, make_study(client))["id"]
     item_id = _upload(client, case_id).json()["id"]
     assert client.patch(f"/admin/clinical-data-items/{item_id}", params={"item_date": "31/12/2020"}).status_code == 422
+
+
+def test_tags_and_consents_stay_clean_and_can_change(client, db, bucket):
+    """B-16: duplicate and empty tags were accepted and none could be
+    removed; revoking a consent added a second record, so the item showed
+    both "granted" and "revoked"."""
+    from shared_models.models import AuditLog, Consent, Tag
+
+    case_id = make_case(client, make_study(client))["id"]
+    item = _upload(client, case_id).json()["id"]
+    tags = f"/admin/clinical-data-items/{item}/tags"
+    first = client.post(tags, params={"label": "biopsy"})
+    assert first.status_code == 200
+    assert client.post(tags, params={"label": " biopsy "}).status_code == 409
+    assert client.post(tags, params={"label": "  "}).status_code == 422
+    assert client.delete(tags, params={"label": "biopsy"}).status_code == 204
+    assert db.query(Tag).count() == 0
+
+    consents = f"/admin/clinical-data-items/{item}/consents"
+    assert client.post(consents, params={"consent_type": "research", "status": "granted"}).status_code == 200
+    assert client.post(consents, params={"consent_type": "research", "status": "revoked"}).status_code == 200
+    assert client.post(consents, params={"consent_type": " ", "status": "granted"}).status_code == 422
+    db.expire_all()
+    assert [(c.consent_type, c.status.value) for c in db.query(Consent).all()] == [("research", "revoked")]
+    assert db.query(AuditLog).filter_by(action="consent.update").count() == 1

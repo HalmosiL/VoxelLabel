@@ -11,7 +11,7 @@ from shared_models.database import get_db
 from shared_models.models import Case, ClinicalDataItem, Consent, ConsentStatus, Tag
 from sqlalchemy.orm import Session
 
-from app.api import input_checks
+from app.api import audit, input_checks
 from app.storage import delete_object, upload_clinical_data_file
 
 router = APIRouter(prefix="/admin", tags=["admin:clinical-data"])
@@ -134,14 +134,38 @@ def add_tag(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    """One tag per label per document: blank labels and repeats are
+    refused (they were stored, B-16)."""
     item = _clinical_data_item_or_404(db, item_id)
     case = _case_or_404(db, str(item.case_id))
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin", "annotator"])
 
+    label = input_checks.required_text(label, "The tag")
+    if any(t.label.strip().lower() == label.lower() for t in item.tags):
+        raise HTTPException(status_code=409, detail=f"This document is already tagged '{label}'")
     tag = Tag(clinical_data_item_id=item.id, label=label)
     db.add(tag)
     db.commit()
     return {"id": str(tag.id), "label": tag.label}
+
+
+@router.delete("/clinical-data-items/{item_id}/tags", status_code=204)
+def delete_tag(
+    item_id: uuid.UUID,
+    label: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Removes a tag, by its label (unique per document) -- there was no
+    way to (B-16)."""
+    item = _clinical_data_item_or_404(db, item_id)
+    case = _case_or_404(db, str(item.case_id))
+    require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin", "annotator"])
+    tag = next((t for t in item.tags if t.label.strip().lower() == label.strip().lower()), None)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="Tag not found on this document")
+    db.delete(tag)
+    db.commit()
 
 
 @router.post("/clinical-data-items/{item_id}/consents")
@@ -152,11 +176,23 @@ def add_consent(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    """One consent record per consent type: recording a type again (e.g.
+    revoking a research consent) changes the existing record, audited
+    with the old and new status. A second record made the document show
+    both "granted" and "revoked" (B-16)."""
     item = _clinical_data_item_or_404(db, item_id)
     case = _case_or_404(db, str(item.case_id))
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
-    consent = Consent(clinical_data_item_id=item.id, consent_type=consent_type, status=status)
-    db.add(consent)
+    consent_type = input_checks.required_text(consent_type, "The consent type")
+    consent = next((c for c in item.consents if c.consent_type.strip().lower() == consent_type.lower()), None)
+    if consent is None:
+        consent = Consent(clinical_data_item_id=item.id, consent_type=consent_type, status=status)
+        db.add(consent)
+        db.flush()
+        audit.record(db, user, "consent.create", "clinical_data_item", item.id, {"consent_type": consent_type, "status": status.value})
+    elif consent.status != status:
+        audit.record(db, user, "consent.update", "clinical_data_item", item.id, {"consent_type": consent.consent_type, "from": consent.status.value, "to": status.value})
+        consent.status = status
     db.commit()
     return {"id": str(consent.id), "consent_type": consent.consent_type, "status": consent.status.value}

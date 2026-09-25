@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 
-import { addClinicalDataConsent, addClinicalDataTag, deleteClinicalDataItem, updateClinicalDataItem } from "../api/adminApi";
+import { addClinicalDataConsent, addClinicalDataTag, deleteClinicalDataItem, removeClinicalDataTag, updateClinicalDataItem } from "../api/adminApi";
 import { ClinicalDataItem, getClinicalDataFileUrl } from "../api/dataApi";
 import Modal from "./Modal";
 import { describeApiError } from "../api/client";
@@ -56,6 +56,15 @@ export default function DocumentModal({
     }
   }
 
+  async function handleRemoveTag(label: string) {
+    try {
+      await removeClinicalDataTag(item.id, label);
+      onChanged();
+    } catch (err) {
+      setError(describeApiError(err));
+    }
+  }
+
   async function handleAddConsent(event: FormEvent) {
     event.preventDefault();
     try {
@@ -103,8 +112,17 @@ export default function DocumentModal({
 
         <div className="flex flex-wrap gap-1.5">
           {item.tags.map((label) => (
-            <span key={label} className="badge-gray">
+            <span key={label} className="badge-gray inline-flex items-center gap-1">
               {label}
+              <button
+                type="button"
+                onClick={() => handleRemoveTag(label)}
+                className="text-gray-400 hover:text-red-600"
+                aria-label={`Remove tag ${label}`}
+                title="Remove tag"
+              >
+                ×
+              </button>
             </span>
           ))}
           {item.consents.map((c, i) => (
