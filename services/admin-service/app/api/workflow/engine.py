@@ -468,6 +468,22 @@ def _cascade_run(db: Session, card: WorkflowCard, visited: set[uuid.UUID]) -> No
             logger.warning("Downstream card %s could not be re-run: %s", downstream.id, exc.detail)
 
 
+def _forget_deleted_case(db: Session, study_id: uuid.UUID, case_id: str) -> None:
+    """Takes a just-deleted case off the study's board: out of every
+    card's pinned case_ids and stored output, then the same ripple a new
+    case gets. Left in, its job stayed "In progress" with nothing left to
+    do, counting a case no one could open (D-13). The caller commits."""
+    for card in db.query(WorkflowCard).filter(WorkflowCard.study_id == study_id).all():
+        ids = (card.config or {}).get("case_ids")
+        if isinstance(ids, list) and case_id in ids:
+            card.config = {**card.config, "case_ids": [i for i in ids if i != case_id]}
+        out = card.output_case_ids
+        if isinstance(out, list) and case_id in out:
+            card.output_case_ids = [i for i in out if i != case_id]
+        elif isinstance(out, dict) and any(case_id in v for v in out.values()):
+            card.output_case_ids = {k: [i for i in v if i != case_id] for k, v in out.items()}
+
+
 def _cascade_new_case(db: Session, study_id: uuid.UUID) -> None:
     """Ripples a just-created case through the board on its own, instead
     of leaving it sitting in a Study until someone happens to click Run

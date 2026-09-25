@@ -516,3 +516,22 @@ def test_undoing_a_card_delete_restores_the_job_as_it_was(client, db, outbox):
     run_cycle(db)
     assert db.query(NotificationLog).filter_by(card_id=uuid.UUID(ann["id"]), event_type="job_assigned").count() == mails_before
     assert db.get(JobNotificationState, uuid.UUID(ann["id"])) is not None
+
+
+def test_deleting_a_case_takes_it_off_the_board(client, db):
+    """D-13: a deleted case stayed in the cards' stored case lists, so its
+    job was stuck "In progress" with nothing left to do."""
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=2)
+    manual = _card(client, sid, "dataset", "Picked", {"mode": "manual", "case_ids": [c["id"] for c in cases]}, x=900)
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    client.as_admin()
+    assert _job(client, ANNOTATOR_SUBJECT, ann["id"])["status"] == "in_progress"
+    client.as_admin()
+    assert client.delete(f"/admin/cases/{cases[1]['id']}").status_code == 204
+
+    job = _job(client, ANNOTATOR_SUBJECT, ann["id"])
+    assert job["status"] == "done" and [c["id"] for c in job["cases"]] == [cases[0]["id"]]
+    client.as_admin()
+    board = {c["id"]: c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"]}
+    assert board[manual["id"]]["config"]["case_ids"] == [cases[0]["id"]]
+    assert cases[1]["id"] not in (board[rev["id"]]["output_case_ids"] or [])

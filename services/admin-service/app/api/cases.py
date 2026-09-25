@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api import audit, input_checks
 from app.api.imaging import _delete_annotations_targeting, _delete_instance
 from app.api.studies import _require_global_admin
-from app.api.workflow import _cascade_new_case
+from app.api.workflow import _cascade_new_case, _forget_deleted_case
 from app.storage import delete_object
 from app.versioning import autosave
 
@@ -240,6 +240,12 @@ def delete_case(
 
     study_id_for_version = case.study_id
     audit.record(db, user, "case.delete", "case", case.id, {"study_id": str(case.study_id), "title": case.title})
+    _forget_deleted_case(db, case.study_id, str(case.id))
     _delete_case_cascade(db, case)
     db.commit()
+    # Same ripple as a new case, so jobs fed by the board recount (D-13).
+    try:
+        _cascade_new_case(db, study_id_for_version)
+    except Exception:
+        pass
     autosave(db, study_id_for_version, user.subject)

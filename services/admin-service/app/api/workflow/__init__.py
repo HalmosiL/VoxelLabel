@@ -17,7 +17,7 @@ Module layout:
 The names re-exported here are the ones other modules and the unit tests
 import from this package.
 """
-from .engine import _cascade_new_case, _cumulative_ratios, _matches_filter, _split_case_ids, _split_parts
+from .engine import _cascade_new_case, _cumulative_ratios, _forget_deleted_case, _matches_filter, _split_case_ids, _split_parts
 from .graph import _dedupe_sorted, _is_stale, _output_count
 from .routes import router
 from .status import _case_status, _job_status_from_entries
@@ -25,6 +25,7 @@ from .status import _case_status, _job_status_from_entries
 __all__ = [
     "router",
     "_cascade_new_case",
+    "_forget_deleted_case",
     "_case_status",
     "_cumulative_ratios",
     "_dedupe_sorted",
