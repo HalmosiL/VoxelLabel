@@ -530,7 +530,13 @@ async def _get_annotation_types(user: CurrentUser) -> list[dict]:
 
 @app.get("/annotation-types")
 async def list_annotation_types(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    return await _get_annotation_types(user)
+    """Asked for with the caller's own token every time -- the cache is
+    shared, and the list is for study members only (A-09). The internal
+    uses above run after an access check of their own, so they may cache."""
+    global _annotation_types_cache
+    types = await _proxy_get(f"{ADMIN_SERVICE_URL}/admin/annotation-types", user)
+    _annotation_types_cache = (time.monotonic(), types)
+    return types
 
 
 class CreateAnnotationBody(BaseModel):

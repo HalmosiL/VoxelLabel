@@ -312,3 +312,25 @@ def test_an_upstream_error_keeps_its_own_message():
     assert main._upstream_error(_Resp(403, {"detail": "Insufficient study role"})).detail == "Insufficient study role"
     plain = _Resp(502)
     assert main._upstream_error(plain).detail == plain.text
+
+
+def test_the_annotation_types_are_asked_for_per_caller_not_served_from_the_cache(api, monkeypatch):
+    """A-09: once a member had loaded them, the viewer's shared cache served
+    the annotation types to anyone, even an account in no study."""
+    calls = []
+
+    async def proxy_get(url, user):
+        calls.append(user.subject)
+        if user is OUTSIDER:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=403, detail="Insufficient study role")
+        return [{"id": "t1", "name": "segmentation_volume"}]
+
+    monkeypatch.setattr(main, "_proxy_get", proxy_get)
+    monkeypatch.setattr(main, "_annotation_types_cache", None)
+    api.as_user(MEMBER)
+    assert api.get("/annotation-types").status_code == 200
+    api.as_user(OUTSIDER)
+    assert api.get("/annotation-types").status_code == 403
+    assert calls == [MEMBER.subject, OUTSIDER.subject]
