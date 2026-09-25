@@ -273,3 +273,11 @@ def test_a_series_mixing_image_sizes_is_a_clear_422(api, monkeypatch):
 
 async def _noop():
     return None
+
+
+def test_an_upstream_error_keeps_its_own_message():
+    """F-11: the whole upstream body went on as the detail -- the viewer
+    showed {"detail":"{\\"detail\\":\\"Insufficient study role\\"}"}."""
+    assert main._upstream_error(_Resp(403, {"detail": "Insufficient study role"})).detail == "Insufficient study role"
+    plain = _Resp(502)
+    assert main._upstream_error(plain).detail == plain.text

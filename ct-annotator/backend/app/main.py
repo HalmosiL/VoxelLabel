@@ -60,6 +60,20 @@ _MAX_CACHED_VOLUMES = 3
 _MAX_CACHED_DATASETS = 600
 
 
+
+def _upstream_error(resp) -> HTTPException:
+    """An error from a platform service, passed on with that service's own
+    message: its body is {"detail": "..."}, and handing the whole body on
+    as the detail showed users double-encoded JSON (F-11)."""
+    detail = resp.text
+    try:
+        body = resp.json()
+        if isinstance(body, dict) and isinstance(body.get("detail"), (str, list)):
+            detail = body["detail"]
+    except Exception:  # noqa: BLE001 -- not JSON: the raw text is the message
+        pass
+    return HTTPException(status_code=resp.status_code, detail=detail)
+
 def _prune_cache(cache: dict, max_entries: int) -> None:
     now = time.monotonic()
     for key in [k for k, (stamp, _) in cache.items() if now - stamp >= RENDER_CACHE_TTL_SECONDS]:
@@ -101,7 +115,7 @@ async def _fetch_dicom_bytes(instance_id: str, user: CurrentUser) -> bytes:
         f"{DATA_SERVICE_URL}/data/instances/{instance_id}/pixel-data-url", headers=_auth_headers(user)
     )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     payload = resp.json()
     storage_key = payload.get("storage_key")
     if storage_key:
@@ -143,7 +157,7 @@ async def _require_instance_access(instance_id: str, user: CurrentUser) -> None:
         return
     resp = await _http_client.get(f"{DATA_SERVICE_URL}/data/instances/{instance_id}/pixel-data-url", headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     _remember_access(user, "instance", instance_id)
 
 
@@ -522,7 +536,7 @@ async def create_annotation(
             headers=_auth_headers(user),
         )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -535,7 +549,7 @@ async def list_annotations(
             f"{ANNOTATION_SERVICE_URL}/annotations/{target_type}/{target_id}", headers=_auth_headers(user)
         )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
 
     annotations = resp.json()
     type_names = {t["id"]: t["name"] for t in await _get_annotation_types(user)}
@@ -599,7 +613,7 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         f"{ANNOTATION_SERVICE_URL}/annotations/series/{series_id}", headers=_auth_headers(user)
     )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
 
     type_names = {t["id"]: t["name"] for t in await _get_annotation_types(user)}
     volume_annotations = [
@@ -655,7 +669,7 @@ async def save_mask_volume(
     )
     if resp.status_code >= 400:
         delete_mask_object(storage_key)
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -694,7 +708,7 @@ async def _proxy_get(url: str, user: CurrentUser) -> list[dict]:
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -738,7 +752,7 @@ async def relay_object(request: Request) -> Response:
     token, and it works as a plain <img src>."""
     resp = await _http_client.get(f"{DATA_SERVICE_URL}/data/objects", params=dict(request.query_params))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return Response(
         content=resp.content,
         media_type=resp.headers.get("content-type", "application/octet-stream"),
@@ -763,7 +777,7 @@ async def get_document_file_url(item_id: str, user: CurrentUser = Depends(get_cu
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{DATA_SERVICE_URL}/data/clinical-data-items/{item_id}/file-url", headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -781,7 +795,7 @@ async def get_document_file(item_id: str, user: CurrentUser = Depends(get_curren
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{DATA_SERVICE_URL}/data/clinical-data-items/{item_id}/file-url", headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     storage_key = resp.json().get("storage_key")
     if not storage_key:
         raise HTTPException(status_code=502, detail="data-service returned no storage key for this document")
@@ -823,7 +837,7 @@ async def get_job_surface_config(job_id: str, user: CurrentUser = Depends(get_cu
             f"{ADMIN_SERVICE_URL}/admin/workflow-cards/{job_id}/surface-config", headers=_auth_headers(user)
         )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -837,7 +851,7 @@ async def get_job_cases(job_id: str, user: CurrentUser = Depends(get_current_use
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{ADMIN_SERVICE_URL}/admin/workflow-cards/{job_id}/cases", headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -852,7 +866,7 @@ async def run_job(job_id: str, user: CurrentUser = Depends(get_current_user)) ->
     async with httpx.AsyncClient() as client:
         resp = await client.post(f"{ADMIN_SERVICE_URL}/admin/workflow-cards/{job_id}/run", headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -869,7 +883,7 @@ async def usage_config(user: CurrentUser = Depends(get_current_user)) -> dict:
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{ADMIN_SERVICE_URL}/admin/usage/config", headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -880,7 +894,7 @@ async def usage_events(body: UsageEventsBody, user: CurrentUser = Depends(get_cu
     async with httpx.AsyncClient() as client:
         resp = await client.post(f"{ADMIN_SERVICE_URL}/admin/usage/events", json=body.model_dump(), headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -892,7 +906,7 @@ async def usage_snapshot(body: dict, user: CurrentUser = Depends(get_current_use
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(f"{ADMIN_SERVICE_URL}/admin/usage/snapshots", json=body, headers=_auth_headers(user))
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 
@@ -925,7 +939,7 @@ async def submit_annotation_review(
             headers=_auth_headers(user),
         )
     if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        raise _upstream_error(resp)
     return resp.json()
 
 

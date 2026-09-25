@@ -271,11 +271,16 @@ export default function ViewerPage() {
   // so the viewer behaves exactly as it did before this feature existed
   // unless it's explicitly opened as someone's assigned job.
   const [surfaceConfig, setSurfaceConfig] = useState<SurfaceConfig | null>(null);
+  // The job's settings didn't load: nothing is known about what this job
+  // allows (a Review job must never fall back to editing), so the viewer
+  // stays read-only instead of opening the full annotation surface (F-14).
+  const [surfaceFailed, setSurfaceFailed] = useState(false);
   useEffect(() => {
     if (!jobId) return;
+    setSurfaceFailed(false);
     fetchSurfaceConfig(jobId)
       .then(setSurfaceConfig)
-      .catch((err) => setError(String(err)));
+      .catch(() => setSurfaceFailed(true));
   }, [jobId]);
   // A Review job (as opposed to Annotation) never edits the mask -- it
   // swaps the whole chrome for a simplified, view-and-decide-only
@@ -307,7 +312,12 @@ export default function ViewerPage() {
   // The job's Surface decides the tools; the Eraser also drives right-drag
   // erase and "Clear hovered slice", so neither is a way around a Surface
   // without it (E-10).
-  const eraseAllowed = !effectiveSurface || effectiveSurface.tools.includes("erase");
+  // Never in review mode: that surface views and decides, it doesn't edit (F-13).
+  useEffect(() => {
+    if (reviewMode) setTool("cursor"); // e.g. an admin switching "View as" to Reviewer mid-stroke (F-13)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewMode]);
+  const eraseAllowed = !reviewMode && !surfaceFailed && (!effectiveSurface || effectiveSurface.tools.includes("erase"));
 
   // The job's own todo/in_progress/done status -- editable right here
   // (see the header's status <select>) instead of only from the
@@ -1294,13 +1304,17 @@ export default function ViewerPage() {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, review_comment } : o)));
   }
 
+  /** Tapping the chosen reason again clears it. Counted for the Usage
+   * page only when the review is submitted, per rejected object -- not
+   * per tap, which counted replaced reasons and ones on objects later
+   * accepted (F-18). */
   function setObjectRejectReason(id: number, reason: string) {
-    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, reject_reason: reason } : o)));
-    trackAction("review.reject_reason", { reason, case_id: caseId ?? undefined, job_id: jobId ?? undefined });
+    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, reject_reason: o.reject_reason === reason ? undefined : reason } : o)));
   }
 
   function setObjectReviewStatus(id: number, review_status: "pending" | "accepted" | "rejected") {
-    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, review_status } : o)));
+    // an accepted object keeps no rejection reason (F-18)
+    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, review_status, ...(review_status === "rejected" ? {} : { reject_reason: undefined }) } : o)));
   }
   function setObjectAttributes(id: number, attributes: ObjectAnswers) {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, attributes: Object.keys(attributes).length ? attributes : undefined } : o)));
@@ -1762,6 +1776,8 @@ export default function ViewerPage() {
       return;
     }
     setError(null);
+    // the review surface views and decides; it never draws (F-13)
+    if (reviewMode && tool !== "cursor") return;
 
     if (event.button === 2) {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -2486,7 +2502,10 @@ export default function ViewerPage() {
    * admin-ui-only "approve/reject the whole annotation" action.
    * Refuses to run while any object is still undecided ("pending") --
    * submitting a review with open questions isn't a real decision. */
-  async function handleSubmitReview() {
+  /** `emptyDecision`: for a case handed in with no objects at all -- the
+   * reviewer confirms "no findings" or sends it back as a missed finding.
+   * Such a case could never be decided (F-12). */
+  async function handleSubmitReview(emptyDecision?: "approve" | "reject") {
     const volume = maskVolumeRef.current;
     if (!volume || !seriesId || !studyId) return;
     const pending = reviewOrderedObjects.filter((o) => (o.review_status ?? "pending") === "pending");
@@ -2501,16 +2520,19 @@ export default function ViewerPage() {
       const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current, reviewSaveOf());
       loadedVersionRef.current = saved.id;
       markSaved(labels, objects);
-      const decision = reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve";
+      const decision = emptyDecision ?? (reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve");
       // The per-object comments travel with the decision too (as the
       // AnnotationReview row's comment), so the annotator -- and the
       // Study page's review list -- can see *why* without opening the
       // viewer: "Nodule 1: boundary too generous; Nodule 3: not a nodule".
       // The object's form answers (see components/ObjectForm.tsx) go in
       // the same line: "Nodule 1 [Type: solid · Calcified]: boundary too generous".
-      const comment = reviewCommentText(reviewOrderedObjects, labels);
+      const comment = emptyDecision === "reject" ? "No objects: missed finding" : reviewCommentText(reviewOrderedObjects, labels);
       await submitAnnotationReview(saved.id, decision, comment || undefined);
       trackAction("submit_review");
+      for (const o of reviewOrderedObjects) {
+        if (o.review_status === "rejected" && o.reject_reason) trackAction("review.reject_reason", { reason: o.reject_reason, case_id: caseId ?? undefined, job_id: jobId ?? undefined });
+      }
       refreshAnnotations();
       advanceJobStatusAfterRun();
       showSavedMessage(decision === "approve" ? "✓ Review approved" : "✕ Review rejected");
@@ -2947,7 +2969,27 @@ export default function ViewerPage() {
   function renderReviewCard() {
     if (!reviewMode) return null;
     if (reviewOrderedObjects.length === 0) {
-      return <p className="text-[11px] text-gray-500">No objects to review yet.</p>;
+      return (
+        <div className="flex flex-col gap-2 text-[11px] text-gray-400" data-testid="empty-review">
+          <p>The annotator handed this case in with no objects -- nothing to segment. Confirm that, or send it back.</p>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => handleSubmitReview("approve")}
+              disabled={saving || reviewBlocked !== null}
+              className="rounded border border-emerald-600 bg-emerald-600/80 px-2 py-1 text-white hover:bg-emerald-600 disabled:opacity-40"
+            >
+              Approve: no findings
+            </button>
+            <button
+              onClick={() => handleSubmitReview("reject")}
+              disabled={saving || reviewBlocked !== null}
+              className="rounded border border-red-600 bg-red-600/70 px-2 py-1 text-white hover:bg-red-600 disabled:opacity-40"
+            >
+              Send back: missed finding
+            </button>
+          </div>
+        </div>
+      );
     }
     const obj = currentReviewObject;
     const label = obj ? labels.find((l) => l.id === obj.label_id) ?? null : null;
@@ -3323,7 +3365,7 @@ export default function ViewerPage() {
       // focused so it doesn't fight a browser text-undo the user is
       // actually after.
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
-        if (typing || tab !== "annotate") return;
+        if (typing || tab !== "annotate" || reviewMode) return;
         event.preventDefault();
         // through refs: this handler is bound less often than the slice
         // indices change, and the stale copy redrew the wrong slice (E-02)
@@ -3699,7 +3741,7 @@ export default function ViewerPage() {
             <span className="flex" data-guide="save">
               <button
                 onClick={() => handleSave("draft")}
-                disabled={saving || !studyId || !maskReady || reviewBlocked !== null}
+                disabled={saving || !studyId || !maskReady || reviewBlocked !== null || surfaceFailed}
                 className="rounded border border-blue-500 bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save"}
@@ -3714,7 +3756,7 @@ export default function ViewerPage() {
               <span className="flex" data-guide="mark-annotated">
                 <button
                   onClick={() => handleSave("submitted")}
-                  disabled={saving || !studyId || !maskReady}
+                  disabled={saving || !studyId || !maskReady || surfaceFailed}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Mark as Annotated
@@ -3733,8 +3775,8 @@ export default function ViewerPage() {
             >
               <span className="flex" data-guide="submit-review">
                 <button
-                  onClick={handleSubmitReview}
-                  disabled={saving || !studyId || !maskReady || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
+                  onClick={() => handleSubmitReview()}
+                  disabled={saving || !studyId || !maskReady || surfaceFailed || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Submit review
@@ -3751,6 +3793,11 @@ export default function ViewerPage() {
           {mixedSizes}
         </div>
       )}
+      {surfaceFailed && (
+        <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="job-settings-failed">
+          This job's settings couldn't be loaded, so the viewer stays read-only -- reload the page to try again.
+        </div>
+      )}
       {reviewBlocked && maskReady && (
         <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="review-blocked">
           {reviewBlocked}
@@ -3764,7 +3811,7 @@ export default function ViewerPage() {
 
       <div className="relative flex min-h-0 flex-1">
         {!reviewMode && (
-          <IconToolbar tool={tool} onSelect={selectTool} canDraw={activeObjectId !== null} allowedTools={effectiveSurface?.tools ?? null} />
+          <IconToolbar tool={tool} onSelect={selectTool} canDraw={activeObjectId !== null && !surfaceFailed} allowedTools={surfaceFailed ? [] : (effectiveSurface?.tools ?? null)} />
         )}
 
         {/* `safe center`: centred when the panes fit, top-aligned (and
@@ -4240,8 +4287,20 @@ export default function ViewerPage() {
 /** A failed save, in words: a 409 means someone saved a newer version of
  * this series after it was opened here (see loadedVersionRef). */
 function saveErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.status === 409) {
+  if (err instanceof ApiError && err.status === 409 && /newer version/i.test(err.body)) {
     return "Someone else saved a newer version of this series while you were working. Your changes were not saved -- reload to see their version before drawing again.";
+  }
+  if (err instanceof ApiError) {
+    // the service's own reason, in words -- not "API error 403: {...}" (F-11)
+    let detail = err.body;
+    try {
+      const parsed = JSON.parse(err.body);
+      if (typeof parsed?.detail === "string") detail = parsed.detail;
+    } catch {
+      // plain text already
+    }
+    if (err.status === 403 && /insufficient study role/i.test(detail)) return "You don't have the role this needs in this study -- only its reviewers can review, only its annotators can annotate.";
+    return detail || String(err);
   }
   return String(err);
 }
