@@ -192,6 +192,12 @@ def create_workflow_card(
         height=body.height,
         config=body.config,
     )
+    if body.id is not None:
+        # a restore (Undo): the card comes back as it was (D-12)
+        if body.created_at is not None:
+            card.created_at = body.created_at
+        card.last_run_at = body.last_run_at
+        card.output_case_ids = body.output_case_ids
     db.add(card)
     audit.record(db, user, "card.create", "workflow_card", card.id, {"study_id": str(study_id), "type": body.type.value, "title": body.title})
     db.commit()

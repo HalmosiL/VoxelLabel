@@ -37,6 +37,7 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         "output_case_ids": output_case_ids,
         "output_count": _output_count(card, output_case_ids),
         "last_run_at": card.last_run_at.isoformat() if card.last_run_at else None,
+        "created_at": card.created_at.isoformat() if card.created_at else None,
         "stale": stale,
     }
     if card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW) and output_case_ids:

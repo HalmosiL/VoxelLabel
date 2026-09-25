@@ -45,6 +45,10 @@ async function diffAndSync(prev: Snapshot, next: Snapshot, studyId: string): Pro
           width: n.width ?? undefined,
           height: n.height ?? undefined,
           config: n.data.card.config,
+          // restored as it was, progress and all (D-12)
+          created_at: n.data.card.created_at,
+          last_run_at: n.data.card.last_run_at,
+          output_case_ids: n.data.card.output_case_ids,
         }).catch(() => undefined)
       )
   );

@@ -1,6 +1,7 @@
 """Request bodies for the workflow endpoints (see routes.py)."""
 import math
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shared_models.models import WorkflowCardType
@@ -35,6 +36,12 @@ class WorkflowCardIn(BaseModel):
     width: float | None = None
     height: float | None = None
     config: dict = Field(default_factory=dict)
+    # Restoring a deleted card (the board's Undo, sent with its original
+    # `id`): what it had, so its job keeps its progress -- a new created_at
+    # made every earlier annotation stop counting (D-12). Ignored otherwise.
+    created_at: datetime | None = None
+    last_run_at: datetime | None = None
+    output_case_ids: list[str] | dict[str, list[str]] | None = None
 
     _config_finite = field_validator("config")(classmethod(lambda cls, v: _finite_json(v)))
 

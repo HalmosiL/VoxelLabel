@@ -711,9 +711,11 @@ class JobNotificationState(Base):
 
     __tablename__ = "job_notification_state"
 
-    card_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("workflow_cards.id", ondelete="CASCADE"), primary_key=True
-    )
+    # No foreign key: the row outlives a deleted card, so a card the
+    # board's Undo brings back (same id) is recognised instead of being
+    # announced as a new job again (D-12). Rows of cards gone for good are
+    # pruned by the notification cycle.
+    card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     assigned_user_id: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     # {case_id: state} -- see admin-service's job_case_states for the values.

@@ -484,3 +484,35 @@ def test_a_criterion_with_no_input_is_not_run(client, db, monkeypatch):
     crit = _card(client, sid, "criterion", "Lonely", {"criterion": "age >= 18"})
     r = client.post(f"/admin/workflow-cards/{crit['id']}/run")
     assert r.status_code == 422 and calls == []
+
+
+def test_undoing_a_card_delete_restores_the_job_as_it_was(client, db, outbox):
+    """D-12: the board's Undo recreates a deleted card with its original id,
+    but it got a new created_at -- every earlier annotation stopped
+    counting, so the job went back to "To do" -- and the notification state
+    went with the card, so "New annotation job" was mailed again."""
+    from app.notifications.events import run_cycle
+    from shared_models.models import JobNotificationState, NotificationLog
+
+    sid, cases, series, ann, _ = _pipeline(client, db, n_cases=2)
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    run_cycle(db)  # the notification service has seen the job
+    before = _job(client, ANNOTATOR_SUBJECT, ann["id"])
+    assert before["status"] == "in_progress"
+    client.as_admin()
+    card = next(c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"] if c["id"] == ann["id"])
+    edges = [e for e in client.get(f"/admin/studies/{sid}/workflow").json()["edges"] if e["target_card_id"] == ann["id"]]
+
+    assert client.delete(f"/admin/workflow-cards/{ann['id']}").status_code == 204
+    restored = {k: card[k] for k in ("id", "type", "title", "position_x", "position_y", "config", "created_at", "last_run_at", "output_case_ids")}
+    assert client.post(f"/admin/studies/{sid}/workflow/cards", json=restored).status_code == 201
+    for e in edges:
+        client.post(f"/admin/studies/{sid}/workflow/edges", json={k: e[k] for k in ("source_card_id", "source_handle", "target_card_id", "target_handle")})
+
+    after = _job(client, ANNOTATOR_SUBJECT, ann["id"])
+    assert (after["status"], [c["status"] for c in after["cases"]]) == (before["status"], [c["status"] for c in before["cases"]])
+    db.expire_all()
+    mails_before = db.query(NotificationLog).filter_by(card_id=uuid.UUID(ann["id"]), event_type="job_assigned").count()
+    run_cycle(db)
+    assert db.query(NotificationLog).filter_by(card_id=uuid.UUID(ann["id"]), event_type="job_assigned").count() == mails_before
+    assert db.get(JobNotificationState, uuid.UUID(ann["id"])) is not None

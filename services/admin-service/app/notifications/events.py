@@ -19,7 +19,7 @@ complete, they just don't generate mail.
 import html as html_lib
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from shared_models.models import (
     JobNotificationState,
@@ -75,6 +75,10 @@ _GUIDANCE = {
     ),
 }
 
+
+
+# How long a deleted card's notification state waits for an Undo.
+DELETED_CARD_STATE_KEPT = timedelta(days=1)
 
 def _guidance(card_type: WorkflowCardType, status: str) -> tuple[str, str]:
     return _GUIDANCE.get((card_type, status), ("This job's status changed.", "Open My Jobs to see what's going on."))
@@ -346,11 +350,12 @@ def run_cycle(db: Session) -> dict:
             state.case_states = current.case_states
             state.observed_at = now
 
-    # Cards that no longer exist: the FK cascade handles deletion, but a
-    # stale row for a card whose type was changed away would linger.
+    # A deleted card's row is kept for a while, so a card the board's Undo
+    # brings back (same id) isn't announced as a new job (D-12); rows of
+    # cards gone for longer than that are pruned.
     live_ids = {c.id for c in cards}
     for card_id, state in states.items():
-        if card_id not in live_ids:
+        if card_id not in live_ids and state.observed_at is not None and now - state.observed_at > DELETED_CARD_STATE_KEPT:
             db.delete(state)
 
     if bootstrap:

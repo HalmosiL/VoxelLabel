@@ -42,6 +42,7 @@ export interface WorkflowCard {
   output_case_ids: string[] | Record<string, string[]> | null;
   output_count: number | Record<string, number> | null;
   last_run_at: string | null;
+  created_at?: string | null;
   stale: boolean;
   annotation_progress?: { annotated: number; total: number };
   // Split: handle ("part_0", ...) -> id of the Dataset card materialized
@@ -121,6 +122,11 @@ export interface WorkflowCardInput {
   width?: number | null;
   height?: number | null;
   config?: WorkflowCardConfig;
+  // With `id` (undo restoring a deleted card): what it had, so its job
+  // keeps its progress -- see the server's create_workflow_card (D-12).
+  created_at?: string | null;
+  last_run_at?: string | null;
+  output_case_ids?: string[] | Record<string, string[]> | null;
 }
 
 export interface WorkflowCardPatchInput {
