@@ -112,10 +112,14 @@ def test_job_status_follows_the_cases(client, db):
     make_annotation(db, sid, series[1], ANNOTATOR_SUBJECT, "submitted")
     assert _job(client, ANNOTATOR_SUBJECT, ann["id"])["status"] == "done"
 
-    # a rejection reopens the annotation job; deciding everything closes the review job
+    # a rejection reopens the annotation job -- and keeps the review job open
+    # until the reworked case is back and decided (D-03)
     make_annotation(db, sid, series[0], REVIEWER_SUBJECT, "rejected")
     assert _job(client, ANNOTATOR_SUBJECT, ann["id"])["status"] == "in_progress"
     make_annotation(db, sid, series[1], REVIEWER_SUBJECT, "approved")
+    assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "in_progress"
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    make_annotation(db, sid, series[0], REVIEWER_SUBJECT, "approved")
     assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "done"
 
 
@@ -535,3 +539,40 @@ def test_deleting_a_case_takes_it_off_the_board(client, db):
     board = {c["id"]: c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"]}
     assert board[manual["id"]]["config"]["case_ids"] == [cases[0]["id"]]
     assert cases[1]["id"] not in (board[rev["id"]]["output_case_ids"] or [])
+
+
+def test_a_draft_is_not_handed_in_for_review(client, db):
+    """D-01: an annotator's plain Save put the case in the reviewer's queue
+    and mailed "a case is awaiting your decision"."""
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=2)
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "draft")
+    job = _job(client, REVIEWER_SUBJECT, rev["id"])
+    assert job["status"] == "todo" and job["cases"] == []
+
+
+def test_a_sent_back_case_stays_sent_back_while_it_is_reworked(client, db):
+    """D-02: the annotator's first draft Save on a rejected case made it
+    plain "pending" and hid the reviewer's reason everywhere."""
+    from .conftest import make_review
+
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=1)
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    rejected = make_annotation(db, sid, series[0], REVIEWER_SUBJECT, "rejected")
+    make_review(db, rejected, REVIEWER_SUBJECT, "reject", "Nodule 1: too generous")
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "draft")  # reworking
+    case = _job(client, ANNOTATOR_SUBJECT, ann["id"])["cases"][0]
+    assert case["status"] == "rejected" and case["latest_review_comment"] == "Nodule 1: too generous"
+
+
+def test_the_review_job_is_done_only_when_everything_is_decided(client, db):
+    """D-03: reviewing cases as they come in flipped the Review job Done <->
+    In progress on every case, with a mail each time, and it claimed to be
+    complete while most cases weren't even annotated."""
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=2)
+    make_annotation(db, sid, series[0], ANNOTATOR_SUBJECT, "submitted")
+    make_annotation(db, sid, series[0], REVIEWER_SUBJECT, "approved")
+    assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "in_progress"  # case 2 not in yet
+    make_annotation(db, sid, series[1], ANNOTATOR_SUBJECT, "submitted")
+    assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "in_progress"
+    make_annotation(db, sid, series[1], REVIEWER_SUBJECT, "approved")
+    assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "done"
