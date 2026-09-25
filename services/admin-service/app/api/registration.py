@@ -16,11 +16,13 @@ the notification service already keeps.
 """
 import re
 import secrets
+import time
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
@@ -107,23 +109,52 @@ class RegisterBody(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+# Anti-abuse for the public form (J-07): requests per client address per
+# hour, and a ceiling on the pending queue. In memory, per process -- with
+# several admin-service replicas each keeps its own count.
+MAX_REQUESTS_PER_HOUR = 5
+MAX_PENDING_REQUESTS = 100
+_recent_by_ip: dict[str, deque] = defaultdict(deque)
+RECEIVED = {"status": "received"}
+
+
+def _client_address(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+
+
+def _check_rate(address: str) -> None:
+    now = time.monotonic()
+    recent = _recent_by_ip[address]
+    while recent and now - recent[0] > 3600:
+        recent.popleft()
+    if len(recent) >= MAX_REQUESTS_PER_HOUR:
+        raise HTTPException(status_code=429, detail="Too many requests from this address -- try again later")
+    recent.append(now)
+
+
 @public_router.post("/registration-requests", status_code=201)
-def submit_registration_request(body: RegisterBody, db: Session = Depends(get_db)) -> dict:
+def submit_registration_request(body: RegisterBody, request: Request, db: Session = Depends(get_db)) -> dict:
     """The public registration form's target. Creates a pending request,
     emails the requester a receipt and every global admin an alert.
-    Refuses a username/email that's already a real account or already
-    has a pending request, so nobody piles up duplicate asks or squats
-    a name that's taken."""
+
+    Every well-formed request gets the same answer, {"status":
+    "received"}: a username or email that's already an account, or
+    already has a pending request, creates nothing and mails nobody, but
+    isn't told apart -- a 409 "already exists" let anyone check accounts
+    one by one (J-07). Requests are also limited per client address and
+    by the size of the pending queue."""
     username = body.username.strip()
     email = body.email.strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=422, detail="Enter a valid email address")
     if not _USERNAME_RE.match(username):
         raise HTTPException(status_code=422, detail="Username can only contain letters, digits, dot, underscore or hyphen")
+    _check_rate(_client_address(request))
 
     existing_users = list_realm_users()
     if any(u["username"] == username or (u["email"] or "").lower() == email for u in existing_users):
-        raise HTTPException(status_code=409, detail="An account with this username or email already exists")
+        return RECEIVED
 
     pending = (
         db.query(RegistrationRequest)
@@ -132,7 +163,9 @@ def submit_registration_request(body: RegisterBody, db: Session = Depends(get_db
         .first()
     )
     if pending is not None:
-        raise HTTPException(status_code=409, detail="There's already a pending request for this username or email")
+        return RECEIVED
+    if db.query(RegistrationRequest).filter(RegistrationRequest.status == "pending").count() >= MAX_PENDING_REQUESTS:
+        raise HTTPException(status_code=429, detail="Too many requests are waiting for review -- try again later")
 
     req = RegistrationRequest(
         username=username,
@@ -156,7 +189,7 @@ def submit_registration_request(body: RegisterBody, db: Session = Depends(get_db
         _send(db, settings, user_id=str(req.id), email=admin_email, event_type="registration_submitted", subject=subject, text=text, html=html)
 
     db.commit()
-    return _serialize(req)
+    return RECEIVED
 
 
 @router.get("/registration-requests")

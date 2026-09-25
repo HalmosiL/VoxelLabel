@@ -233,7 +233,7 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
         </div>
         <h2 className="text-base font-semibold text-gray-900">Request sent</h2>
         <p className="text-sm leading-relaxed text-gray-500">
-          Thanks -- an administrator will review it. You'll get an email at the address you gave either way.
+          Thanks -- an administrator will review it, and you'll hear back at the address you gave. If you already have an account, sign in instead.
         </p>
         <button type="button" onClick={onDone} data-testid="back-to-signin" className="btn-secondary btn-sm mt-1">
           Back to sign in

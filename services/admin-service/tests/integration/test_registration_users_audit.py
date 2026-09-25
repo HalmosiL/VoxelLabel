@@ -7,6 +7,13 @@ def _submit(client, username="newdoc", email="newdoc@example.test", **extra):
     return client.post("/public/registration-requests", json={"username": username, "email": email, "first_name": "New", "last_name": "Doc", **extra})
 
 
+def _submitted(client, **kw):
+    """Submits a request and returns it as the admin list shows it (the
+    public answer carries no id, see the J-07 test)."""
+    assert _submit(client, **kw).status_code == 201
+    return next(r for r in client.get("/admin/registration-requests", params={"status": "pending"}).json() if r["username"] == kw.get("username", "newdoc"))
+
+
 def _delivery_on(client):
     """Registration emails go through the notification service's
     delivery switch, which is OFF on a fresh install -- the flow still
@@ -18,7 +25,7 @@ def _delivery_on(client):
 def test_submit_creates_a_pending_request_and_emails_requester_and_admins(client, outbox):
     _delivery_on(client)
     r = _submit(client, note="I work on LIDC")
-    assert r.status_code == 201 and r.json()["status"] == "pending"
+    assert r.status_code == 201 and r.json()["status"] == "received"
     to = sorted(m["to"] for m in outbox)
     assert to == ["newdoc@example.test", "platform-admin@example.test"]
     receipt = next(m for m in outbox if m["to"] == "newdoc@example.test")
@@ -35,17 +42,45 @@ def test_delivery_off_still_stores_the_request_and_logs_the_skip(client, outbox)
     assert all(e["status"] == "skipped" and "switched off" in e["error"] for e in log)
 
 
-def test_duplicates_are_refused(client):
-    assert _submit(client).status_code == 201
-    assert _submit(client).status_code == 409  # pending twice
-    assert _submit(client, username="dr-test", email="x@example.test").status_code == 409  # existing account
+import pytest  # noqa: E402
+from app.api import registration  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _fresh_limits():
+    registration._recent_by_ip.clear()
+    yield
+    registration._recent_by_ip.clear()
+
+
+def test_the_answer_never_says_whether_an_account_exists(client, db, outbox):
+    """J-07: a 409 "already exists" let anyone check usernames and emails
+    one by one. Every well-formed request gets the same answer; a
+    duplicate or an existing account creates nothing and mails nobody."""
+    from shared_models.models import RegistrationRequest
+
+    _delivery_on(client)
+    fresh = _submit(client)
+    assert fresh.status_code == 201 and fresh.json() == {"status": "received"}
+    for dup in (_submit(client), _submit(client, username="dr-test", email="x@example.test")):  # pending twice, existing account
+        assert dup.status_code == 201 and dup.json() == {"status": "received"}
+    assert db.query(RegistrationRequest).count() == 1
+    assert sorted(m["to"] for m in outbox) == ["newdoc@example.test", "platform-admin@example.test"]
     assert _submit(client, username="bad name!", email="y@example.test").status_code == 422
     assert _submit(client, username="ok", email="not-an-email").status_code == 422
 
 
+def test_requests_are_rate_limited_per_address(client):
+    """J-07: a script could file requests (and mail any inbox) without limit."""
+    for n in range(registration.MAX_REQUESTS_PER_HOUR):
+        assert _submit(client, username=f"user{n}", email=f"user{n}@example.test").status_code == 201
+    r = _submit(client, username="one-more", email="one-more@example.test")
+    assert r.status_code == 429 and "try again later" in r.json()["detail"]
+
+
 def test_approve_creates_the_account_with_a_one_time_password(client, keycloak, outbox):
     _delivery_on(client)
-    req = _submit(client).json()
+    req = _submitted(client)
     outbox.clear()
     r = client.post(f"/admin/registration-requests/{req['id']}/approve")
     assert r.status_code == 200 and r.json()["status"] == "approved"
@@ -60,7 +95,7 @@ def test_approve_creates_the_account_with_a_one_time_password(client, keycloak, 
 
 def test_reject_emails_the_reason_and_creates_no_account(client, keycloak, outbox):
     _delivery_on(client)
-    req = _submit(client).json()
+    req = _submitted(client)
     outbox.clear()
     r = client.post(f"/admin/registration-requests/{req['id']}/reject", json={"reason": "Not affiliated"})
     assert r.status_code == 200 and r.json()["rejection_reason"] == "Not affiliated"
@@ -112,7 +147,7 @@ def test_the_temporary_password_is_mailed_but_never_stored_in_the_delivery_log(c
     from shared_models.models import NotificationLog
 
     _delivery_on(client)
-    req = _submit(client).json()
+    req = _submitted(client)
     outbox.clear()
     assert client.post(f"/admin/registration-requests/{req['id']}/approve").status_code == 200
     password = re.search(r"Temporary password: (\S+)", outbox[0]["text"]).group(1)
