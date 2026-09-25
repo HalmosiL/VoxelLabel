@@ -1,5 +1,6 @@
 """HTTP API for DICOM ingestion: upload, job status, PyTorch exports, and
 quick import."""
+
 import io
 import json
 import uuid
@@ -15,6 +16,7 @@ from shared_models.models import Case, Study, WorkflowCard, WorkflowCardType
 from sqlalchemy.orm import Session
 
 from app.pipeline import REQUIRED_TAGS
+from app.queue import enqueue
 from app.storage import download_object, object_exists, presigned_export_url, upload_export_object, upload_staged_file
 from app.tasks import celery_app, export_pytorch_dataset, ingest_dicom_file, quick_import_batch
 
@@ -32,6 +34,7 @@ def _reject_non_dicom(data: bytes) -> None:
     missing = [tag for tag in REQUIRED_TAGS if tag not in dataset]
     if missing:
         raise HTTPException(status_code=422, detail=f"Not a valid DICOM file: missing {', '.join(missing)}")
+
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 
@@ -66,7 +69,7 @@ async def upload_dicom(
     upload_staged_file(staging_key, data)
     # task_id=job_id makes the job pollable via GET /ingestion/jobs/{job_id}
     # (Celery's own result backend), the same way quick imports are.
-    ingest_dicom_file.apply_async(kwargs={"job_id": job_id, "case_id": case_id, "staging_key": staging_key}, task_id=job_id)
+    enqueue(ingest_dicom_file, job_id, {"job_id": job_id, "case_id": case_id, "staging_key": staging_key}, staged=[staging_key])
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -119,9 +122,7 @@ async def quick_import(
         if file.filename:
             filenames[staging_key] = file.filename
 
-    quick_import_batch.apply_async(
-        kwargs={"study_id": study_id, "staging_keys": staging_keys, "filenames": filenames}, task_id=import_id
-    )
+    enqueue(quick_import_batch, import_id, {"study_id": study_id, "staging_keys": staging_keys, "filenames": filenames}, staged=staging_keys)
     return {"import_id": import_id, "status": "queued", "file_count": len(staging_keys)}
 
 
@@ -217,7 +218,7 @@ def create_pytorch_export(
     # task_id=export_id is what lets the GET route below poll this run via
     # Celery's own AsyncResult, with no dedicated database table for job
     # status.
-    export_pytorch_dataset.apply_async(kwargs={"export_id": export_id, "case_ids": case_ids}, task_id=export_id)
+    enqueue(export_pytorch_dataset, export_id, {"export_id": export_id, "case_ids": case_ids}, staged=[_request_key(export_id)])
     return {"export_id": export_id, "status": "queued"}
 
 
@@ -254,7 +255,5 @@ def get_pytorch_export(export_id: str, user: CurrentUser = Depends(get_current_u
         for series in case["series"]:
             series["image_url"] = presigned_export_url(series.pop("image_key"))
         for annotation in case.get("annotations", []):
-            annotation["asset_urls"] = {
-                key: presigned_export_url(value) for key, value in annotation.get("asset_keys", {}).items()
-            }
+            annotation["asset_urls"] = {key: presigned_export_url(value) for key, value in annotation.get("asset_keys", {}).items()}
     return {"status": "completed", "manifest": manifest}

@@ -5,9 +5,8 @@ upload), whose instance id isn't handed out either."""
 import uuid
 
 import pydicom
-from shared_models.models import Case, Patient, Study
-
 from app import pipeline, quick_import
+from shared_models.models import Case, Patient, Study
 
 
 def _ds(sop):

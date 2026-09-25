@@ -8,10 +8,9 @@ import uuid
 import numpy as np
 import pydicom
 import pytest
+from app import pipeline, storage
 from pydicom.dataset import Dataset
 from shared_models.models import Case, Patient, Study
-
-from app import pipeline, storage
 
 UID = "1.2.826.0.1.3680043.55"
 
