@@ -21,8 +21,8 @@ category of issue as the Keycloak issuer/JWKS split -- see
 `libs/shared-auth/README.md`.
 """
 import boto3
-from shared_auth.storage_errors import storage_client_config
 from shared_auth.object_links import link_secret, sign_object_link
+from shared_auth.storage_errors import storage_client_config
 
 from app.core.config import settings
 
@@ -81,3 +81,8 @@ def read_object(storage_key: str):
     """(streaming body, content type, length) of a stored object."""
     obj = _internal_client.get_object(Bucket=settings.object_storage_bucket, Key=storage_key)
     return obj["Body"], obj.get("ContentType") or "application/octet-stream", obj.get("ContentLength")
+
+
+def storage_check() -> None:
+    """For /health/ready: the bucket is reachable (through the internal endpoint)."""
+    _internal_client.head_bucket(Bucket=settings.object_storage_bucket)

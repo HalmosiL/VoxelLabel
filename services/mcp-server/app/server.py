@@ -41,12 +41,9 @@ import os
 import uuid
 
 import boto3
-from botocore.config import Config
 import pypdf
+from botocore.config import Config
 from mcp.server.mcpserver import MCPServer
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from shared_models.models import (
     Case,
     ClinicalDataItem,
@@ -57,6 +54,8 @@ from shared_models.models import (
     WorkflowEdge,
     case_tags,
 )
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql+psycopg://ctplatform:ctplatform@localhost:5432/ctplatform"

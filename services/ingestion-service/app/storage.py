@@ -107,3 +107,8 @@ def presigned_export_url(storage_key: str, expires_in: int = 86400) -> str:
         Params={"Bucket": settings.object_storage_bucket, "Key": storage_key},
         ExpiresIn=expires_in,
     )
+
+
+def storage_check() -> None:
+    """For /health/ready: the bucket is reachable."""
+    _client.head_bucket(Bucket=settings.object_storage_bucket)

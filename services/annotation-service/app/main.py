@@ -7,6 +7,7 @@ registered without a deployment.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from shared_auth.db_errors import install_db_error_handlers
+from shared_auth.readiness import database_check, install_readiness
 
 from app.api.routes import router as annotations_router
 from app.core.config import settings
@@ -26,5 +27,9 @@ app.include_router(annotations_router)
 
 @app.get("/health")
 def health() -> dict:
-    """Liveness/readiness probe target for Kubernetes."""
+    """Liveness probe: the process answers. Dependencies: /health/ready."""
     return {"status": "ok"}
+
+
+# /health is liveness only; /health/ready checks the dependencies and names what is down.
+install_readiness(app, {"database": database_check})

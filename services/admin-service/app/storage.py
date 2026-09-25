@@ -10,8 +10,8 @@ import mimetypes
 from collections.abc import Callable
 
 import boto3
-from shared_auth.storage_errors import storage_client_config
 from shared_auth.object_links import link_secret, sign_object_link
+from shared_auth.storage_errors import storage_client_config
 
 from app.core.config import settings
 
@@ -108,3 +108,8 @@ def read_object(storage_key: str):
     obj = _client.get_object(Bucket=settings.object_storage_bucket, Key=storage_key)
     content_type = obj.get("ContentType") or mimetypes.guess_type(storage_key)[0] or "application/octet-stream"
     return obj["Body"], content_type, obj.get("ContentLength")
+
+
+def storage_check() -> None:
+    """For /health/ready: the bucket is reachable."""
+    _client.head_bucket(Bucket=settings.object_storage_bucket)

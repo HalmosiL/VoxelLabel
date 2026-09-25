@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from shared_auth.db_errors import install_db_error_handlers
+from shared_auth.readiness import database_check, install_readiness
 from shared_auth.storage_errors import install_storage_error_handlers
 
 from app.api.annotation_types import router as annotation_types_router
@@ -31,6 +32,7 @@ from app.core.config import settings
 from app.notifications import router as notifications_router
 from app.notifications import start_poller
 from app.pipeline_health import router as pipeline_health_router
+from app.storage import storage_check
 from app.study_analytics import router as study_analytics_router
 from app.usage import router as usage_router
 from app.workflow_new_cases import start_new_cases_poller
@@ -83,5 +85,9 @@ app.include_router(study_analytics_router)
 
 @app.get("/health")
 def health() -> dict:
-    """Liveness/readiness probe target for Kubernetes."""
+    """Liveness probe: the process answers. Dependencies: /health/ready."""
     return {"status": "ok"}
+
+
+# /health is liveness only; /health/ready checks the dependencies and names what is down.
+install_readiness(app, {"database": database_check, "storage": storage_check})

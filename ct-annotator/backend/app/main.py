@@ -38,6 +38,7 @@ from app.storage import (
     download_object,
     install_storage_error_handlers,
     presigned_mask_url,
+    storage_check,
     upload_mask,
     upload_mask_volume,
 )
@@ -974,4 +975,27 @@ async def submit_annotation_review(
 
 @app.get("/health")
 def health() -> dict:
+    """Liveness probe: the process answers. Dependencies: /health/ready."""
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def ready() -> JSONResponse:
+    """Whether the viewer can work right now: storage and the platform
+    services it calls answer. 503 names what is down (the error's type
+    only -- no login needed here). Same shape as the platform's
+    shared_auth.readiness, which this service doesn't depend on."""
+    checks = {}
+    try:
+        await asyncio.to_thread(storage_check)
+        checks["storage"] = "ok"
+    except Exception as err:  # noqa: BLE001
+        checks["storage"] = f"unavailable ({type(err).__name__})"
+    for name, base in (("data-service", DATA_SERVICE_URL), ("annotation-service", ANNOTATION_SERVICE_URL), ("admin-service", ADMIN_SERVICE_URL)):
+        try:
+            resp = await _http_client.get(f"{base}/health", timeout=3)
+            checks[name] = "ok" if resp.status_code == 200 else f"unavailable (HTTP {resp.status_code})"
+        except Exception as err:  # noqa: BLE001
+            checks[name] = f"unavailable ({type(err).__name__})"
+    ok = all(value == "ok" for value in checks.values())
+    return JSONResponse(status_code=200 if ok else 503, content={"status": "ready" if ok else "not ready", "checks": checks})

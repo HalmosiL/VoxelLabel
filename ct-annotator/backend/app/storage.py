@@ -102,3 +102,8 @@ def install_storage_error_handlers(app) -> None:
     # ReadTimeoutError / ConnectionClosedError are HTTPClientErrors.
     for error in (BotoConnectionError, HTTPClientError):
         app.add_exception_handler(error, storage_down)
+
+
+def storage_check() -> None:
+    """For /health/ready: the bucket is reachable."""
+    _client.head_bucket(Bucket=OBJECT_STORAGE_BUCKET)

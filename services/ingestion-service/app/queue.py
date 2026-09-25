@@ -44,3 +44,12 @@ def install_queue_error_handlers(app: FastAPI) -> None:
 
     for error in QUEUE_ERRORS:
         app.add_exception_handler(error, queue_down)
+
+
+def queue_check() -> None:
+    """For /health/ready: the task queue (Redis) answers."""
+    import redis
+
+    from app.core.config import settings
+
+    redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2).ping()
