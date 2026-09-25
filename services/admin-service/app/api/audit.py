@@ -30,13 +30,19 @@ router = APIRouter(prefix="/admin", tags=["admin:audit"])
 def record(db: Session, user: CurrentUser, action: str, entity_type: str, entity_id, diff: dict | None = None) -> None:
     """Stage one audit line. `action` is "<entity>.<verb>" ("study.update",
     "member.add", "user.reset_password"); `entity_id` anything
-    uuid.UUID() accepts (Keycloak subjects are UUIDs too)."""
+    uuid.UUID() accepts (Keycloak subjects are UUIDs too) -- or a name
+    (a backup file, an annotation type, "usage" settings), which gets a
+    stable UUID5 of its own; put the name in `diff` to keep it readable."""
+    try:
+        entity_uuid = uuid.UUID(str(entity_id))
+    except ValueError:
+        entity_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"voxellabel:{entity_type}:{entity_id}")
     db.add(
         AuditLog(
             actor_id=user.subject,
             action=action,
             entity_type=entity_type,
-            entity_id=uuid.UUID(str(entity_id)),
+            entity_id=entity_uuid,
             diff=diff,
         )
     )

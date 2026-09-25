@@ -448,6 +448,7 @@ def update_settings(body: SettingsPatch, db: Session = Depends(get_db), user: Cu
     row = get_settings(db)
     for name, value in body.model_dump(exclude_none=True).items():
         setattr(row, name, value)
+    audit(db, user, "usage_settings.update", "settings", "usage", body.model_dump(exclude_none=True))
     db.commit()
     db.refresh(row)
     return _serialize_settings(row)
@@ -472,6 +473,7 @@ def set_user_switch(
         if not body.counted:
             excluded.append(user_id)
         row.excluded_user_ids = excluded
+    audit(db, user, "usage_user_switch.update", "user", user_id, body.model_dump(exclude_none=True))
     db.commit()
     db.refresh(row)
     return _serialize_settings(row)

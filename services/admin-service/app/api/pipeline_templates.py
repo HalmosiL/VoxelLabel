@@ -24,6 +24,8 @@ from shared_models.database import get_db
 from shared_models.models import PipelineTemplate, WorkflowCardType
 from sqlalchemy.orm import Session
 
+from app.api import audit
+
 router = APIRouter(prefix="/admin/pipeline-templates", tags=["admin:pipeline-templates"])
 
 
@@ -128,6 +130,7 @@ def create_pipeline_template(
         created_by=user.subject,
     )
     db.add(template)
+    audit.record(db, user, "template.create", "pipeline_template", template.id, {"title": template.title})
     db.commit()
     return _serialize(template)
 
@@ -144,4 +147,5 @@ def delete_pipeline_template(
     if template.created_by != user.subject and "admin" not in user.realm_roles:
         raise HTTPException(status_code=403, detail="Only the template's own author or an admin can delete it")
     db.delete(template)
+    audit.record(db, user, "template.delete", "pipeline_template", template.id, {"title": template.title})
     db.commit()

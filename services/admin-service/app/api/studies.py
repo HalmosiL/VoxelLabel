@@ -16,7 +16,7 @@ from shared_models.models import Annotation, AnnotationReview, Case, Deidentific
 from sqlalchemy.orm import Session
 
 from app.api import audit
-from app.api.input_checks import required_text
+from app.api.input_checks import required_text, safe_filename
 from app.duplication import duplicate_study
 from app.keycloak_admin import list_realm_users
 from app.storage import study_cover_image_link, upload_study_cover_image
@@ -329,10 +329,11 @@ async def upload_cover_image(
         raise HTTPException(status_code=404, detail="Study not found")
     _require_study_admin(db, study_id, user)
 
-    storage_key = f"study-covers/{study_id}/{uuid.uuid4()}-{file.filename}"
+    storage_key = f"study-covers/{study_id}/{uuid.uuid4()}-{safe_filename(file.filename)}"  # as for documents (J-05)
     upload_study_cover_image(storage_key, await file.read())
 
     study.cover_image_key = storage_key
+    audit.record(db, user, "study.cover_image", "study", study.id)
     db.commit()
     return {"id": str(study.id), "cover_image_url": study_cover_image_link(storage_key)}
 

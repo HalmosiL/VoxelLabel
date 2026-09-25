@@ -11,7 +11,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from shared_auth import CurrentUser, get_current_user
+from shared_models.database import get_db
+from sqlalchemy.orm import Session
 
+from app.api import audit
 from app.core.config import settings
 
 router = APIRouter(prefix="/admin/backups", tags=["admin:backups"])
@@ -73,7 +76,7 @@ def list_backups(user: CurrentUser = Depends(get_current_user)) -> dict:
 
 
 @router.post("", status_code=202)
-def request_backup(user: CurrentUser = Depends(get_current_user)) -> dict:
+def request_backup(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     """Ask the backup service for a backup now (it polls for the trigger
     every 30 s)."""
     _require_global_admin(user)
@@ -81,6 +84,8 @@ def request_backup(user: CurrentUser = Depends(get_current_user)) -> dict:
         raise HTTPException(status_code=503, detail="The backups volume isn't mounted -- is the db-backup service configured?")
     with open(os.path.join(settings.backups_dir, ".trigger"), "w") as handle:
         handle.write(datetime.now(timezone.utc).isoformat())
+    audit.record(db, user, "backup.request", "backup", "request")
+    db.commit()
     return {"status": "queued"}
 
 
@@ -94,10 +99,12 @@ def download_backup(filename: str, user: CurrentUser = Depends(get_current_user)
 
 
 @router.delete("/{filename}", status_code=204)
-def delete_backup(filename: str, user: CurrentUser = Depends(get_current_user)) -> None:
+def delete_backup(filename: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> None:
     _require_global_admin(user)
     path = _safe_path(filename)
     os.remove(path)
     checksum = path + ".sha256"
     if os.path.exists(checksum):
         os.remove(checksum)
+    audit.record(db, user, "backup.delete", "backup", filename, {"filename": filename})
+    db.commit()

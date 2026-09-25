@@ -11,6 +11,8 @@ from shared_models.database import get_db
 from shared_models.models import AnnotationType
 from sqlalchemy.orm import Session
 
+from app.api import audit
+
 router = APIRouter(prefix="/admin/annotation-types", tags=["admin:annotation-types"])
 
 
@@ -34,6 +36,7 @@ def create_annotation_type(
 
     annotation_type = AnnotationType(name=name, json_schema=json_schema)
     db.add(annotation_type)
+    audit.record(db, user, "annotation_type.create", "annotation_type", name, {"name": name})
     db.commit()
     return {"id": str(annotation_type.id), "name": annotation_type.name}
 
@@ -60,6 +63,7 @@ def update_annotation_type_schema(
         return {"id": str(annotation_type.id), "name": annotation_type.name, "schema_version": annotation_type.schema_version, "changed": False}
     annotation_type.json_schema = json_schema
     annotation_type.schema_version = (annotation_type.schema_version or 1) + 1
+    audit.record(db, user, "annotation_type.update_schema", "annotation_type", name, {"name": name})
     db.commit()
     return {"id": str(annotation_type.id), "name": annotation_type.name, "schema_version": annotation_type.schema_version, "changed": True}
 

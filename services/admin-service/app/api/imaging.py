@@ -15,6 +15,7 @@ from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, ImagingStudy, Instance, Series
 from sqlalchemy.orm import Session
 
+from app.api import audit
 from app.storage import delete_object
 
 router = APIRouter(prefix="/admin", tags=["admin:imaging"])
@@ -90,6 +91,7 @@ def update_imaging_study(
     if modality is not None:
         imaging_study.modality = modality or None
 
+    audit.record(db, user, "imaging_study.update", "imaging_study", imaging_study.id)
     db.commit()
     return {"id": str(imaging_study.id), "description": imaging_study.description, "modality": imaging_study.modality}
 
@@ -114,6 +116,7 @@ def delete_imaging_study(
             _delete_instance(db, instance)
         db.delete(series)
     db.delete(imaging_study)
+    audit.record(db, user, "imaging_study.delete", "imaging_study", imaging_study.id, {"case_id": str(imaging_study.case_id)})
     db.commit()
     return {"deleted": True}
 
@@ -134,6 +137,7 @@ def update_series(
     if body_part is not None:
         series.body_part = body_part or None
 
+    audit.record(db, user, "series.update", "series", series.id)
     db.commit()
     return {"id": str(series.id), "series_description": series.series_description, "body_part": series.body_part}
 
@@ -152,5 +156,6 @@ def delete_series(
     for instance in series.instances:
         _delete_instance(db, instance)
     db.delete(series)
+    audit.record(db, user, "series.delete", "series", series.id)
     db.commit()
     return {"deleted": True}

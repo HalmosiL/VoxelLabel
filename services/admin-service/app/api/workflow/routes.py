@@ -612,6 +612,7 @@ def create_workflow_edge(
             target_handle=body.target_handle,
         )
         db.add(edge)
+        audit.record(db, user, "edge.create", "workflow_edge", edge.id, {"study_id": str(study_id), "source_card_id": str(edge.source_card_id), "target_card_id": str(edge.target_card_id)})
         db.commit()
         db.refresh(edge)
         autosave(db, study_id, user.subject)
@@ -637,6 +638,7 @@ def create_workflow_edge(
         target_handle=body.target_handle,
     )
     db.add(edge)
+    audit.record(db, user, "edge.create", "workflow_edge", edge.id, {"study_id": str(study_id), "source_card_id": str(edge.source_card_id), "target_card_id": str(edge.target_card_id)})
     db.commit()
     db.refresh(edge)
     autosave(db, study_id, user.subject)
@@ -686,6 +688,7 @@ def delete_workflow_edge(
         raise HTTPException(status_code=404, detail="Edge not found")
     require_study_role(db, str(edge.study_id), user, allowed_roles=_WRITE_ROLES)
     db.delete(edge)
+    audit.record(db, user, "edge.delete", "workflow_edge", edge.id, {"study_id": str(edge.study_id)})
     db.commit()
     autosave(db, edge.study_id, user.subject)
 

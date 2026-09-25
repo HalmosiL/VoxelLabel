@@ -9,6 +9,7 @@ from shared_models.database import get_db
 from shared_models.models import NotificationLog, NotificationPreference
 from sqlalchemy.orm import Session
 
+from app.api import audit
 from app.keycloak_admin import list_realm_users
 
 from .events import get_settings
@@ -74,6 +75,7 @@ def update_settings(body: SettingsPatch, db: Session = Depends(get_db), user: Cu
         if body.poll_interval_seconds < 10:
             raise HTTPException(status_code=422, detail="The check interval must be at least 10 seconds")
         row.poll_interval_seconds = body.poll_interval_seconds
+    audit.record(db, user, "notification_settings.update", "settings", "notifications", {"fields": sorted(k for k in body.model_dump(exclude_none=True) if k != "smtp_password")})
     db.commit()
     db.refresh(row)
     return _serialize_settings(row)
@@ -210,4 +212,5 @@ def list_preferences(db: Session = Depends(get_db), user: CurrentUser = Depends(
 @router.put("/preferences/{user_id}")
 def update_preferences(user_id: str, body: PreferencePatch, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     _require_global_admin(user)
+    audit.record(db, user, "notification_preferences.update", "user", user_id, body.model_dump(exclude_none=True))
     return _apply_pref(db, user_id, body)

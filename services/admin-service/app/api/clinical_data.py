@@ -63,6 +63,7 @@ async def create_clinical_data_item(
     )
     db.add(item)
     db.flush()
+    audit.record(db, user, "clinical_data_item.create", "clinical_data_item", item.id, {"case_id": str(case.id), "title": item.title})
     if storage_key is not None:
         upload_clinical_data_file(storage_key, await file.read())
     try:
@@ -97,6 +98,7 @@ def update_clinical_data_item(
     if item_date is not None:
         item.date = input_checks.optional_date(item_date, "The document date")
 
+    audit.record(db, user, "clinical_data_item.update", "clinical_data_item", item.id)
     db.commit()
     return {
         "id": str(item.id),
@@ -123,6 +125,7 @@ def delete_clinical_data_item(
     for consent in item.consents:
         db.delete(consent)
     db.delete(item)
+    audit.record(db, user, "clinical_data_item.delete", "clinical_data_item", item.id, {"case_id": str(item.case_id), "title": item.title})
     db.commit()
     return {"deleted": True}
 
@@ -145,6 +148,7 @@ def add_tag(
         raise HTTPException(status_code=409, detail=f"This document is already tagged '{label}'")
     tag = Tag(clinical_data_item_id=item.id, label=label)
     db.add(tag)
+    audit.record(db, user, "tag.add", "clinical_data_item", item.id, {"label": label})
     db.commit()
     return {"id": str(tag.id), "label": tag.label}
 
@@ -165,6 +169,7 @@ def delete_tag(
     if tag is None:
         raise HTTPException(status_code=404, detail="Tag not found on this document")
     db.delete(tag)
+    audit.record(db, user, "tag.delete", "clinical_data_item", item.id, {"label": tag.label})
     db.commit()
 
 
