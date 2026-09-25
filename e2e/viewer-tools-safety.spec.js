@@ -119,11 +119,35 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
   await save();
   const applied = (await counts())[d] || 0;
   check("Enter writes exactly the previewed region", previewed > 0 && applied === previewed, { previewed, applied });
+  // ---- E-07: "Clear hovered slice" wipes only the active object ----
+  const e1 = await newObject();
+  await page.locator('[data-testid="tool-paint"]').click();
+  await stroke(at(0.20, 0.20), at(0.26, 0.24));
+  const e2 = await newObject();
+  await page.locator('[data-testid="tool-paint"]').click();
+  await stroke(at(0.20, 0.30), at(0.26, 0.34));
+  await save();
+  const beforeClear = await counts();
+  await page.locator('[data-testid="pane-axial"]').hover();
+  await page.getByRole("button", { name: "Clear hovered slice" }).click();
+  await save();
+  const afterClear = await counts();
+  check("Clear hovered slice keeps the other object's paint", beforeClear[e1] > 0 && afterClear[e1] === beforeClear[e1] && !afterClear[e2], { before: [beforeClear[e1], beforeClear[e2]], after: [afterClear[e1], afterClear[e2]] });
+
+  // ---- E-12: instance numbers are never reused within a label ----
+  // e2 is active, so the new object joins e2's label; deleting the older e1
+  // used to hand its count to the next object -- a second "e2" name.
+  const nameOf = async (id) => (await page.locator(`[data-testid="object-${id}"]`).innerText()).trim().split("\n")[0];
+  await page.locator(`[data-testid="delete-${e1}"]`).click(); await page.waitForTimeout(300);
+  await page.locator(`[data-testid="object-${e2}"]`).click();
+  const e3 = await newObject();
+  check("a new object never takes a name already in use", (await nameOf(e3)) !== (await nameOf(e2)), { e2: await nameOf(e2), e3: await nameOf(e3) });
+
   check("no page errors", errors.length === 0, errors);
 
   // Leave the shared fixture case as we found it: the objects made here go
   // (review specs later decide every object on this case, one by one).
-  for (const id of [a, b, d]) await page.locator(`[data-testid="delete-${id}"]`).click();
+  for (const id of [a, b, d, e2, e3]) await page.locator(`[data-testid="delete-${id}"]`).click();
   await save();
 
   await browser.close();

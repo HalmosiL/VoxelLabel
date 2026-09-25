@@ -313,6 +313,10 @@ export default function ViewerPage() {
   }
   const reviewMode = simulatedRole === "reviewer" ? true : surfaceConfig?.card_type === "review";
   const effectiveSurface = surfaceConfig;
+  // The job's Surface decides the tools; the Eraser also drives right-drag
+  // erase and "Clear hovered slice", so neither is a way around a Surface
+  // without it (E-10).
+  const eraseAllowed = !effectiveSurface || effectiveSurface.tools.includes("erase");
 
   // The job's own todo/in_progress/done status -- editable right here
   // (see the header's status <select>) instead of only from the
@@ -966,8 +970,16 @@ export default function ViewerPage() {
   const redoStackRef = useRef<SliceSnapshot[]>([]);
   const HISTORY_LIMIT = 20;
 
-  const rows = metadata?.rows ?? 0;
-  const columns = metadata?.columns ?? 0;
+  // The series' image size, fixed by the first slice's metadata: a series
+  // mixing sizes used to re-allocate the mask on reaching a slice of the
+  // other size, silently dropping every unsaved label, object and stroke
+  // (E-11). Such a series gets a warning instead (mixedSizes).
+  const [seriesDims, setSeriesDims] = useState<{ seriesId: string; rows: number; columns: number } | null>(null);
+  const [mixedSizes, setMixedSizes] = useState<string | null>(null);
+  const dimsForSeries = seriesDims && seriesDims.seriesId === seriesId ? seriesDims : null;
+  useEffect(() => setMixedSizes(null), [seriesId]);
+  const rows = dimsForSeries?.rows ?? 0;
+  const columns = dimsForSeries?.columns ?? 0;
   const numSlices = instances.length;
 
   // The wheel listener below is attached once (mount-only effect) so its
@@ -999,6 +1011,17 @@ export default function ViewerPage() {
     getInstanceMetadata(debouncedInstanceId)
       .then((meta) => {
         setMetadata(meta);
+        if (seriesId && meta.rows && meta.columns) {
+          setSeriesDims((prev) => {
+            if (!prev || prev.seriesId !== seriesId) return { seriesId, rows: meta.rows ?? 0, columns: meta.columns ?? 0 };
+            if (prev.rows !== meta.rows || prev.columns !== meta.columns) {
+              setMixedSizes(
+                `This series mixes image sizes (${prev.columns}×${prev.rows} and ${meta.columns}×${meta.rows}). Painting only works on slices of the first size, and 3D views aren't available.`
+              );
+            }
+            return prev;
+          });
+        }
         setWindowCenter((prev) => (prev === DEFAULT_WINDOW_CENTER ? meta.window_center ?? prev : prev));
         setWindowWidth((prev) => (prev === DEFAULT_WINDOW_WIDTH ? meta.window_width ?? prev : prev));
         setSagittalIndex((prev) => prev ?? Math.floor((meta.columns ?? 1) / 2));
@@ -1246,7 +1269,10 @@ export default function ViewerPage() {
     }
     trackAction("object.add");
     const id = nextObjectIdRef.current++;
-    const instanceNumber = objects.filter((o) => o.label_id === labelId).length + 1;
+    // Never a number already used in this label: counting the objects gave
+    // a second "Dup 2" after "Dup 1" was deleted, and the name is what the
+    // review card and comments use (E-12).
+    const instanceNumber = Math.max(0, ...objects.filter((o) => o.label_id === labelId).map((o) => o.instance_number)) + 1;
     setObjects((prev) => [...prev, { id, label_id: labelId, instance_number: instanceNumber, locked: false, hidden: false }]);
     setActiveObjectId(id);
   }
@@ -1591,10 +1617,20 @@ export default function ViewerPage() {
    * first point (once at least 3 are placed) closes and fills the
    * interior with the active object -- an outline-then-fill workflow
    * that doesn't need the freehand brush to be pixel-accurate. */
+  /** POLYGON_CLOSE_RADIUS_PX on screen, in the pane's voxel units. A fixed
+   * 10 voxels was ~72 screen px at 9x zoom, so a small nodule's outline
+   * closed itself on the 4th click (E-08). */
+  function polygonCloseRadius(pane: PaneKey): number {
+    const canvas = overlayRefs[pane].current;
+    const rect = canvas?.getBoundingClientRect();
+    if (!canvas || !rect || rect.width === 0) return POLYGON_CLOSE_RADIUS_PX;
+    return POLYGON_CLOSE_RADIUS_PX * (canvas.width / rect.width);
+  }
+
   function handlePolygonClick(pane: PaneKey, point: { x: number; y: number }) {
     if (polygonDraft && polygonDraft.pane === pane && polygonDraft.points.length >= 3) {
       const first = polygonDraft.points[0];
-      if (Math.hypot(point.x - first.x, point.y - first.y) <= POLYGON_CLOSE_RADIUS_PX) {
+      if (Math.hypot(point.x - first.x, point.y - first.y) <= polygonCloseRadius(pane)) {
         commitPolygon(pane, polygonDraft.points);
         setPolygonDraft(null);
         setPolygonCursor(null);
@@ -1850,8 +1886,10 @@ export default function ViewerPage() {
       if (!right.moved && dragDistance > RIGHT_CLICK_DRAG_THRESHOLD_PX) {
         // Confirmed a real drag, not a click -- only now does this turn
         // into the familiar force-erase stroke (starting from the
-        // original down point, so the stroke doesn't have a gap).
+        // original down point, so the stroke doesn't have a gap). Not in a
+        // job whose Surface has no Eraser (E-10): the drag just does nothing.
         right.moved = true;
+        if (!eraseAllowed) return;
         snapshotSliceForUndo(pane);
         forceEraseRef.current = true;
         drawingRef.current = true;
@@ -1859,7 +1897,7 @@ export default function ViewerPage() {
         lastPointRef.current = right.point;
         strokeSegment(pane, lastPointRef.current, right.point);
       }
-      if (right.moved) {
+      if (right.moved && eraseAllowed) {
         const point = canvasPoint(event, pane);
         strokeSegment(pane, lastPointRef.current, point);
         lastPointRef.current = point;
@@ -2281,14 +2319,17 @@ export default function ViewerPage() {
     );
   }
 
+  /** Wipes the active object's paint on the hovered slice -- only that
+   * object's, as the button's tooltip says; it used to wipe every
+   * unlocked object on the slice (E-07). */
   function clearCurrentSlice(pane: PaneKey) {
+    if (activeObjectId === null || isVoxelProtected(activeObjectId)) return;
     snapshotSliceForUndo(pane);
     const index = currentIndex(pane);
     const { width, height } = planeDims(pane);
     for (let py = 0; py < height; py++) {
       for (let px = 0; px < width; px++) {
-        if (isVoxelProtected(readSliceValue(pane, index, px, py))) continue;
-        writeSliceValue(pane, index, px, py, 0);
+        if (readSliceValue(pane, index, px, py) === activeObjectId) writeSliceValue(pane, index, px, py, 0);
       }
     }
     renderAllPaneOverlays();
@@ -2304,6 +2345,11 @@ export default function ViewerPage() {
     restoreSlice(entry.pane, entry.index, entry.slice);
     renderAllPaneOverlays();
   }
+
+  const undoRef = useRef(undoLastMaskChange);
+  undoRef.current = undoLastMaskChange;
+  const redoRef = useRef(redoLastMaskChange);
+  redoRef.current = redoLastMaskChange;
 
   function redoLastMaskChange() {
     const entry = redoStackRef.current.pop();
@@ -2513,8 +2559,11 @@ export default function ViewerPage() {
       return () => el.removeEventListener("wheel", listener);
     });
     return () => cleanups.forEach((cleanup) => cleanup());
+    // Re-bound whenever panes mount or unmount (maximize/restore, hide/
+    // show): bound once, a re-shown pane got no listener and ignored the
+    // wheel until a reload (E-03).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [visiblePaneKeys.join(",")]);
 
   function handleWheel(event: WheelEvent, pane: PaneKey, container: HTMLElement) {
     event.preventDefault();
@@ -3270,14 +3319,16 @@ export default function ViewerPage() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         if (typing || tab !== "annotate") return;
         event.preventDefault();
-        if (event.shiftKey) redoLastMaskChange();
-        else undoLastMaskChange();
+        // through refs: this handler is bound less often than the slice
+        // indices change, and the stale copy redrew the wrong slice (E-02)
+        if (event.shiftKey) redoRef.current();
+        else undoRef.current();
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
         if (typing || tab !== "annotate") return;
         event.preventDefault();
-        redoLastMaskChange();
+        redoRef.current();
         return;
       }
 
@@ -3689,6 +3740,11 @@ export default function ViewerPage() {
         </div>
       </header>
       {error && <div className="flex-shrink-0 bg-red-900/60 px-4 py-1.5 text-xs text-red-200">{error}</div>}
+      {mixedSizes && (
+        <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="mixed-sizes">
+          {mixedSizes}
+        </div>
+      )}
       {reviewBlocked && maskReady && (
         <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="review-blocked">
           {reviewBlocked}
@@ -4079,17 +4135,19 @@ export default function ViewerPage() {
           {!reviewMode && (
             <Section title="Draw" guide="draw" help="Settings for the Paint and Eraser tools, and a quick way to wipe one slice of the active object.">
               {tool !== "fill" && <SliderRow label="Brush size" help="Radius of the Paint and Eraser brush, in screen pixels." value={brushRadius} min={1} max={30} onChange={setBrushRadius} suffix="px" />}
+              {eraseAllowed && (
               <Tip title="Clear hovered slice" description="Wipes the active object's paint on the slice under the mouse only. Undo brings it back." side="left">
                 <span className="mt-1 flex">
                   <button
                     onClick={() => clearCurrentSlice(hoveredPaneRef.current)}
-                    disabled={!maskReady}
+                    disabled={!maskReady || activeObjectId === null}
                     className="rounded border border-[#444] bg-[#2a2a3e] px-3 py-1.5 text-[11px] text-gray-300 transition-colors hover:bg-[#333] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Clear hovered slice
                   </button>
                 </span>
               </Tip>
+              )}
             </Section>
           )}
 
@@ -4157,7 +4215,7 @@ export default function ViewerPage() {
                   ? "Auto · Drag a box around a structure · Adjust the HU range · Enter=Apply · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
                   : tool === "histogram"
                     ? "Histogram · Drag a box to see its HU distribution · Esc=Close · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
-                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw · Right-click drag=Erase · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes`}
+                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw${eraseAllowed ? " · Right-click drag=Erase" : ""} · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes`}
         </span>
         <span className="flex-shrink-0 whitespace-nowrap">{activeObjectName ? `Active: ${activeObjectName}` : tab === "annotate" ? "No object selected" : ""}</span>
       </div>

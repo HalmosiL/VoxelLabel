@@ -252,6 +252,16 @@ async def _get_volume(series_id: str, user: CurrentUser) -> np.ndarray:
             return rescaled_pixels(dataset)
 
     slices = await asyncio.gather(*(_load(instance) for instance in ordered))
+    sizes = {s.shape for s in slices}
+    if len(sizes) > 1:
+        # a 422 with a reason, not np.stack's ValueError as a 500 without
+        # CORS headers ("Failed to fetch" in the viewer, E-11)
+        listed = " and ".join(f"{w}x{h}" for h, w in sorted(sizes))
+        raise HTTPException(
+            status_code=422,
+            detail=f"This series mixes image sizes ({listed}), so it can't form a 3D stack -- sagittal/coronal "
+            "reconstruction isn't available for it. View it slice by slice on the axial pane instead.",
+        )
     volume = np.stack(slices, axis=0)
     _volume_cache[series_id] = (now, volume)
     _prune_cache(_volume_cache, _MAX_CACHED_VOLUMES)

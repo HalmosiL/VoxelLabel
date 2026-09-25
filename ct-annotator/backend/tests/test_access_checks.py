@@ -242,3 +242,34 @@ def test_a_review_comment_is_forwarded_in_the_body(monkeypatch):
         app.dependency_overrides.pop(main.get_current_user, None)
     assert r.status_code == 200
     assert sent["params"] == {"decision": "reject"} and len(sent["json"]["comment"]) == 12000
+
+
+def test_a_series_mixing_image_sizes_is_a_clear_422(api, monkeypatch):
+    """E-11: np.stack's ValueError came out as a 500 without CORS headers,
+    shown in the viewer as "Failed to fetch"."""
+    main._volume_cache.clear()
+
+    async def two_instances(url, user):
+        return [{"id": "i1", "instance_number": 1}, {"id": "i2", "instance_number": 2}]
+
+    shapes = {"i1": (4, 4), "i2": (2, 2)}
+
+    async def dataset(instance_id, user):
+        return shapes[instance_id]
+
+    monkeypatch.setattr(main, "_series_instances_checked", two_instances)
+    monkeypatch.setattr(main, "_require_series_access", lambda *a, **k: _noop())
+    monkeypatch.setattr(main, "_get_dataset", dataset)
+    monkeypatch.setattr(main, "rescaled_pixels", lambda shape: np.zeros(shape, dtype=np.float32))
+    import asyncio
+
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(main._get_volume(SERIES, MEMBER))
+    assert exc.value.status_code == 422 and "mixes image sizes" in exc.value.detail
+
+
+async def _noop():
+    return None
