@@ -57,6 +57,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # a download's dated file name, readable by the admin-ui on its own origin (H-07)
+    expose_headers=["Content-Disposition"],
 )
 app.include_router(studies_router)
 app.include_router(deidentification_router)
