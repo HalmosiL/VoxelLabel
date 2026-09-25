@@ -794,17 +794,23 @@ def place_clicks(points: list[dict], anchors: list | None, viewport: list[int]) 
     object row); if there is none, the click is left out and counted as
     hidden. Clicks recorded before targets had a relative position keep
     their screen position. Each placed point says how: exact, similar or
-    screen."""
+    screen.
+
+    A target that names several elements of the picture (every text-less
+    icon button is just "button") can't say which one was clicked, so it
+    keeps its recorded screen position -- they were all drawn on the
+    first such button (H-08)."""
     boxes: dict[str, list] = {}
     kinds: dict[str, list] = {}
     for a in anchors or []:
         boxes.setdefault(a[0], a)
         kinds.setdefault(_pattern(a[0]), a)
+    ambiguous = {name for name, n in Counter(a[0] for a in anchors or []).items() if n > 1}
     vw, vh = viewport
     placed, hidden = [], Counter()
     for p in points:
         target = p.get("target")
-        if p.get("rx") is None or not target or not anchors:
+        if p.get("rx") is None or not target or not anchors or target in ambiguous:
             placed.append({**p, "placed": "screen"})
             continue
         box, how = boxes.get(target), "exact"

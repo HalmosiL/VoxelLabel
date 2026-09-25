@@ -428,3 +428,19 @@ def test_within_study_keeps_only_the_study_s_pages():
     ]
     kept = stats.within_study(events, "st-1")
     assert [(e["event_type"], e["route"]) for e in kept] == [("page_view", "/studies/:id"), ("click", "/studies/:id"), ("page_leave", "/studies/:id")]
+
+
+def test_clicks_on_look_alike_buttons_keep_their_own_spot():
+    """H-08: every click on a text-less icon button (target "button") was
+    drawn on the first such button of the picture -- 100 clicks on one spot."""
+    from app.usage.stats import place_clicks
+
+    anchors = [["button", 10, 10, 20, 20], ["button", 500, 300, 20, 20], ["Save", 900, 10, 60, 20]]
+    points = [
+        {"target": "button", "rx": 0.5, "ry": 0.5, "x": 0.31, "y": 0.34},
+        {"target": "Save", "rx": 0.5, "ry": 0.5, "x": 0.9, "y": 0.02},
+    ]
+    placed, hidden = place_clicks(points, anchors, [1000, 1000])
+    button, save = placed
+    assert (button["placed"], button["x"], button["y"]) == ("screen", 0.31, 0.34)  # its recorded position, not the first button
+    assert save["placed"] == "exact" and save["x"] == 0.93
