@@ -35,6 +35,7 @@ this study's data" means.
 """
 import copy
 import io
+import logging
 import uuid
 
 import pydicom
@@ -56,9 +57,10 @@ from shared_models.models import (
 from sqlalchemy.orm import Session
 
 from app.api import audit
-from app.storage import copy_object_bytes
+from app.storage import copy_object_bytes, delete_object
 from app.versioning import autosave
 
+logger = logging.getLogger(__name__)
 
 def _new_dicom_uid() -> str:
     """A fresh, valid, collision-free DICOM UID with nothing but the
@@ -194,10 +196,35 @@ def duplicate_study(
     new_name: str | None = None,
     include_workflow: bool = True,
 ) -> Study:
-    """Builds, commits and returns the new Study. Not wrapped in a savepoint
-    beyond the normal request transaction -- like delete_study's cascade,
-    a failure partway through rolls back the whole thing when the route's
-    session is torn down on an unhandled exception."""
+    """Builds, commits and returns the new Study -- all or nothing. The
+    source study's row is locked for the whole copy (delete_case takes the
+    same lock), so a case deleted meanwhile can't end up half-copied; and
+    every object written to the bucket is removed again if the copy fails
+    (they were left behind, referenced by nothing, B-13)."""
+    written: list[str] = []
+    try:
+        return _duplicate(db, source, user, new_name, include_workflow, written)
+    except Exception:
+        db.rollback()
+        for key in written:
+            try:
+                delete_object(key)
+            except Exception:  # noqa: BLE001 -- best effort; the original error is what matters
+                logger.warning("duplication: could not remove %s after a failed copy", key)
+        raise
+
+
+def _duplicate(db: Session, source: Study, user: CurrentUser, new_name, include_workflow, written: list[str]) -> Study:
+    db.query(Study).filter(Study.id == source.id).with_for_update().first()
+
+    def copy_object(src_key: str, dst_key: str, transform=None) -> None:
+        written.append(dst_key)
+        copy_object_bytes(src_key, dst_key, transform)
+
+    def copy_best_effort(src_key: str, dst_key: str) -> bool:
+        written.append(dst_key)
+        return _copy_object_best_effort(src_key, dst_key)
+
     name = _unique_study_name(db, new_name or f"{source.name} (copy)")
 
     new_study = Study(
@@ -210,7 +237,7 @@ def duplicate_study(
 
     if source.cover_image_key:
         dst_key = _copied_key(source.cover_image_key, f"study-covers/{new_study.id}")
-        copy_object_bytes(source.cover_image_key, dst_key)
+        copy_object(source.cover_image_key, dst_key)
         new_study.cover_image_key = dst_key
 
     for membership in db.query(StudyMembership).filter_by(study_id=source.id).all():
@@ -260,7 +287,7 @@ def duplicate_study(
                     # Same key shape ingestion-service's pipeline.py uses:
                     # "{StudyInstanceUID}/{SeriesInstanceUID}/{SOPInstanceUID}.dcm".
                     new_pixel_key = f"{new_imaging_study.study_instance_uid}/{new_series.series_instance_uid}/{new_sop_uid}.dcm"
-                    copy_object_bytes(
+                    copy_object(
                         instance.object_storage_key,
                         new_pixel_key,
                         _with_uids(new_imaging_study.study_instance_uid, new_series.series_instance_uid, new_sop_uid),
@@ -269,7 +296,7 @@ def duplicate_study(
                     new_thumbnail_key = None
                     if instance.thumbnail_key:
                         candidate_key = f"thumbnails/{new_instance_id}.png"
-                        if _copy_object_best_effort(instance.thumbnail_key, candidate_key):
+                        if copy_best_effort(instance.thumbnail_key, candidate_key):
                             new_thumbnail_key = candidate_key
 
                     db.add(Instance(
@@ -290,7 +317,7 @@ def duplicate_study(
         for item in db.query(ClinicalDataItem).filter_by(case_id=case.id).all():
             new_key = _copied_key(item.object_storage_key, f"clinical-data/{new_case.id}")
             if item.object_storage_key:
-                copy_object_bytes(item.object_storage_key, new_key)
+                copy_object(item.object_storage_key, new_key)
             new_item = ClinicalDataItem(
                 case_id=new_case.id,
                 date=item.date,

@@ -67,6 +67,30 @@ def create_patient(
     return {"id": str(patient.id), "pseudonym_id": patient.pseudonym_id}
 
 
+@router.delete("/patients/{patient_id}", status_code=204)
+def delete_patient(
+    patient_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Deletes a patient who has no cases, with the hash of their real
+    identifier -- an erasure request, or a mistyped identifier registered
+    by accident. There was no way to (B-23). A patient with cases is a
+    409: delete or move the cases first. Global admin only, like the
+    Patients pages."""
+    _require_global_admin(user)
+    patient = db.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    case_count = db.query(Case).filter_by(patient_id=patient.id).count()
+    if case_count:
+        raise HTTPException(status_code=409, detail=f"This patient still has {case_count} case(s) -- delete them first")
+    db.query(PatientIdentityMap).filter_by(patient_id=patient.id).delete()
+    audit.record(db, user, "patient.delete", "patient", patient.id)
+    db.delete(patient)
+    db.commit()
+
+
 @router.post("/studies/{study_id}/cases")
 def create_case(
     study_id: str,
@@ -239,6 +263,8 @@ def delete_case(
     require_study_role(db, str(case.study_id), user, allowed_roles=["data_manager", "admin"])
 
     study_id_for_version = case.study_id
+    # the same lock a study duplication holds: never half-copied (B-13)
+    db.query(Study).filter(Study.id == case.study_id).with_for_update().first()
     audit.record(db, user, "case.delete", "case", case.id, {"study_id": str(case.study_id), "title": case.title})
     _forget_deleted_case(db, case.study_id, str(case.id))
     _delete_case_cascade(db, case)

@@ -85,3 +85,43 @@ def test_copied_dicom_files_carry_the_copys_own_uids(client, db, bucket):
     # the original file is untouched
     original = pydicom.dcmread(io.BytesIO(bucket.objects[orig_key]))
     assert (original.StudyInstanceUID, original.SeriesInstanceUID, original.SOPInstanceUID) == (ORIG["study"], ORIG["series"], ORIG["sop"])
+
+
+def test_a_failed_duplication_leaves_no_objects_and_no_study(client, db, bucket, monkeypatch):
+    """B-13: objects were written before the database commit and stayed
+    when the duplication failed -- 203 unreferenced files in the report."""
+    from app import duplication
+    from shared_models.models import Study
+
+    study_id = make_study(client, "Dup fail source")
+    case_id = make_case(client, study_id)["id"]
+    imaging = ImagingStudy(case_id=uuid.UUID(case_id), study_instance_uid=ORIG["study"])
+    db.add(imaging)
+    db.flush()
+    series = Series(imaging_study_id=imaging.id, series_instance_uid=ORIG["series"])
+    db.add(series)
+    db.flush()
+    for n in range(3):
+        key = f"orig/{n}.dcm"
+        db.add(Instance(series_id=series.id, sop_instance_uid=f"{ORIG['sop']}.{n}", object_storage_key=key))
+        bucket.objects[key] = _dicom_bytes()
+    db.commit()
+    before = set(bucket.objects)
+    deleted = []
+    monkeypatch.setattr(duplication, "delete_object", lambda key: (deleted.append(key), bucket.objects.pop(key, None)), raising=False)
+    real_copy, calls = duplication.copy_object_bytes, []
+
+    def copy_then_fail(src, dst, transform=None):
+        calls.append(dst)
+        if len(calls) == 3:
+            raise RuntimeError("storage went away")
+        real_copy(src, dst, transform)
+
+    monkeypatch.setattr(duplication, "copy_object_bytes", copy_then_fail)
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError):
+        client.post(f"/admin/studies/{study_id}/duplicate", json={"name": "Dup fail copy"})
+    assert set(bucket.objects) == before  # the two copies made before the failure were removed
+    db.expire_all()
+    assert db.query(Study).filter_by(name="Dup fail copy").count() == 0
