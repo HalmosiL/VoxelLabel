@@ -32,7 +32,7 @@ async function closeTour(page) {
   await page.waitForSelector('[data-guide="panes"] canvas', { timeout: 30000 });
   await page.waitForTimeout(1200);
   const tour = await closeTour(page);
-  check("the tour teaches the wheel, mouse windowing, the crosshair and the slab", /Scroll<?\/?b?>? changes slice|Scroll changes slice/.test(tour) && /right mouse button/.test(tour) && /crosshair/i.test(tour) && /Thick slices \(slab\)/.test(tour), tour.slice(0, 300));
+  check("the tour teaches the wheel, mouse windowing, the crosshair and the slab", /scroll<?\/?b?>? changes slice/i.test(tour) && /right mouse button/.test(tour) && /crosshair/i.test(tour) && /Thick slices \(slab\)/.test(tour), tour.slice(0, 300));
 
   const canvases = page.locator('[data-guide="panes"] canvas'); // sagittal, coronal, axial
   const sliders = () => page.evaluate(() => Array.from(document.querySelectorAll('[data-guide="pane-sliders"] input[type=range]')).map((i) => Number(i.value)));

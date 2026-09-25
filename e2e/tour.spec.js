@@ -97,7 +97,7 @@ async function hoverTip(page, locator, label) {
   const t = await token("dr-test", "Test1234!");
   const jobs = await api(t, `${ADMIN}/admin/my-jobs`);
   const job = jobs.find((j) => j.card_id === ANNOT_CARD);
-  const kase = job.cases.find((c) => c.status === "rejected") ?? job.cases.find((c) => c.status !== "done");
+  const kase = job.cases.find((c) => c.status === "rejected") ?? job.cases.find((c) => c.status !== "done") ?? job.cases[job.cases.length - 1];
   const series = (await api(t, `http://localhost:8002/data/cases/${kase.id}/series`))[0].id;
   const browser = await chromium.launch();
 
