@@ -11,6 +11,7 @@ assembles the stored parts into one HTML document for that iframe.
 Pure functions plus small DB helpers; the endpoints are in api.py."""
 import base64
 import gzip
+import hashlib
 import re
 
 from shared_models.models import UsageSnapshot, UsageSnapshotStyle
@@ -23,6 +24,7 @@ MAX_CSS_BYTES = 3_000_000
 # Newest snapshots kept per (app, screen); older ones go -- the heatmap
 # only needs the latest, a replay falls back to the layout outline.
 KEEP_PER_SCREEN = 300
+KEEP_PER_USER_SCREEN = 50
 
 _SCRIPT = re.compile(r"<(script|noscript|template|style)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 # An opening tag with no closing one (<script src=...> cut short) -- the
@@ -180,13 +182,35 @@ def ungz(blob: bytes | None) -> str | None:
     return gzip.decompress(blob).decode("utf-8", errors="replace") if blob else None
 
 
+def style_key(uploader: str, client_hash: str) -> str:
+    """Where one uploader's stylesheet is kept: the client's own hash,
+    scoped to who sent it. The client picks the hash, and the first upload
+    of a hash was kept for everyone -- one account could restyle anybody's
+    snapshots (H-09). Scoped, a person only ever supplies the styles of
+    their own pictures; the client still sends each stylesheet once."""
+    return hashlib.sha256(f"{uploader}:{client_hash}".encode()).hexdigest()
+
+
 def store_style(db: Session, css_hash: str, css: str) -> None:
     if db.get(UsageSnapshotStyle, css_hash) is None:
         db.add(UsageSnapshotStyle(css_hash=css_hash, css_gz=gz(clean_css(css))))
 
 
-def trim(db: Session, app: str, route: str) -> None:
-    """Keep only the newest KEEP_PER_SCREEN snapshots of one screen."""
+def trim(db: Session, app: str, route: str, user_id: str | None = None) -> None:
+    """Keep only the newest KEEP_PER_USER_SCREEN snapshots of one screen
+    per person, and KEEP_PER_SCREEN in all. The per-person cap means one
+    account can't push everybody else's pictures out -- 300 junk uploads
+    did (H-09)."""
+    if user_id is not None:
+        mine = (
+            db.query(UsageSnapshot.id)
+            .filter(UsageSnapshot.app == app, UsageSnapshot.route == route, UsageSnapshot.user_id == user_id)
+            .order_by(UsageSnapshot.occurred_at.desc())
+            .offset(KEEP_PER_USER_SCREEN)
+            .all()
+        )
+        if mine:
+            db.query(UsageSnapshot).filter(UsageSnapshot.id.in_([r.id for r in mine])).delete(synchronize_session=False)
     old = (
         db.query(UsageSnapshot.id)
         .filter(UsageSnapshot.app == app, UsageSnapshot.route == route)

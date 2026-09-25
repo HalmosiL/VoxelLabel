@@ -630,3 +630,38 @@ def test_the_study_filtered_csv_holds_only_the_studys_pages(client):
     body = client.get("/admin/usage/export/events.csv", params={"days": 7, "study_id": sid}).text
     rows = [line for line in body.splitlines()[1:] if line.strip()]
     assert len(rows) == 2 and all("/studies/:id" in r for r in rows), rows
+
+
+def test_one_account_cannot_restyle_or_push_out_other_peoples_snapshots(client, db):
+    """H-09: the stylesheet hash was chosen by the client and the first
+    upload of a hash kept forever -- anyone could restyle other people's
+    snapshots ("Session expired -- sign in at evil.example") -- and 300
+    junk uploads pushed every genuine snapshot of a screen out."""
+    import base64
+    import gzip
+
+    from app.usage import snapshots
+    from shared_models.models import UsageSnapshot
+
+    def snap(session, css, html="<html><body><h1>Jobs</h1></body></html>"):
+        return {
+            "session_id": session, "app": "admin-ui", "route": "/my-jobs", "viewport": [1600, 900],
+            "occurred_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+            "html_gz": base64.b64encode(gzip.compress(html.encode())).decode(), "css_hash": "shared-hash-1", "css": css,
+        }
+
+    client.as_user(ANNOTATOR_SUBJECT)  # the attacker, first to upload the hash
+    assert client.post("/admin/usage/snapshots", json=snap("att", "body::after{content:'Session expired'}")).json() == {"stored": True}
+    client.as_user(REVIEWER_SUBJECT)
+    assert client.post("/admin/usage/snapshots", json=snap("vic", "h1{color:green}")).json() == {"stored": True}
+    victim = db.query(UsageSnapshot).filter_by(user_id=REVIEWER_SUBJECT).one()
+    client.as_admin()
+    doc = client.get(f"/admin/usage/snapshots/{victim.id}").json()["document"]
+    assert "color:green" in doc and "Session expired" not in doc
+
+    client.as_user(ANNOTATOR_SUBJECT)
+    for n in range(snapshots.KEEP_PER_USER_SCREEN + 5):
+        client.post("/admin/usage/snapshots", json=snap(f"junk{n}", "x{}"))
+    db.expire_all()
+    assert db.query(UsageSnapshot).filter_by(user_id=REVIEWER_SUBJECT).count() == 1  # the genuine one survives
+    assert db.query(UsageSnapshot).filter_by(user_id=ANNOTATOR_SUBJECT).count() == snapshots.KEEP_PER_USER_SCREEN

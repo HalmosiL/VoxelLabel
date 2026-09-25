@@ -393,8 +393,9 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if not html:
         raise HTTPException(status_code=422, detail="html is required")
-    if css and body.css_hash:
-        snapshots.store_style(db, body.css_hash, css)
+    style = snapshots.style_key(user.subject, body.css_hash) if body.css_hash else None
+    if css and style:
+        snapshots.store_style(db, style, css)
     occurred_at = body.occurred_at if body.occurred_at.tzinfo else body.occurred_at.replace(tzinfo=timezone.utc)
     cleaned = snapshots.clean_html(html, keep_images=keep_images)
     db.add(
@@ -410,7 +411,7 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
             viewport_h=max(1, min(body.viewport[1], 20_000)),
             html_gz=snapshots.gz(cleaned),
             has_images=snapshots.has_images(cleaned),
-            css_hash=body.css_hash,
+            css_hash=style,
             occurred_at=min(occurred_at, datetime.now(timezone.utc) + MAX_CLOCK_SKEW),
             anchors=_clean_anchors(body.anchors),
             study_id=body.study_id,
@@ -418,7 +419,7 @@ def ingest_snapshot(body: SnapshotIn, db: Session = Depends(get_db), user: Curre
         )
     )
     db.flush()
-    snapshots.trim(db, body.app, body.route)
+    snapshots.trim(db, body.app, body.route, user.subject)
     db.commit()
     return {"stored": True}
 
