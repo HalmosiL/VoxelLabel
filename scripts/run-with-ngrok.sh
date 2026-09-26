@@ -19,6 +19,12 @@
 # this repo (the current layout -- both apps in one checkout), or, for
 # anyone still on the older two-checkout layout, as a sibling
 # (../ct-annotator).
+# The platform's compose reads ./.env and the viewer's its own .env, as
+# always; PLATFORM_ENV_FILE / VIEWER_ENV_FILE point either at another env
+# file instead (a local stack started with `--env-file`, whose passwords
+# differ from ./.env's -- recreating its containers from ./.env would
+# break it).
+#
 # One-time setup this script assumes is already done:
 #   ~/.local/bin/ngrok installed, `ngrok config add-authtoken <token>` run once.
 set -euo pipefail
@@ -63,10 +69,11 @@ echo "==> Making sure the platform is up (with Keycloak trusting the proxy)..."
 # API call 401s with "Invalid token" (issuer mismatch) even though
 # login itself succeeded. Safe for plain localhost use too: it only
 # changes behavior when those headers are actually present.
-COMPOSE="docker compose -f docker-compose.yml -f docker-compose.proxy.yml"
+COMPOSE="docker compose ${PLATFORM_ENV_FILE:+--env-file $PLATFORM_ENV_FILE} -f docker-compose.yml -f docker-compose.proxy.yml"
+VIEWER_COMPOSE="docker compose ${VIEWER_ENV_FILE:+--env-file $VIEWER_ENV_FILE}"
 $COMPOSE up -d >/dev/null
 if [ -n "$CT_ANNOTATOR_DIR" ]; then
-  ( cd "$CT_ANNOTATOR_DIR" && docker compose up -d >/dev/null )
+  ( cd "$CT_ANNOTATOR_DIR" && $VIEWER_COMPOSE up -d >/dev/null )
 fi
 
 NETWORK="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$(docker compose ps -q keycloak)")"
@@ -209,7 +216,7 @@ if [ -n "$CT_ANNOTATOR_DIR" ]; then
     PUBLIC_ANNOTATOR_API="$PUBLIC_URL/viewer-api" \
     PUBLIC_ANNOTATOR_UI_URL="$PUBLIC_URL/viewer" \
     PUBLIC_ANNOTATOR_BASE_PATH="/viewer/" \
-    docker compose up -d --build >/dev/null )
+    $VIEWER_COMPOSE up -d --build >/dev/null )
   VIEWER_LINE=" Viewer links work too -- try My Jobs -> Start the tutorial."
 else
   VIEWER_LINE=" Viewer links still point at localhost (../ct-annotator not found)."
