@@ -67,11 +67,11 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
   check("viewer: tabs shown for admin", (await tabs.count()) === 1);
   { const all = await tabs.locator('[role="tab"]').evaluateAll((els) => els.map((e) => [e.textContent, e.getAttribute("aria-selected")]));
     check("viewer: Annotator selected from URL", all.find((x) => x[1] === "true")?.[0] === "Annotator", all); }
-  check("viewer: annotation card + Annotator = annotate surface", (await v.locator("header h1").innerText()) === "Viewer" && (await v.locator('[data-testid="tool-paint"]').count()) === 1);
+  check("viewer: annotation card + Annotator = annotate surface", /^Viewer(\s*·|$)/.test(await v.locator("header h1").innerText()) && (await v.locator('[data-testid="tool-paint"]').count()) === 1);
 
   // Override the other way on the SAME (Annotation) card: force Reviewer.
   await tabs.locator('[role="tab"]', { hasText: "Reviewer" }).click(); await v.waitForTimeout(600);
-  check("viewer: annotation card + Reviewer override = review chrome", (await v.locator("header h1").innerText()) === "Review" && (await v.locator('[data-testid="tool-paint"]').count()) === 0);
+  check("viewer: annotation card + Reviewer override = review chrome", /^Review(\s*·|$)/.test(await v.locator("header h1").innerText()) && (await v.locator('[data-testid="tool-paint"]').count()) === 0);
   await v.screenshot({ path: "viewas-viewer-forced-review.png" });
 
   // Back to Annotator, draw a stroke to prove the toolbar actually works, not just renders.
@@ -112,7 +112,7 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
   const revCase = revJob.cases.find((c) => c.pending_annotation_id) ?? revJob.cases[0];
   const revSeries = (await api(rt, `http://localhost:8002/data/cases/${revCase.id}/series`))[0].id;
   await v.goto(`${VIEWER}/viewer/series/${revSeries}?studyId=${STUDY}&caseId=${revCase.id}&jobId=${REVIEW_CARD}&viewAs=reviewer`); await waitViewer(v);
-  check("viewer: real review job + Reviewer = review chrome", (await v.locator("header h1").innerText()) === "Review");
+  check("viewer: real review job + Reviewer = review chrome", /^Review(\s*·|$)/.test(await v.locator("header h1").innerText()));
   const hasObjects = (await v.locator("aside button", { hasText: "Accept" }).count()) === 1;
   check("viewer: review card renders with the pending annotation's objects", hasObjects);
   if (hasObjects) {
@@ -126,7 +126,8 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
       await v.locator("aside button", { hasText: "Accept" }).first().click(); await v.waitForTimeout(250);
     }
     check("viewer: submit review enabled once every object is decided", !(await v.locator("header button", { hasText: "Submit review" }).isDisabled()));
-    await v.locator("header button", { hasText: "Submit review" }).click(); await v.waitForTimeout(2500);
+    await v.locator("header button", { hasText: "Submit review" }).click();
+    await v.locator('[data-testid="review-submit-confirm"]').click(); await v.waitForTimeout(2500);
     const after = (await api(rt, `${ADMIN}/admin/my-jobs`)).find((j) => j.card_id === REVIEW_CARD).cases.find((c) => c.id === revCase.id);
     check("viewer: review actually recorded (case no longer pending)", after.status !== "pending" || !after.pending_annotation_id, after);
   }
@@ -138,7 +139,7 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
   // their own review assignments opens) -- the job's real type still
   // decides, so this stays on the review chrome.
   await v.locator('header [data-testid="view-as"] [role="tab"]', { hasText: "Annotator" }).click(); await v.waitForTimeout(600);
-  check("viewer: review card + Annotator = still review chrome (no forced override)", (await v.locator("header h1").innerText()) === "Review" && (await v.locator('[data-testid="tool-paint"]').count()) === 0);
+  check("viewer: review card + Annotator = still review chrome (no forced override)", /^Review(\s*·|$)/.test(await v.locator("header h1").innerText()) && (await v.locator('[data-testid="tool-paint"]').count()) === 0);
 
   // Picker shows tabs for admin.
   await v.goto(`${VIEWER}/`); await v.waitForTimeout(1500);
@@ -150,7 +151,7 @@ const waitViewer = async (p) => { await p.waitForFunction(() => document.querySe
   const c2 = await browser.newContext({ viewport: { width: 1600, height: 950 } }); await c2.addInitScript(seenGuides);
   const p2 = await c2.newPage();
   await login(p2, "dr-test", "Test1234!", `${VIEWER}/viewer/series/${series}?studyId=${STUDY}&caseId=${kase.id}&jobId=${ANNOT_CARD}&viewAs=reviewer`); await waitViewer(p2);
-  check("dr-test: no tabs, viewAs=reviewer ignored (still Viewer)", (await p2.locator('[data-testid="view-as"]').count()) === 0 && (await p2.locator("header h1").innerText()) === "Viewer");
+  check("dr-test: no tabs, viewAs=reviewer ignored (still Viewer)", (await p2.locator('[data-testid="view-as"]').count()) === 0 && /^Viewer(\s*·|$)/.test(await p2.locator("header h1").innerText()));
   await c2.close(); await browser.close();
 
   const fails = results.filter((r) => !r.ok);
