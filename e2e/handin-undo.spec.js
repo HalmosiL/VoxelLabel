@@ -73,6 +73,11 @@ async function signIn(browser, url, user) {
     await card.getByRole("button", { name: "Accept" }).click(); await page.waitForTimeout(120);
   }
   await page.locator("header button", { hasText: /^Submit review$/ }).click();
+  // ... which first shows the decision it makes
+  const reviewDialog = page.locator('[data-testid="review-submit-dialog"]');
+  check("Submit review first shows the decision", await reviewDialog.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false));
+  check("... approve, with every object counted", /Approve/.test(await reviewDialog.innerText().catch(() => "")) && (await page.locator('[data-testid="review-submit-counts"]').innerText().catch(() => "")).startsWith(`${plain.length} accepted`));
+  await page.locator('[data-testid="review-submit-confirm"]').click();
   const reviewToast = page.locator('[data-testid="undo-toast"]');
   check("after a decision an Undo is offered too", await reviewToast.waitFor({ state: "visible", timeout: 8000 }).then(() => true, () => false));
   check("... the case is approved", (await status()) === "approved");

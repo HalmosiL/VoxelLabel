@@ -63,6 +63,7 @@ import { initialWindow, rememberedWindowPreset, rememberWindowPreset, WINDOW_PRE
 import { handInSummary, HandInSummary } from "../lib/handInSummary";
 import { offerUndo, onUndone } from "../lib/undoStore";
 import HandInDialog from "../components/HandInDialog";
+import ReviewSubmitDialog from "../components/ReviewSubmitDialog";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -2500,6 +2501,9 @@ export default function ViewerPage() {
 
   const [handInDraft, setHandInDraft] = useState<HandInSummary | null>(null);
   const closeHandIn = useMemo(() => () => setHandInDraft(null), []);
+  // "Submit review" first shows the decision it makes and each rejection
+  const [reviewSubmitOpen, setReviewSubmitOpen] = useState(false);
+  const closeReviewSubmit = useMemo(() => () => setReviewSubmitOpen(false), []);
   /** "Mark as Annotated" first shows what is being handed in. */
   function openHandIn() {
     if (polygonDraft) {
@@ -2609,7 +2613,6 @@ export default function ViewerPage() {
 
       if (!opts.quiet) showSavedMessage(status === "submitted" ? "✓ Marked as annotated" : "✓ Saved");
       if (status === "submitted") {
-        setHandInDraft(null);
         offerUndoOf(saved.id, `${currentCaseTitle ?? "The case"} handed in`, "a draft again");
         if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "annotate" });
         advanceToNextOpenCase();
@@ -3953,7 +3956,7 @@ export default function ViewerPage() {
             >
               <span className="flex" data-guide="submit-review">
                 <button
-                  onClick={() => handleSubmitReview()}
+                  onClick={() => setReviewSubmitOpen(true)}
                   disabled={saving || !studyId || !maskReady || readOnlyLocked || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0 || rejectIncomplete.length > 0}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -4508,8 +4511,25 @@ export default function ViewerPage() {
           summary={handInDraft}
           caseTitle={currentCaseTitle}
           busy={saving}
-          onConfirm={() => handleSave("submitted")}
+          onConfirm={() => {
+            // closed first: a failed hand-in says why in the error bar, not behind the dialog
+            setHandInDraft(null);
+            handleSave("submitted");
+          }}
           onCancel={closeHandIn}
+        />
+      )}
+      {reviewSubmitOpen && (
+        <ReviewSubmitDialog
+          caseTitle={currentCaseTitle}
+          accepted={reviewOrderedObjects.filter((o) => o.review_status === "accepted").length}
+          rejected={sentBackItems(reviewOrderedObjects, labels)}
+          busy={saving}
+          onConfirm={() => {
+            setReviewSubmitOpen(false);
+            handleSubmitReview();
+          }}
+          onCancel={closeReviewSubmit}
         />
       )}
       {renderHuTooltip()}

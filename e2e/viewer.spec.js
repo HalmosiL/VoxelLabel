@@ -238,6 +238,9 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     }
     check("all objects decided", !(await page.locator("header button", { hasText: "Submit review" }).isDisabled()));
     await page.locator("header button", { hasText: "Submit review" }).click();
+    const decisionText = await page.locator('[data-testid="review-submit-dialog"]').innerText().catch(() => "");
+    check("Submit review first says the case goes back, and why", /back to the annotator/i.test(decisionText) && /medial/.test(decisionText), decisionText.slice(0, 300));
+    await page.locator('[data-testid="review-submit-confirm"]').click(); // the decision's last look
     await page.waitForTimeout(3000);
     const after = await api(await token("dr-test", "Test1234!"), `${ADMIN}/admin/my-jobs`);
     const c2 = after.find((j) => j.card_id === ANNOT_CARD).cases.find((c) => c.id === pendingCase.id);
