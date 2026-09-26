@@ -90,3 +90,17 @@ def test_distances_stay_small_in_memory():
     tracemalloc.stop()
     assert d[1]["touches_pleura"] is False
     assert peak < 3 * mask.nbytes, peak
+
+
+def test_the_mediastinum_is_outside_the_lung():
+    """A nodule on the mediastinal pleura touches it, although a slice where
+    the lungs meet around the mediastinum has it as a hole in the mask."""
+    from app.object_stats import object_distances
+
+    lung = np.zeros((6, 120, 120), dtype=np.uint8)
+    lung[:, 10:110, 10:110] = 1
+    lung[:, 30:90, 30:90] = 0
+    mask = np.zeros_like(lung)
+    mask[3, 50:54, 26:31] = 1  # reaching into the mediastinum
+    d = object_distances(mask, lung, None, (1.0, 1.0, 1.0), shrink=1)
+    assert d[1]["touches_pleura"] is True

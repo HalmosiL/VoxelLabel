@@ -116,12 +116,27 @@ def object_stats(mask: np.ndarray, hu: np.ndarray | None, spacing: tuple[float, 
     return out
 
 
-def _fill_holes_by_slice(mask: np.ndarray) -> np.ndarray:
+# The largest hole in a slice of the lung mask that is still lung: a vessel
+# or a nodule, cut however obliquely. The mediastinum -- a hole too, on the
+# slices where the lungs meet in front of and behind it -- is far larger.
+MAX_HOLE_MM2 = 1200.0
+
+
+def fill_holes_by_slice(mask: np.ndarray, pixel_mm2: float = 1.0) -> np.ndarray:
     """What the lung encloses, slice by slice: vessels and nodules are holes
-    in a threshold lung mask, and must count as inside, not as its surface."""
+    in a threshold lung mask, and must count as inside, not as its surface.
+    Holes larger than MAX_HOLE_MM2 (`pixel_mm2` is one pixel's area) stay
+    out: that is the mediastinum, not lung."""
+    max_px = MAX_HOLE_MM2 / pixel_mm2
     out = np.empty(mask.shape, dtype=bool)
     for z in range(mask.shape[0]):
-        out[z] = ndimage.binary_fill_holes(mask[z] > 0)
+        solid = mask[z] > 0
+        holes, count = ndimage.label(ndimage.binary_fill_holes(solid) & ~solid)
+        if count:
+            small = np.bincount(holes.ravel(), minlength=count + 1) <= max_px
+            small[0] = False
+            solid |= small[holes]
+        out[z] = solid
     return out
 
 
@@ -169,7 +184,7 @@ def object_distances(
     dz, dy, dx = spacing
     sub = (slice(None), slice(None, None, shrink), slice(None, None, shrink))
     grid = (dz, dy * shrink, dx * shrink)
-    inside = _fill_holes_by_slice(lung[sub])
+    inside = fill_holes_by_slice(lung[sub], dy * dx * shrink * shrink)
     surface = _edge_outside(inside)
     tube = airway[sub] > 0 if airway is not None else None
     bronchi = np.argwhere(tube) if tube is not None and tube.any() else None
