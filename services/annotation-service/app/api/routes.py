@@ -1,6 +1,6 @@
 """HTTP API for creating, listing and reviewing annotations."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -355,6 +355,76 @@ def review_annotation(
     db.add(AnnotationReview(annotation_id=annotation.id, reviewer_id=user.subject, decision=decision, comment=comment))
     db.commit()
     return {"id": str(annotation.id), "status": annotation.status.value}
+
+
+# How long "Undo" stays possible after a hand-in or a review decision.
+# The viewer offers it for a few seconds; the server allows some slack
+# (a slow network, a second tab) but not an open-ended way back.
+UNDO_WINDOW = timedelta(minutes=10)
+
+
+def _too_late(when) -> bool:
+    if when is None:
+        return True
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - when > UNDO_WINDOW
+
+
+@router.post("/{annotation_id}/undo")
+def undo_annotation_step(
+    annotation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Take back the last step on this version, right after taking it:
+
+    - a hand-in (SUBMITTED): its annotator turns it back into a draft;
+    - a decision (APPROVED/REJECTED): its reviewer removes the decision,
+      and the version is back to awaiting a decision (a reviewer's draft
+      stays a draft of the handed-in work; a decided hand-in is SUBMITTED
+      again).
+
+    Only the person who took the step, only within UNDO_WINDOW, and only
+    while the version is still the image's latest -- once a reviewer has
+    started on a hand-in, or the annotator on a rejection, it stands."""
+    annotation = db.query(Annotation).filter(Annotation.id == annotation_id).with_for_update().first()
+    if annotation is None:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    require_study_role(db, str(annotation.study_id), user, allowed_roles=["annotator", "reviewer", "admin"])
+    latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id)
+    is_latest = latest is None or latest.id == annotation.id
+
+    if annotation.status == AnnotationStatus.SUBMITTED:
+        if annotation.annotator_id != user.subject:
+            raise HTTPException(status_code=403, detail="Only the annotator who handed this in can take it back")
+        if not is_latest:
+            raise HTTPException(status_code=409, detail="A reviewer has already started on it -- it can't be taken back now.")
+        if _too_late(annotation.created_at):
+            raise HTTPException(status_code=409, detail="It's too late to take this hand-in back -- ask the reviewer to send it back instead.")
+        annotation.status = AnnotationStatus.DRAFT
+        db.commit()
+        return {"id": str(annotation.id), "status": annotation.status.value}
+
+    if annotation.status in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED):
+        review = (
+            db.query(AnnotationReview)
+            .filter_by(annotation_id=annotation.id)
+            .order_by(AnnotationReview.created_at.desc(), AnnotationReview.id.desc())
+            .first()
+        )
+        if review is None or review.reviewer_id != user.subject:
+            raise HTTPException(status_code=403, detail="Only the reviewer who decided this can take the decision back")
+        if not is_latest:
+            raise HTTPException(status_code=409, detail="A newer version of this image exists -- the decision can't be taken back now.")
+        if _too_late(review.created_at):
+            raise HTTPException(status_code=409, detail="It's too late to take this decision back.")
+        db.delete(review)
+        annotation.status = AnnotationStatus.DRAFT if annotation.review_of_id is not None else AnnotationStatus.SUBMITTED
+        db.commit()
+        return {"id": str(annotation.id), "status": annotation.status.value}
+
+    raise HTTPException(status_code=409, detail="Nothing to undo: this version was neither handed in nor decided.")
 
 
 @router.delete("/{annotation_id}", status_code=204)

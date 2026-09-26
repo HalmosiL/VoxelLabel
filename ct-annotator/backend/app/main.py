@@ -973,6 +973,18 @@ async def submit_annotation_review(
     return resp.json()
 
 
+@app.post("/annotations/{annotation_id}/undo")
+async def undo_annotation_step(annotation_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Proxies "Undo" right after a hand-in or a review decision to
+    annotation-service, which decides whether it is still allowed (the
+    same person, a few minutes, nothing newer on the image)."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{ANNOTATION_SERVICE_URL}/annotations/{annotation_id}/undo", headers=_auth_headers(user))
+    if resp.status_code >= 400:
+        raise _upstream_error(resp)
+    return resp.json()
+
+
 @app.get("/health")
 def health() -> dict:
     """Liveness probe: the process answers. Dependencies: /health/ready."""

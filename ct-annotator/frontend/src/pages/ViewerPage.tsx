@@ -60,6 +60,9 @@ import { returnUrlForCase, safeReturnUrl } from "../lib/returnUrl";
 import { errorText } from "../lib/errorText";
 import { caseCounterText } from "../lib/caseCounter";
 import { initialWindow, rememberedWindowPreset, rememberWindowPreset, WINDOW_PRESETS } from "../lib/windowPreset";
+import { handInSummary, HandInSummary } from "../lib/handInSummary";
+import { offerUndo, onUndone } from "../lib/undoStore";
+import HandInDialog from "../components/HandInDialog";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -2464,7 +2467,41 @@ export default function ViewerPage() {
       window.setTimeout(() => showSavedMessage("✓ Every case in this job is done"), 1500);
       return;
     }
-    window.setTimeout(() => goToCase(next.id), 1400);
+    advanceTimerRef.current = window.setTimeout(() => goToCase(next.id), 1400);
+  }
+
+  // The move to the next case after a hand-in or a decision is called off
+  // when that step is taken back ("Undo", components/UndoToast.tsx), and
+  // when the page goes away first.
+  const advanceTimerRef = useRef<number | null>(null);
+  const lastStepIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const stop = onUndone((annotationId) => {
+      if (annotationId === lastStepIdRef.current && advanceTimerRef.current !== null) window.clearTimeout(advanceTimerRef.current);
+    });
+    return () => {
+      stop();
+      if (advanceTimerRef.current !== null) window.clearTimeout(advanceTimerRef.current);
+    };
+  }, []);
+
+  /** "Undo" for the step just taken on this case, offered across the move
+   * to the next one; taking it back opens this case again. */
+  function offerUndoOf(annotationId: string, message: string, undoneMessage: string) {
+    if (!seriesId) return;
+    lastStepIdRef.current = annotationId;
+    offerUndo({ annotationId, message, undoneMessage, backTo: `/viewer/series/${seriesId}?${searchParams.toString()}` });
+  }
+
+  const [handInDraft, setHandInDraft] = useState<HandInSummary | null>(null);
+  const closeHandIn = useMemo(() => () => setHandInDraft(null), []);
+  /** "Mark as Annotated" first shows what is being handed in. */
+  function openHandIn() {
+    if (polygonDraft) {
+      setError(`The outline on slice ${polygonDraft.index + 1} isn't closed yet -- close it or drop it, then hand in.`);
+      return;
+    }
+    setHandInDraft(handInSummary(maskVolumeRef.current, rows * columns, objects, labels));
   }
 
   // The labels/objects as they are NOW, not as a callback captured them:
@@ -2567,6 +2604,8 @@ export default function ViewerPage() {
 
       if (!opts.quiet) showSavedMessage(status === "submitted" ? "✓ Marked as annotated" : "✓ Saved");
       if (status === "submitted") {
+        setHandInDraft(null);
+        offerUndoOf(saved.id, `${currentCaseTitle ?? "The case"} handed in`, "a draft again");
         if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "annotate" });
         advanceToNextOpenCase();
       }
@@ -2625,6 +2664,7 @@ export default function ViewerPage() {
       refreshAnnotations();
       advanceJobStatusAfterRun();
       showSavedMessage(decision === "approve" ? "✓ Review approved" : "✕ Review rejected");
+      offerUndoOf(saved.id, `${currentCaseTitle ?? "The case"} ${decision === "approve" ? "approved" : "sent back to the annotator"}`, "awaiting your decision again");
       if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "review" });
       advanceToNextOpenCase();
     } catch (err) {
@@ -3886,7 +3926,7 @@ export default function ViewerPage() {
             >
               <span className="flex" data-guide="mark-annotated">
                 <button
-                  onClick={() => handleSave("submitted")}
+                  onClick={openHandIn}
                   disabled={saving || !studyId || !maskReady || readOnlyLocked}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -4438,6 +4478,15 @@ export default function ViewerPage() {
       </div>
 
       <GuideTour steps={reviewMode ? REVIEW_STEPS : ANNOTATE_STEPS} open={guide.open} onClose={guide.close} />
+      {handInDraft && (
+        <HandInDialog
+          summary={handInDraft}
+          caseTitle={currentCaseTitle}
+          busy={saving}
+          onConfirm={() => handleSave("submitted")}
+          onCancel={closeHandIn}
+        />
+      )}
       {renderHuTooltip()}
       {renderAutoContourPanel()}
       {renderHistogramPanel()}

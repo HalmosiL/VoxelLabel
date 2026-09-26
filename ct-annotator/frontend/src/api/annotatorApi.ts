@@ -285,6 +285,13 @@ export function submitAnnotationReview(
   });
 }
 
+/** Takes back a hand-in (the annotator) or a review decision (the
+ * reviewer) just made -- the server refuses once it's too late or
+ * something newer happened on the image. */
+export function undoAnnotationStep(annotationId: string): Promise<{ id: string; status: string }> {
+  return apiFetch(API.annotator, `/annotations/${annotationId}/undo`, { method: "POST" });
+}
+
 export interface AnnotationSummary {
   id: string;
   status: string;

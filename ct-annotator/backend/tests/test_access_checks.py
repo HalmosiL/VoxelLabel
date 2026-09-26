@@ -334,3 +334,46 @@ def test_the_annotation_types_are_asked_for_per_caller_not_served_from_the_cache
     api.as_user(OUTSIDER)
     assert api.get("/annotation-types").status_code == 403
     assert calls == [MEMBER.subject, OUTSIDER.subject]
+
+
+def test_undo_goes_to_annotation_service_and_its_refusal_comes_back(monkeypatch):
+    """The viewer's "Undo" after a hand-in or a decision: annotation-service
+    decides, and a 409 ("too late") reaches the viewer as a 409."""
+    calls = []
+
+    class _Resp:
+        def __init__(self, code, body):
+            self.status_code, self._body, self.text = code, body, str(body)
+
+        def json(self):
+            return self._body
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, **kw):
+            calls.append(url)
+            if url.endswith("/a2/undo"):
+                return _Resp(409, {"detail": "It's too late to take this hand-in back"})
+            return _Resp(200, {"id": "a1", "status": "draft"})
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", _Client)
+    app = main.app
+    app.dependency_overrides[main.get_current_user] = lambda: MEMBER
+    try:
+        from fastapi.testclient import TestClient
+
+        ok = TestClient(app).post("/annotations/a1/undo")
+        late = TestClient(app).post("/annotations/a2/undo")
+    finally:
+        app.dependency_overrides.pop(main.get_current_user, None)
+    assert ok.status_code == 200 and ok.json()["status"] == "draft"
+    assert calls[0].endswith("/annotations/a1/undo")
+    assert late.status_code == 409 and "too late" in late.json()["detail"]

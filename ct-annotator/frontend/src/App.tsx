@@ -4,6 +4,7 @@ import PickerPage from "./pages/PickerPage";
 import SeriesRedirectPage from "./pages/SeriesRedirectPage";
 import TutorialPage from "./pages/TutorialPage";
 import ViewerPage from "./pages/ViewerPage";
+import UndoToast from "./components/UndoToast";
 import UsageTracker from "./usage/UsageTracker";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="/viewer/series/:seriesId" element={<SeriesRedirectPage />} />
         <Route path="/tutorial" element={<TutorialPage />} />
       </Routes>
+      <UndoToast />
     </>
   );
 }

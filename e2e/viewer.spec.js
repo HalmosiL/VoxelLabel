@@ -183,6 +183,8 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     check("save draft feedback", /Saved|saved/.test(hdr), hdr.slice(-80));
     // Mark as Annotated (submits for review)
     await page.locator("header button", { hasText: "Mark as Annotated" }).click();
+    // ... which first shows what is being handed in
+    await page.locator('[data-testid="handin-confirm"]').click();
     await page.waitForTimeout(3000);
     check("mark as annotated feedback", /Saved|saved|Annotated/.test(await page.locator("header").innerText()));
     // back link
