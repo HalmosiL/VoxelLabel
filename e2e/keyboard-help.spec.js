@@ -30,6 +30,7 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   check("? opens the list of keys and gestures", await help.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false));
   const text = await help.innerText().catch(() => "");
   check("... with the drawing keys while annotating", /Ctrl\+Z/.test(text) && /New object/.test(text) && /Alt\+click/.test(text), text.slice(0, 200));
+  check("... and the 3D view's flying keys", /3D view/i.test(text) && /Fly up \/ down/.test(text), text.slice(-300));
   await page.keyboard.press("Escape");
   check("Esc closes it", await help.waitFor({ state: "hidden", timeout: 3000 }).then(() => true, () => false));
   await page.locator('[data-testid="keyboard-help-open"]').click();

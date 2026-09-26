@@ -9,11 +9,13 @@ describe("the tutorial's tour (G-17)", () => {
     expect(String(back.body)).not.toMatch(/case page/);
   });
 
-  it("is the viewer's tour otherwise, step for step", () => {
+  it("is the viewer's tour otherwise, step for step -- without what only the viewer has (its 3D view)", () => {
     for (const steps of [ANNOTATE_STEPS, REVIEW_STEPS]) {
       const tut = tutorialSteps(steps);
-      expect(tut.map((s) => s.target)).toEqual(steps.map((s) => s.target));
-      expect(tut.filter((s) => s.target !== "back")).toEqual(steps.filter((s) => s.target !== "back"));
+      const shared = steps.filter((s) => !s.viewerOnly);
+      expect(tut.map((s) => s.target)).toEqual(shared.map((s) => s.target));
+      expect(tut.filter((s) => s.target !== "back")).toEqual(shared.filter((s) => s.target !== "back"));
+      expect(steps.some((s) => s.viewerOnly && s.target === "pane-toggles")).toBe(true);
     }
   });
 });

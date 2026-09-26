@@ -91,6 +91,33 @@ export const ANNOTATE_STEPS: GuideStep[] = [
     touchTip: "Drag the strip along a pane's edge to page through its slices; pinch to zoom.",
   },
   {
+    target: "pane-toggles",
+    title: "The 3D view",
+    body: (
+      <>
+        <p>
+          The fourth eye turns on the <b>3D</b> pane (its <b>⛶</b> fills the screen with it): the CT itself in 3D with the annotation
+          inside -- window, opacity, smoothing, MIP, <i>Only inside the lungs</i> and the airway tree are in its <b>Settings</b>.
+        </p>
+        <p>
+          <b>Click</b> it to fly: the mouse looks, <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move, <kbd>Space</kbd> up,{" "}
+          <kbd>Shift</kbd> down, <kbd>Esc</kbd> lets go. A click in 3D takes the 2D panes to that point; <b>Go to object</b> flies to
+          the selected one.
+        </p>
+      </>
+    ),
+    touchBody: (
+      <>
+        <p>
+          The fourth eye turns on the <b>3D</b> pane: the CT itself in 3D with the annotation inside. <b>Drag</b> to look around, the
+          on-screen stick moves you; a tap takes the 2D panes to that point.
+        </p>
+      </>
+    ),
+    placement: "bottom",
+    viewerOnly: true,
+  },
+  {
     target: "objects",
     title: "Objects: what you are drawing",
     body: (
@@ -301,6 +328,33 @@ export const REVIEW_STEPS: GuideStep[] = [
     placement: "right",
   },
   {
+    target: "pane-toggles",
+    title: "The 3D view",
+    body: (
+      <>
+        <p>
+          The fourth eye turns on the <b>3D</b> pane (its <b>⛶</b> fills the screen with it): the CT itself in 3D with the annotation
+          inside -- window, opacity, smoothing, MIP, <i>Only inside the lungs</i> and the airway tree are in its <b>Settings</b>.
+        </p>
+        <p>
+          <b>Click</b> it to fly: the mouse looks, <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move, <kbd>Space</kbd> up,{" "}
+          <kbd>Shift</kbd> down, <kbd>Esc</kbd> lets go. A click in 3D takes the 2D panes to that point; <b>Go to object</b> flies to
+          the selected one.
+        </p>
+      </>
+    ),
+    touchBody: (
+      <>
+        <p>
+          The fourth eye turns on the <b>3D</b> pane: the CT itself in 3D with the annotation inside. <b>Drag</b> to look around, the
+          on-screen stick moves you; a tap takes the 2D panes to that point.
+        </p>
+      </>
+    ),
+    placement: "bottom",
+    viewerOnly: true,
+  },
+  {
     target: "review-objects",
     title: "The objects to review",
     body: "Every object in this annotation, with a dot for its decision: grey = not decided yet, green = accepted, red = rejected. Click one to jump to it; the card above follows.",
@@ -357,5 +411,5 @@ const TUTORIAL_BACK_STEP: GuideStep = {
 };
 
 export function tutorialSteps(steps: GuideStep[]): GuideStep[] {
-  return steps.map((s) => (s.target === "back" ? TUTORIAL_BACK_STEP : s));
+  return steps.filter((s) => !s.viewerOnly).map((s) => (s.target === "back" ? TUTORIAL_BACK_STEP : s));
 }

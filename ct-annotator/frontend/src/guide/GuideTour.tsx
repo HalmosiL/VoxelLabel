@@ -23,6 +23,8 @@ export interface GuideStep {
    * sent tablet users to scroll, right-drag and press keys (G-08). */
   touchBody?: ReactNode;
   touchTip?: string;
+  /** only in the real viewer (the tutorial has no such part) */
+  viewerOnly?: boolean;
 }
 
 const CARD_WIDTH = 380;

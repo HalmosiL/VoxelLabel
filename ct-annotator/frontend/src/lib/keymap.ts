@@ -56,6 +56,18 @@ export const KEYMAP: KeyGroup[] = [
     ],
   },
   {
+    title: "3D view",
+    entries: [
+      { keys: ["Click"], what: "Start flying (then: pick the point in the middle)", touch: "Tap: pick that point", viewerOnly: true },
+      { keys: ["Mouse"], what: "Look around while flying", touch: "Drag", viewerOnly: true },
+      { keys: ["W A S D"], what: "Fly forward, back, left, right", touch: "The on-screen stick", viewerOnly: true },
+      { keys: ["Space", "Shift"], what: "Fly up / down", viewerOnly: true },
+      { keys: ["Wheel"], what: "Flying speed (orbiting: zoom)", viewerOnly: true },
+      { keys: ["R"], what: "Back in front of the patient", viewerOnly: true },
+      { keys: ["Esc"], what: "Let go of the mouse", viewerOnly: true },
+    ],
+  },
+  {
     title: "Help",
     entries: [{ keys: ["?"], what: "This list" }],
   },

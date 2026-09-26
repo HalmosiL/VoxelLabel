@@ -4213,7 +4213,7 @@ export default function ViewerPage() {
                   </button>
                 </span>
               </Tip>
-              <div className="flex items-center gap-0.5 rounded border border-[#444] bg-[#2a2a3e] p-0.5">
+              <div className="flex items-center gap-0.5 rounded border border-[#444] bg-[#2a2a3e] p-0.5" data-guide="pane-toggles">
                 {allowedPaneKeys.map((pane) => (
                   <Tip
                     key={pane}
