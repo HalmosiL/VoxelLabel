@@ -4708,6 +4708,7 @@ export default function ViewerPage() {
                     maskKey={0}
                     onPick={pick3D}
                     focusObjectId={reviewMode ? (currentReviewObject?.id ?? null) : activeObjectId}
+                    slices={{ x: sagittalIndex, y: coronalIndex, z: axialIndex }}
                     onShow2D={maximizedPane === "three_d" ? () => setMaximizedPane(null) : undefined}
                   />
                 ) : (

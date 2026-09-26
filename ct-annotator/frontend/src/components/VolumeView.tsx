@@ -29,6 +29,9 @@ const PRESETS: { name: string; center: number; width: number }[] = [
  * itself faint -- with "Only inside the lungs" on, or the chest wall
  * (the same density) would hide it all. */
 const VESSELS = { center: -350, width: 900 };
+const AIRWAY_COLOR = "#a78bfa";
+// the 2D panes' own colours (ViewerPage's PLANE_COLORS)
+const PLANE_COLOR = { sagittal: "#f59e0b", coronal: "#22c55e", axial: "#38bdf8" };
 
 const VERTEX = /* glsl */ `
 out vec3 vLocal;
@@ -55,6 +58,11 @@ uniform float uAirwayOpacity;
 uniform vec3 uPick;
 uniform bool uShowPick;
 uniform vec3 uAspect;
+uniform vec3 uPlanes;
+uniform bool uShowPlanes;
+uniform vec3 uPlaneX;
+uniform vec3 uPlaneY;
+uniform vec3 uPlaneZ;
 uniform sampler2D uPalette;
 uniform vec3 uCamLocal;
 uniform vec3 uTexel;
@@ -101,9 +109,26 @@ void main() {
   float best = 0.0;
   vec4 maskHit = vec4(0.0);
   float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * dt;
+  vec3 prevSide = sign(uCamLocal + dir * (tStart + jitter - dt) - uPlanes);
   for (float s = tStart + jitter; s < t.y; s += dt) {
     vec3 p = uCamLocal + dir * s;
     float a = windowed(sampleVolume(p));
+    // the 2D panes' slices: a thin sheet in the pane's colour where the ray crosses one
+    if (uShowPlanes && uMode == 0) {
+      vec3 side = sign(p - uPlanes);
+      vec3 crossed = abs(side - prevSide) * 0.5;
+      prevSide = side;
+      float sheets = crossed.x + crossed.y + crossed.z;
+      if (sheets > 0.0) {
+        vec3 pc = (crossed.x * uPlaneX + crossed.y * uPlaneY + crossed.z * uPlaneZ) / sheets;
+        // faint as a sheet, strong along its edge: where it is, not a veil over the rest
+        vec3 edge = min(p, 1.0 - p) / (uTexel * 2.0);
+        float nearEdge = crossed.x > 0.0 ? min(edge.y, edge.z) : crossed.y > 0.0 ? min(edge.x, edge.z) : min(edge.x, edge.y);
+        float sa = nearEdge < 1.0 ? 0.85 : 0.06;
+        acc.rgb += (1.0 - acc.a) * sa * pc;
+        acc.a += (1.0 - acc.a) * sa;
+      }
+    }
     // the picked point: a small yellow ball, round in real proportions
     if (uShowPick && length((p - uPick) * uAspect) < 0.012) {
       fragColor = vec4(1.0, 0.85, 0.2, 1.0) * (1.0 - acc.a) + vec4(acc.rgb, 0.0);
@@ -200,6 +225,7 @@ export default function VolumeView({
   onPick,
   onShow2D,
   focusObjectId,
+  slices,
 }: {
   seriesId: string | null;
   maskVolume: Uint8Array | null;
@@ -217,6 +243,8 @@ export default function VolumeView({
   onShow2D?: () => void;
   /** the selected object (in review: the one on the card) -- "Go to object" */
   focusObjectId?: number | null;
+  /** where the 2D panes are (the series' own column, row, slice) */
+  slices?: { x: number | null; y: number | null; z: number };
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
@@ -258,6 +286,7 @@ export default function VolumeView({
   const [picked, setPicked] = useState<{ z: number; objectId: number | null } | null>(null);
   const [follow, setFollow] = useState(false);
   const [focused, setFocused] = useState<number | null>(null);
+  const [showPlanes, setShowPlanes] = useState(true);
   const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0 });
   const speedRef = useRef(speed);
   speedRef.current = speed;
@@ -490,11 +519,16 @@ export default function VolumeView({
             uNearCut: { value: 0 },
             uAirway: { value: emptyMask },
             uShowAirway: { value: false },
-            uAirwayColor: { value: new THREE.Color("#38bdf8") },
+            uAirwayColor: { value: new THREE.Color(AIRWAY_COLOR) },
             uAirwayOpacity: { value: 0.9 },
             uPick: { value: new THREE.Vector3() },
             uShowPick: { value: false },
             uAspect: { value: new THREE.Vector3(1, 1, 1) },
+            uPlanes: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
+            uShowPlanes: { value: true },
+            uPlaneX: { value: new THREE.Color(PLANE_COLOR.sagittal) },
+            uPlaneY: { value: new THREE.Color(PLANE_COLOR.coronal) },
+            uPlaneZ: { value: new THREE.Color(PLANE_COLOR.axial) },
             uPalette: { value: w.paletteTex },
             uCamLocal: { value: new THREE.Vector3() },
             uTexel: { value: new THREE.Vector3(1 / x, 1 / y, 1 / z) },
@@ -577,6 +611,17 @@ export default function VolumeView({
     w.paletteTex.needsUpdate = true;
     w.dirty = true;
   }, [objects, labels, info]);
+
+  // ── the 2D panes' slices, as sheets in the volume ───────────────────────
+  useEffect(() => {
+    const u = world.current?.material?.uniforms;
+    if (!u || !slices || !rows || !columns || !numSlices) return;
+    const x = slices.x ?? Math.floor(columns / 2);
+    const y = slices.y ?? Math.floor(rows / 2);
+    (u.uPlanes.value as THREE.Vector3).set((x + 0.5) / columns, (y + 0.5) / rows, (slices.z + 0.5) / numSlices);
+    u.uShowPlanes.value = showPlanes;
+    if (world.current) world.current.dirty = true;
+  }, [slices?.x, slices?.y, slices?.z, showPlanes, rows, columns, numSlices, info]);
 
   // ── the lungs (the backend's own segmentation), for "Only inside the lungs"
   useEffect(() => {
@@ -912,7 +957,7 @@ export default function VolumeView({
               </label>
               <label className="flex flex-wrap items-center gap-x-2" title="The bronchial tree, found from the CT: the trachea, then everything connected to it below a threshold that rises until it would leak into the lung">
                 <input type="checkbox" checked={showAirways} onChange={(e) => setShowAirways(e.target.checked)} data-testid="volume-airways" />
-                <span style={{ color: "#38bdf8" }}>Airways</span>
+                <span style={{ color: AIRWAY_COLOR }}>Airways</span>
                 {showAirways && airwayState === "loading" && <span className="text-gray-500">segmenting…</span>}
                 {showAirways && airwayState === "notfound" && <span className="text-amber-300">no trachea found</span>}
                 {showAirways && airwayState === "error" && <span className="text-red-400">failed</span>}
@@ -932,6 +977,11 @@ export default function VolumeView({
               {mode === "volume" && (
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={shade} onChange={(e) => setShade(e.target.checked)} data-testid="volume-shade" /> Shading
+                </label>
+              )}
+              {mode === "volume" && (
+                <label className="flex items-center gap-2" title="Where the 2D panes are, as thin sheets in their own colours">
+                  <input type="checkbox" checked={showPlanes} onChange={(e) => setShowPlanes(e.target.checked)} data-testid="volume-planes" /> The 2D slices
                 </label>
               )}
               <div className="flex items-center gap-2">
