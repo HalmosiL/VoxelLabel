@@ -45,6 +45,9 @@ async function open(browser, user, pass, url, beforeLogin) {
       // D-09: the header's counter follows the decision (before the viewer moves on to the next case)
       const counter = await page.waitForFunction(() => /decided/.test(document.querySelector('[data-testid="case-counter"]')?.textContent || ""), null, { timeout: 1300 }).then(() => true, () => false);
       check("the case counter says the case is decided", counter);
+      const title = await page.locator('[data-testid="viewer-case-title"]').innerText().catch(() => "");
+      check("the header names the case that's open", title.includes(kase.title), title);
+      check("... and the counter gives its real position", /^Case \d+ of \d+/.test(await page.locator('[data-testid="case-counter"]').innerText()));
       await page.waitForTimeout(2000);
       const latest = await api(rt, `${A8010}/series/${seriesId}/mask-volume`);
       check("... and approving it works", latest.version_status === "approved", latest.version_status);

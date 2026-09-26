@@ -66,7 +66,7 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     await page.waitForSelector("canvas", { timeout: 60000 });
     await page.waitForFunction(() => document.querySelectorAll("canvas").length >= 3, null, { timeout: 60000 });
     await page.waitForTimeout(4000);
-    check("viewer loaded (Viewer title)", (await page.locator("header h1").innerText()) === "Viewer");
+    check("viewer loaded (Viewer title)", /^Viewer(\s*·.+)?$/s.test(await page.locator("header h1").innerText()));
     // Status is computed server-side and shown as a read-only badge (no select since round 27).
     check("job status badge present", await page.locator('header [data-guide="job-status"]').count() === 1);
     check("case navigation present", /Case \d+ of \d+/.test(await page.locator("header").innerText()));
@@ -207,7 +207,7 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     await login(page, "dr-review", "Test1234!", `${VIEWER}/viewer/series/${seriesId}?studyId=${STUDY}&caseId=${pendingCase.id}&jobId=${REVIEW_CARD}&returnUrl=${encodeURIComponent(rReturn)}`);
     await page.waitForFunction(() => document.querySelectorAll("canvas").length >= 3, null, { timeout: 60000 });
     await page.waitForTimeout(4000);
-    check("review mode title", (await page.locator("header h1").innerText()) === "Review");
+    check("review mode title", /^Review(\s*·.+)?$/s.test(await page.locator("header h1").innerText()));
     check("no toolbar in review", (await page.locator('[data-testid="tool-paint"]').count()) === 0);
     const revObjects = await page.locator("aside li").count();
     check("review objects listed", revObjects >= 1, revObjects);

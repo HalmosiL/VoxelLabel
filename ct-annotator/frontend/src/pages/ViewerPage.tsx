@@ -58,6 +58,7 @@ import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
 import { polygonMask, scanlineFill } from "../lib/scanlineFill";
 import { returnUrlForCase, safeReturnUrl } from "../lib/returnUrl";
 import { errorText } from "../lib/errorText";
+import { caseCounterText } from "../lib/caseCounter";
 import { initialWindow, rememberedWindowPreset, rememberWindowPreset, WINDOW_PRESETS } from "../lib/windowPreset";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
@@ -342,6 +343,7 @@ export default function ViewerPage() {
       .catch((err) => setError(errorText(err)));
   }, [jobId]);
   const jobCaseIndex = jobCases && caseId ? jobCases.findIndex((c) => c.id === caseId) : -1;
+  const currentCaseTitle = jobCaseIndex >= 0 && jobCases ? jobCases[jobCaseIndex].title : null;
   // Which cases still need this person: for an Annotation job every
   // case not yet handed in (a rejected one is open again); for a Review
   // job only a case awaiting a decision (a rejected one is decided --
@@ -3613,7 +3615,15 @@ export default function ViewerPage() {
               {returnUrl ? "← Back" : "← Back to picker"}
             </a>
           </Tip>
-          <h1 className="text-sm font-semibold text-gray-100">{reviewMode ? "Review" : "Viewer"}</h1>
+          <h1 className="text-sm font-semibold text-gray-100">
+            {reviewMode ? "Review" : "Viewer"}
+            {/* which case this is -- it said nowhere, and the next case loaded silently after a hand-in (UX-annot-1-04) */}
+            {currentCaseTitle && (
+              <span className="ml-2 font-normal text-gray-300" data-testid="viewer-case-title">
+                · {currentCaseTitle}
+              </span>
+            )}
+          </h1>
           {platformAdmin && <ViewAsTabs value={viewAs} onChange={changeViewAs} />}
           {jobId && jobStatus && (
             <Tip
@@ -3648,8 +3658,14 @@ export default function ViewerPage() {
                 description={`${jobCases.length} case${jobCases.length === 1 ? "" : "s"} in this job; the arrows only visit the ones still ${reviewMode ? "awaiting a decision" : "to annotate (rejected ones included)"}.`}
               >
                 <span className="whitespace-nowrap px-1 text-xs text-gray-400" data-testid="case-counter">
-                  {openQueueIndex >= 0
-                    ? `Case ${openQueueIndex + 1} of ${openQueue.length} open${currentCaseDone ? (reviewMode ? " · decided" : " · handed in") : ""}`
+                  {jobCaseIndex >= 0
+                    ? caseCounterText({
+                        index: jobCaseIndex,
+                        total: jobCases.length,
+                        openOthers: jobCases.filter((c) => c.id !== caseId && caseIsOpen(c)).length,
+                        currentDone: currentCaseDone,
+                        reviewMode,
+                      })
                     : `${openQueue.length} of ${jobCases.length} cases open`}
                 </span>
               </Tip>
