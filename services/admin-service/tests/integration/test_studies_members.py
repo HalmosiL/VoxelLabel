@@ -184,3 +184,20 @@ def test_a_study_admin_chooses_the_studys_de_identification_profile(client, db):
     add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
     client.as_user(ANNOTATOR_SUBJECT)
     assert client.patch(f"/admin/studies/{sid}", params={"deidentification_profile_id": profile["id"]}).status_code == 403
+
+
+def test_the_study_list_says_how_many_cases_and_members_each_study_has(client):
+    """K2 / UX-ux-admin-05: the study cards said nothing about what's in a
+    study, and the delete confirmation couldn't say what would be lost."""
+    from .conftest import ANNOTATOR_SUBJECT, REVIEWER_SUBJECT, add_member, make_case, make_study
+
+    sid = make_study(client, "Counted")
+    empty = make_study(client, "Empty")
+    for i in range(3):
+        make_case(client, sid, external=f"P-{i}")
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    add_member(client, sid, ANNOTATOR_SUBJECT, "reviewer")  # one person, two roles
+    add_member(client, sid, REVIEWER_SUBJECT, "reviewer")
+    rows = {s["id"]: s for s in client.get("/admin/studies").json()}
+    assert (rows[sid]["case_count"], rows[sid]["member_count"]) == (3, 2)
+    assert (rows[empty]["case_count"], rows[empty]["member_count"]) == (0, 0)

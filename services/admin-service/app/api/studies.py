@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from shared_auth import CurrentUser, get_current_user, require_study_role
 from shared_models.database import get_db
 from shared_models.models import Annotation, AnnotationReview, Case, DeidentificationProfile, Study, StudyMembership, StudyRole, StudyVersion
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api import audit
@@ -72,8 +73,12 @@ def _my_role(db: Session, study_id: str, user: CurrentUser) -> str | None:
     return _highest_role([m.role.value for m in memberships])
 
 
-def _serialize_study(study: Study, my_role: str | None) -> dict:
+def _serialize_study(study: Study, my_role: str | None, counts: dict | None = None) -> dict:
+    extra = {}
+    if counts is not None:
+        extra = {"case_count": counts["cases"].get(study.id, 0), "member_count": counts["members"].get(study.id, 0)}
     return {
+        **extra,
         "id": str(study.id),
         "name": study.name,
         "description": study.description,
@@ -122,13 +127,31 @@ def list_studies(
     Studies page, the workflow board and ct-annotator's picker all start
     from this list, so a member must be able to see their own studies."""
     if _is_global_admin(user):
-        return [_serialize_study(s, "admin") for s in db.query(Study).order_by(Study.name).all()]
+        studies = db.query(Study).order_by(Study.name).all()
+        counts = _study_counts(db, [s.id for s in studies])
+        return [_serialize_study(s, "admin", counts) for s in studies]
     memberships = db.query(StudyMembership).filter_by(user_id=user.subject).all()
     roles_by_study: dict[str, list[str]] = {}
     for m in memberships:
         roles_by_study.setdefault(str(m.study_id), []).append(m.role.value)
     studies = db.query(Study).filter(Study.id.in_(list(roles_by_study))).order_by(Study.name).all() if roles_by_study else []
-    return [_serialize_study(s, _highest_role(roles_by_study[str(s.id)])) for s in studies]
+    counts = _study_counts(db, [s.id for s in studies])
+    return [_serialize_study(s, _highest_role(roles_by_study[str(s.id)]), counts) for s in studies]
+
+
+def _study_counts(db: Session, study_ids: list) -> dict:
+    """Cases and members (people, not role rows) per study, for the study
+    cards and the delete confirmation (UX-ux-admin-05, K2)."""
+    if not study_ids:
+        return {"cases": {}, "members": {}}
+    cases = dict(db.query(Case.study_id, func.count(Case.id)).filter(Case.study_id.in_(study_ids)).group_by(Case.study_id).all())
+    members = dict(
+        db.query(StudyMembership.study_id, func.count(func.distinct(StudyMembership.user_id)))
+        .filter(StudyMembership.study_id.in_(study_ids))
+        .group_by(StudyMembership.study_id)
+        .all()
+    )
+    return {"cases": cases, "members": members}
 
 
 @router.get("/{study_id}")

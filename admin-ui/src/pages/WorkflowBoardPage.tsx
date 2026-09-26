@@ -46,6 +46,7 @@ import {
 } from "../api/workflowApi";
 import { CARD_TEMPLATES, DRAG_DATA_FORMAT } from "../components/workflow/CardLibrarySidebar";
 import { freeSpot } from "../components/workflow/freeSpot";
+import Modal from "../components/Modal";
 import CardLibrarySidebar from "../components/workflow/CardLibrarySidebar";
 import PipelineStore from "../components/workflow/PipelineStore";
 import {
@@ -632,7 +633,21 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   }
 
   function handleBulkDelete() {
-    handleNodesDelete(nodes.filter((n) => n.selected));
+    const selected = nodes.filter((n) => n.selected);
+    confirmDeletingCards(selected.length).then((ok) => ok && handleNodesDelete(selected));
+  }
+
+  // Deleting several cards at once asks first: 20 cards vanished on one
+  // key press with no question (UX-ux-admin-13, K2). One card is quick to
+  // put back with Undo, so it doesn't ask.
+  const [pendingDelete, setPendingDelete] = useState<{ count: number; resolve: (ok: boolean) => void } | null>(null);
+  function confirmDeletingCards(count: number): Promise<boolean> {
+    if (count <= 1) return Promise.resolve(true);
+    return new Promise((resolve) => setPendingDelete({ count, resolve }));
+  }
+  function answerPendingDelete(ok: boolean) {
+    pendingDelete?.resolve(ok);
+    setPendingDelete(null);
   }
 
   function handleRun(cardId: string) {
@@ -724,6 +739,24 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
 
   return (
     <div className="flex h-screen flex-col">
+      {pendingDelete && (
+        <Modal title={`Delete ${pendingDelete.count} cards?`} onClose={() => answerPendingDelete(false)}>
+          <div className="flex flex-col gap-4" data-testid="delete-cards-modal">
+            <p className="text-sm text-gray-600">
+              The {pendingDelete.count} cards and their connections are removed from the board. A job card's assignee loses the job; the cases and
+              the annotations themselves stay. Ctrl+Z brings the cards back while you stay on this board.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => answerPendingDelete(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-danger" onClick={() => answerPendingDelete(true)} autoFocus>
+                Delete {pendingDelete.count} cards
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-y-2 border-b border-gray-200/70 bg-white px-3 py-2 sm:px-5 sm:py-3">
         <div className="flex min-w-0 items-center gap-3" data-guide="board-header">
           <Link to={`/studies/${studyId}`} className="btn-secondary btn-sm">
@@ -875,6 +908,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             onNodeDragStop={handleNodeDragStop}
             onConnect={handleConnect}
             onReconnect={handleReconnect}
+            onBeforeDelete={({ nodes: toDelete }) => confirmDeletingCards(toDelete.length)}
             onNodesDelete={handleNodesDelete}
             onEdgesDelete={handleEdgesDelete}
             deleteKeyCode={canEdit ? ["Backspace", "Delete"] : null}

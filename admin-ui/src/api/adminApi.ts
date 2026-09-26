@@ -11,6 +11,9 @@ export interface Study {
   // The caller's own role in this study ("admin" for a global admin),
   // null when they hold none -- what admin-ui gates edit actions on.
   my_role?: string | null;
+  // in the study list only: what's in the study (cards, delete confirmation)
+  case_count?: number;
+  member_count?: number;
 }
 
 export interface StudyMember {

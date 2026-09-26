@@ -10,7 +10,7 @@ import {
   updateStudy,
   uploadStudyCoverImage,
 } from "../api/adminApi";
-import { ApiError, describeApiError } from "../api/client";
+import { describeApiError } from "../api/client";
 import { API, assetUrl } from "../config";
 import { roleLabel, useMe } from "../auth/MeContext";
 import EmptyState from "../components/EmptyState";
@@ -19,7 +19,12 @@ import { STUDIES_STEPS } from "../guide/adminSteps";
 import { useRegisterGuide } from "../guide/GuideContext";
 import { trackAction } from "../usage/tracker";
 
-type ModalState = { mode: "create" } | { mode: "edit"; study: Study } | { mode: "duplicate"; study: Study } | null;
+type ModalState =
+  | { mode: "create" }
+  | { mode: "edit"; study: Study }
+  | { mode: "duplicate"; study: Study }
+  | { mode: "delete"; study: Study }
+  | null;
 
 export default function StudiesPage() {
   const { isAdmin } = useMe();
@@ -40,37 +45,21 @@ export default function StudiesPage() {
   useEffect(refresh, []);
   useRegisterGuide("studies", STUDIES_STEPS, loaded, false);
 
+  const [deleting, setDeleting] = useState(false);
+
+  /** Deletes the study with everything in it -- only from the delete
+   * dialog, after its name was typed (K2: two browser pop-ups were the
+   * only guard, and one misplaced click next to Duplicate lost a study). */
   async function handleDelete(study: Study) {
-    if (!window.confirm(`Delete "${study.name}"? This cannot be undone.`)) return;
+    setDeleting(true);
     try {
-      await deleteStudy(study.id);
+      await deleteStudy(study.id, true);
+      setModal(null);
       refresh();
-      return;
     } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 409) {
-        setError(describeApiError(err));
-        return;
-      }
-      // Study still has cases -- deleteStudy's own 409 message already
-      // says how many. Force-deleting is a second, explicit confirm (on
-      // top of the one above) since it's no longer just the study
-      // container being removed -- every case's real imaging data and
-      // documents go with it.
-      let detail = err.body;
-      try {
-        detail = JSON.parse(err.body).detail ?? detail;
-      } catch {
-        // Not JSON -- show the raw body as-is.
-      }
-      if (!window.confirm(`${detail}\n\nDelete the study AND all its cases (imaging data, documents, everything)? This cannot be undone.`)) {
-        return;
-      }
-      try {
-        await deleteStudy(study.id, true);
-        refresh();
-      } catch (err2) {
-        setError(describeApiError(err2));
-      }
+      setError(describeApiError(err));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -91,9 +80,16 @@ export default function StudiesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="page-title">Studies</h1>
-        {!isAdmin && <p className="page-subtitle">The studies you are a member of, with your role in each.</p>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="page-title">Studies</h1>
+          {!isAdmin && <p className="page-subtitle">The studies you are a member of, with your role in each.</p>}
+        </div>
+        {isAdmin && (
+          <button type="button" className="btn-primary" onClick={() => setModal({ mode: "create" })} data-testid="new-study-top">
+            <PlusIcon className="h-4 w-4" /> New study
+          </button>
+        )}
       </div>
       {error && <p className="alert-error">{error}</p>}
 
@@ -116,14 +112,18 @@ export default function StudiesPage() {
             showRole={!isAdmin}
             onImageUploaded={refresh}
             onEdit={() => setModal({ mode: "edit", study: s })}
-            onDelete={() => handleDelete(s)}
+            onDelete={() => setModal({ mode: "delete", study: s })}
             onDuplicate={() => setModal({ mode: "duplicate", study: s })}
           />
         ))}
         {isAdmin && <NewStudyTile onClick={() => setModal({ mode: "create" })} />}
       </div>
 
-      {modal && modal.mode !== "duplicate" && (
+      {modal && modal.mode === "delete" && (
+        <DeleteStudyModal study={modal.study} deleting={deleting} onClose={() => setModal(null)} onConfirm={() => handleDelete(modal.study)} />
+      )}
+
+      {modal && (modal.mode === "create" || modal.mode === "edit") && (
         <StudyFormModal
           state={modal}
           onClose={() => setModal(null)}
@@ -210,6 +210,53 @@ function StudyFormModal({
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/** What goes with the study, and its name typed to confirm -- a delete
+ * can't happen from a stray click any more (K2). */
+function DeleteStudyModal({
+  study,
+  deleting,
+  onClose,
+  onConfirm,
+}: {
+  study: Study;
+  deleting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const cases = study.case_count ?? 0;
+  const matches = typed.trim() === study.name.trim();
+  return (
+    <Modal title={`Delete "${study.name}"?`} onClose={onClose}>
+      <div className="flex flex-col gap-4" data-testid="delete-study-modal">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
+          {cases > 0 ? (
+            <>
+              This deletes the study <b>and its {cases} case{cases === 1 ? "" : "s"}</b> -- their images, documents and every annotation and
+              review -- together with the board, the members and the version history.
+            </>
+          ) : (
+            <>This deletes the study together with its board, members and version history.</>
+          )}{" "}
+          It can't be undone.
+        </div>
+        <label className="field">
+          <span className="label">Type the study's name to confirm</span>
+          <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={study.name} autoFocus />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn-danger" disabled={!matches || deleting} onClick={onConfirm}>
+            {deleting ? "Deleting…" : cases > 0 ? `Delete study and ${cases} case${cases === 1 ? "" : "s"}` : "Delete study"}
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -302,7 +349,7 @@ function StudyCard({
   }
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm transition-shadow hover:shadow-md" data-guide={guide}>
+    <div className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white/90 shadow-sm transition-shadow hover:shadow-md" data-guide={guide} data-testid="study-card">
       <Link to={`/studies/${study.id}`} className="block">
         <div className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-gradient-to-br from-brand-100 to-brand-50">
           {study.cover_image_url ? (
@@ -317,6 +364,11 @@ function StudyCard({
             {showRole && <span className="badge-blue flex-shrink-0">{roleLabel(study.my_role ?? null)}</span>}
           </div>
           {study.description && <p className="mt-1 text-sm text-gray-500">{study.description}</p>}
+          {study.case_count !== undefined && (
+            <p className="mt-2 text-xs text-gray-400">
+              {study.case_count} case{study.case_count === 1 ? "" : "s"} · {study.member_count ?? 0} member{study.member_count === 1 ? "" : "s"}
+            </p>
+          )}
         </div>
       </Link>
 
@@ -325,6 +377,7 @@ function StudyCard({
         <label
           className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white"
           title="Set cover image"
+          aria-label="Set cover image"
         >
           {uploading ? <Spinner className="h-4 w-4" /> : <CameraIcon className="h-4 w-4" />}
           <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
@@ -333,6 +386,7 @@ function StudyCard({
           onClick={onEdit}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white"
           title="Edit study"
+          aria-label="Edit study"
         >
           <PencilIcon className="h-4 w-4" />
         </button>
@@ -342,6 +396,7 @@ function StudyCard({
             disabled={duplicating}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 shadow-sm hover:bg-white disabled:opacity-50"
             title="Duplicate study (a fully independent copy)"
+            aria-label="Duplicate study"
           >
             {duplicating ? <Spinner className="h-4 w-4" /> : <DuplicateIcon className="h-4 w-4" />}
           </button>
@@ -349,8 +404,10 @@ function StudyCard({
         {canDelete && (
           <button
             onClick={onDelete}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-red-600 shadow-sm hover:bg-white"
-            title="Delete study"
+            // set apart from the others: it used to sit right next to Duplicate (K2)
+            className="ml-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-red-600 shadow-sm hover:bg-white"
+            title="Delete study…"
+            aria-label="Delete study"
           >
             <TrashIcon className="h-4 w-4" />
           </button>
