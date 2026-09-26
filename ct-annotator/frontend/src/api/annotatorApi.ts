@@ -434,6 +434,12 @@ export interface ObjectStats {
   below_minus_500: number | null;
 }
 
+/** The series' (slice, row, column) spacing in mm -- the ruler's scale. */
+export async function fetchSeriesSpacing(seriesId: string): Promise<[number, number, number] | null> {
+  const r = await apiFetch<{ spacing_mm: [number, number, number] | null }>(API.annotator, `/series/${seriesId}/spacing`);
+  return r.spacing_mm;
+}
+
 /** Measures the mask as it is now (saved or not): per object id. */
 export async function fetchObjectStats(seriesId: string, gzipBytes: ArrayBuffer): Promise<{ spacing_mm: number[] | null; objects: Record<string, ObjectStats> }> {
   return apiFetch(API.annotator, `/series/${seriesId}/object-stats`, {

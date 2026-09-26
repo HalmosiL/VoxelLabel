@@ -408,3 +408,17 @@ def test_object_stats_measure_the_mask_sent_with_the_series_hu(api, monkeypatch)
     assert api.post(f"/series/{SERIES}/object-stats", json=wrong).status_code == 422
     api.as_user(OUTSIDER)
     assert api.post(f"/series/{SERIES}/object-stats", json=body).status_code == 403
+
+
+def test_the_series_spacing_is_given_for_the_ruler(api, monkeypatch):
+    """The viewer's ruler turns pixels into mm with the series' own spacing."""
+    from types import SimpleNamespace
+
+    async def dataset(instance_id, user):
+        return SimpleNamespace(PixelSpacing=[0.6, 0.6], SliceThickness=2.0)
+
+    monkeypatch.setattr(main, "_get_dataset", dataset)
+    api.as_user(MEMBER)
+    assert api.get(f"/series/{SERIES}/spacing").json() == {"spacing_mm": [2.0, 0.6, 0.6]}
+    api.as_user(OUTSIDER)
+    assert api.get(f"/series/{SERIES}/spacing").status_code == 403

@@ -12,6 +12,7 @@ import {
   fetchPlaneHU,
   fetchObjectStats,
   fetchSegmentationVolume,
+  fetchSeriesSpacing,
   fetchSurfaceConfig,
   fetchVoxelHU,
   JobCase,
@@ -71,6 +72,7 @@ import { isHelpKey } from "../lib/keymap";
 import ReviewSubmitDialog from "../components/ReviewSubmitDialog";
 import ObjectMeasurements from "../components/ObjectMeasurements";
 import { objectSlices } from "../lib/objectMeasure";
+import { Ruler, rulerLabel, RulerPoint, Spacing } from "../lib/ruler";
 import { isEdge, OUTLINE_MIN_ALPHA, OverlayStyle, rememberedOverlayStyle, rememberOverlayStyle } from "../lib/overlayStyle";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
@@ -522,6 +524,18 @@ export default function ViewerPage() {
     rememberOverlayStyle(style);
   }
   const [peeking, setPeeking] = useState(false);
+  // The ruler (M): a drag on a pane measures in mm and touches nothing
+  // else (UX-rev-1-03). One line; Esc or turning it off clears it.
+  const [rulerOn, setRulerOn] = useState(false);
+  const [ruler, setRuler] = useState<Ruler | null>(null);
+  const [spacing, setSpacing] = useState<Spacing | null | undefined>(undefined);
+  const rulerDragRef = useRef(false);
+  function toggleRuler() {
+    setRulerOn((on) => {
+      if (on) setRuler(null);
+      return !on;
+    });
+  }
   const [reviewHidden, setReviewHidden] = useState<Set<number>>(() => new Set());
   function toggleReviewHidden(id: number) {
     setReviewHidden((prev) => {
@@ -1438,6 +1452,78 @@ export default function ViewerPage() {
 
   function maskIndex(x: number, y: number, z: number): number {
     return z * rows * columns + y * columns + x;
+  }
+
+  useEffect(() => {
+    if (!rulerOn || spacing !== undefined || !seriesId) return;
+    fetchSeriesSpacing(seriesId)
+      .then((sp) => setSpacing(sp))
+      .catch(() => setSpacing(null));
+  }, [rulerOn, spacing, seriesId]);
+
+  /** A pointer on a pane, in that plane's native pixels -- from the image
+   * canvas's own on-screen box, so zoom and pan are already in it. */
+  function rulerPointAt(pane: PaneKey, clientX: number, clientY: number): RulerPoint | null {
+    const canvas = imageCanvasRefs[pane].current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const { width, height } = planeDims(pane);
+    if (!rect.width || !rect.height || !width || !height) return null;
+    return { x: ((clientX - rect.left) / rect.width) * width, y: ((clientY - rect.top) / rect.height) * height };
+  }
+  function handleRulerDown(e: ReactPointerEvent<HTMLDivElement>, pane: PaneKey) {
+    if (e.button !== 0) return; // right/middle drag still windows
+    e.stopPropagation();
+    const p = rulerPointAt(pane, e.clientX, e.clientY);
+    if (!p) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    rulerDragRef.current = true;
+    setRuler({ pane, index: currentIndex(pane), a: p, b: p });
+  }
+  function handleRulerMove(e: ReactPointerEvent<HTMLDivElement>, pane: PaneKey) {
+    if (!rulerDragRef.current) return;
+    e.stopPropagation();
+    const p = rulerPointAt(pane, e.clientX, e.clientY);
+    if (p) setRuler((r) => (r && r.pane === pane ? { ...r, b: p } : r));
+  }
+  function handleRulerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!rulerDragRef.current) return;
+    e.stopPropagation();
+    rulerDragRef.current = false;
+    trackAction("ruler.measure");
+  }
+  /** The ruler's line and its length, on the slice it was drawn on. */
+  function renderRuler(pane: PaneKey, scale: number) {
+    if (!ruler || ruler.pane !== pane || ruler.index !== currentIndex(pane)) return null;
+    const { width, height } = planeDims(pane);
+    if (!width || !height) return null;
+    const mid = { x: (ruler.a.x + ruler.b.x) / 2, y: (ruler.a.y + ruler.b.y) / 2 };
+    return (
+      <>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+          aria-hidden="true"
+        >
+          <line x1={ruler.a.x} y1={ruler.a.y} x2={ruler.b.x} y2={ruler.b.y} stroke="#facc15" strokeWidth={2} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+        </svg>
+        <span
+          data-testid={`ruler-label-${pane}`}
+          style={{
+            position: "absolute",
+            left: `${(mid.x / width) * 100}%`,
+            top: `${(mid.y / height) * 100}%`,
+            transform: `translate(-50%, -140%) scale(${1 / scale})`,
+            transformOrigin: "center bottom",
+            pointerEvents: "none",
+          }}
+          className="whitespace-nowrap rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-yellow-300"
+        >
+          {rulerLabel(ruler, spacing ?? null)}
+        </span>
+      </>
+    );
   }
 
   function currentIndex(pane: PaneKey): number {
@@ -3639,6 +3725,10 @@ export default function ViewerPage() {
   const hoveredPaneRef = useRef<PaneKey>("axial");
   const overlayStyleRef = useRef(overlayStyle);
   overlayStyleRef.current = overlayStyle;
+  const toggleRulerRef = useRef(toggleRuler);
+  toggleRulerRef.current = toggleRuler;
+  const rulerRef = useRef(ruler);
+  rulerRef.current = ruler;
   // "?": every key and gesture (lib/keymap.ts)
   const [keysOpen, setKeysOpen] = useState(false);
   const closeKeys = useMemo(() => () => setKeysOpen(false), []);
@@ -3712,6 +3802,14 @@ export default function ViewerPage() {
       // header button of the same name for the click-driven equivalent.
       if (event.key.toLowerCase() === "c" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
         setShowCrosshair((v) => !v);
+        return;
+      }
+      if (event.key.toLowerCase() === "m" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        toggleRulerRef.current();
+        return;
+      }
+      if (event.key === "Escape" && !typing && rulerRef.current) {
+        setRuler(null);
         return;
       }
       if (event.key.toLowerCase() === "o" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -4032,6 +4130,16 @@ export default function ViewerPage() {
               </button>
             </Tip>
           )}
+          <IconButton
+            title="Ruler"
+            description="Drag on a pane to measure a distance in millimetres. Nothing is drawn into the annotation; Esc clears the line."
+            shortcut="M"
+            onClick={toggleRuler}
+            testId="ruler-toggle"
+            active={rulerOn}
+          >
+            <RulerIcon />
+          </IconButton>
           <IconButton title="Keys and gestures" description="Every shortcut and mouse or touch gesture of this screen." shortcut="?" onClick={() => setKeysOpen(true)} testId="keyboard-help-open">
             <KeyboardIcon />
           </IconButton>
@@ -4359,6 +4467,17 @@ export default function ViewerPage() {
                     />
                     {renderCrosshair(pane, displayWidth, displayHeight, z.scale)}
                     {renderPolygonOverlay(pane)}
+                    {renderRuler(pane, z.scale)}
+                    {rulerOn && (
+                      <div
+                        data-testid={`ruler-surface-${pane}`}
+                        style={{ position: "absolute", inset: 0, cursor: "crosshair", touchAction: "none", zIndex: 5 }}
+                        onPointerDown={(e) => handleRulerDown(e, pane)}
+                        onPointerMove={(e) => handleRulerMove(e, pane)}
+                        onPointerUp={handleRulerUp}
+                        onPointerCancel={handleRulerUp}
+                      />
+                    )}
                     {renderAutoBoxOverlay(pane)}
                     {renderRoiBoxOutline(pane)}
                   </div>
@@ -5126,6 +5245,7 @@ function IconButton({
   description,
   shortcut,
   testId,
+  active,
   children,
 }: {
   onClick: () => void;
@@ -5134,6 +5254,8 @@ function IconButton({
   description?: string;
   shortcut?: string;
   testId?: string;
+  /** a toggle that is on */
+  active?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -5143,8 +5265,11 @@ function IconButton({
           onClick={onClick}
           disabled={disabled}
           aria-label={title}
+          aria-pressed={active}
           data-testid={testId}
-          className="flex h-7 w-7 items-center justify-center rounded border border-[#444] bg-[#2a2a3e] text-gray-300 transition-colors hover:bg-[#333] disabled:cursor-not-allowed disabled:opacity-40"
+          className={`flex h-7 w-7 items-center justify-center rounded border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            active ? "border-yellow-400 bg-yellow-400/20 text-yellow-300" : "border-[#444] bg-[#2a2a3e] text-gray-300 hover:bg-[#333]"
+          }`}
         >
           {children}
         </button>
@@ -5384,6 +5509,15 @@ function RedoIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M17 7 21 11l-4 4" strokeLinejoin="round" />
       <path d="M21 11H10a6 6 0 0 0 0 12h2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RulerIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 16.5 16.5 3 21 7.5 7.5 21z" />
+      <path d="M7 12.5l1.5 1.5M10 9.5l1.5 1.5M13 6.5l1.5 1.5" />
     </svg>
   );
 }

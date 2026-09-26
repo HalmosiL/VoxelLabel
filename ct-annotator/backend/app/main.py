@@ -424,6 +424,24 @@ async def get_plane_hu(
     )
 
 
+async def _series_spacing(series_id: str, user: CurrentUser) -> tuple[float, float, float] | None:
+    """(slice, row, column) spacing in mm from the series' first two instances."""
+    ordered = sorted(await _series_instances_checked(series_id, user), key=lambda i: i.get("instance_number") or 0)
+    if not ordered:
+        return None
+    first = await _get_dataset(ordered[0]["id"], user)
+    second = await _get_dataset(ordered[1]["id"], user) if len(ordered) > 1 else None
+    return series_spacing(first, second)
+
+
+@app.get("/series/{series_id}/spacing")
+async def get_series_spacing(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """What the viewer's ruler needs to say millimetres: the series'
+    (slice, row, column) spacing, or null when the files don't tell."""
+    spacing = await _series_spacing(series_id, user)
+    return {"spacing_mm": list(spacing) if spacing else None}
+
+
 class ObjectStatsBody(BaseModel):
     mask_gzip_base64: str
 
@@ -445,10 +463,7 @@ async def get_object_stats(series_id: str, body: ObjectStatsBody, user: CurrentU
     if len(raw) != volume.size:
         raise HTTPException(status_code=422, detail=f"The mask has {len(raw)} voxels, the series {volume.size}")
     mask = np.frombuffer(raw, dtype=np.uint8).reshape(volume.shape)
-    ordered = sorted(await _series_instances_checked(series_id, user), key=lambda i: i.get("instance_number") or 0)
-    first = await _get_dataset(ordered[0]["id"], user) if ordered else None
-    second = await _get_dataset(ordered[1]["id"], user) if len(ordered) > 1 else None
-    spacing = series_spacing(first, second) if first is not None else None
+    spacing = await _series_spacing(series_id, user)
     stats = await asyncio.to_thread(object_stats, mask, volume, spacing)
     return {"spacing_mm": list(spacing) if spacing else None, "objects": {str(k): v for k, v in stats.items()}}
 

@@ -11,6 +11,8 @@ export interface KeyEntry {
   touch?: string;
   /** only where it applies; both when omitted */
   mode?: "annotate" | "review";
+  /** the real viewer only (the tutorial has no such tool) */
+  viewerOnly?: boolean;
 }
 
 export interface KeyGroup {
@@ -35,6 +37,7 @@ export const KEYMAP: KeyGroup[] = [
     entries: [
       { keys: ["Right-drag", "Middle-drag"], what: "Window / level: sideways for width, up and down for level (with a drawing tool: middle-drag)" },
       { keys: ["Alt+click"], what: "The HU value at this point", touch: "Long-press" },
+      { keys: ["M"], what: "Ruler: drag on a pane to measure in mm; Esc clears the line", viewerOnly: true },
       { keys: ["O"], what: "Draw the annotation filled or as an outline" },
       { keys: ["Space (hold)"], what: "Hide the annotation while held, to see the scan under it" },
     ],
@@ -59,8 +62,10 @@ export const KEYMAP: KeyGroup[] = [
 
 /** The groups for one mode: entries of the other mode left out, empty
  * groups dropped. */
-export function keymapFor(mode: "annotate" | "review"): KeyGroup[] {
-  return KEYMAP.map((g) => ({ ...g, entries: g.entries.filter((e) => !e.mode || e.mode === mode) })).filter((g) => g.entries.length > 0);
+export function keymapFor(mode: "annotate" | "review", where: "viewer" | "tutorial" = "viewer"): KeyGroup[] {
+  return KEYMAP.map((g) => ({ ...g, entries: g.entries.filter((e) => (!e.mode || e.mode === mode) && (!e.viewerOnly || where === "viewer")) })).filter(
+    (g) => g.entries.length > 0,
+  );
 }
 
 /** "?" (Shift+/ on most layouts), not while typing, not with Ctrl/Alt. */

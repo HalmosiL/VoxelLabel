@@ -2534,7 +2534,7 @@ export default function TutorialPage() {
       {openDoc && <DocumentPanel doc={openDoc} onClose={() => setOpenDoc(null)} compact={compact} coarse={coarse} />}
 
       <GuideTour key={`${phase}-${runId}`} steps={guideSteps} open={guideOpen} onClose={() => setGuideOpen(false)} />
-      {keysOpen && <KeyboardHelp mode={phase === "review" ? "review" : "annotate"} touch={coarse} onClose={closeKeys} />}
+      {keysOpen && <KeyboardHelp mode={phase === "review" ? "review" : "annotate"} touch={coarse} where="tutorial" onClose={closeKeys} />}
     </div>
   );
 }

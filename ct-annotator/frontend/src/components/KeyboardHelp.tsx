@@ -5,7 +5,17 @@ import { isHelpKey, keymapFor } from "../lib/keymap";
 /** Every shortcut and gesture, grouped (lib/keymap.ts) -- opened with "?"
  * or the header's keyboard button; Esc, "?" again or a click outside
  * closes it. On a touch screen the touch way is shown beside each. */
-export default function KeyboardHelp({ mode, touch, onClose }: { mode: "annotate" | "review"; touch: boolean; onClose: () => void }) {
+export default function KeyboardHelp({
+  mode,
+  touch,
+  where = "viewer",
+  onClose,
+}: {
+  mode: "annotate" | "review";
+  touch: boolean;
+  where?: "viewer" | "tutorial";
+  onClose: () => void;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" || isHelpKey(e)) {
@@ -37,7 +47,7 @@ export default function KeyboardHelp({ mode, touch, onClose }: { mode: "annotate
           </button>
         </div>
         <div className="mt-3 grid gap-x-8 gap-y-4 sm:grid-cols-2">
-          {keymapFor(mode).map((group) => (
+          {keymapFor(mode, where).map((group) => (
             <section key={group.title}>
               <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{group.title}</h3>
               <dl className="flex flex-col gap-1.5">

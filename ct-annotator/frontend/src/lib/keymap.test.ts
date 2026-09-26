@@ -10,6 +10,11 @@ describe("keymap", () => {
     expect(keymapFor("review").map((g) => g.title)).not.toContain("Drawing");
     expect(keymapFor("annotate").flatMap((g) => g.entries.flatMap((e) => e.keys))).toContain("Ctrl+Z");
   });
+  it("the tutorial leaves out what only the viewer has", () => {
+    const keys = (where: "viewer" | "tutorial") => keymapFor("annotate", where).flatMap((g) => g.entries.flatMap((e) => e.keys));
+    expect(keys("viewer")).toContain("M");
+    expect(keys("tutorial")).not.toContain("M");
+  });
   it("? opens the help, Ctrl+? does not", () => {
     expect(isHelpKey({ key: "?", ctrlKey: false, metaKey: false, altKey: false })).toBe(true);
     expect(isHelpKey({ key: "?", ctrlKey: true, metaKey: false, altKey: false })).toBe(false);
