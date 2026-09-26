@@ -226,8 +226,11 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     // See viewas-viewer.spec.js's comment: bound generously and check
     // the count first, since a real job can have many objects to decide.
     let guard = 0;
+    // a rejection stays on its object: step to each object still undecided, then accept it
     while (await page.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 60) {
-      if ((await page.locator("aside button", { hasText: "Accept" }).count()) === 0) break;
+      const pending = page.locator('[data-testid^="review-dot-"][data-status="pending"]');
+      if ((await pending.count()) === 0) break;
+      await pending.first().click(); await page.waitForTimeout(150);
       await page.locator("aside button", { hasText: "Accept" }).first().click();
       await page.waitForTimeout(300);
     }

@@ -2492,6 +2492,23 @@ export default function ViewerPage() {
   }
   const hasUnsavedWorkRef = useRef(hasUnsavedWork);
   hasUnsavedWorkRef.current = hasUnsavedWork;
+
+  // Review decisions, reasons and comments save themselves a moment after
+  // the last change: a 700-character rejection was lost when the window
+  // closed before Save (UX-rev-1-01).
+  const [reviewSavedAt, setReviewSavedAt] = useState<number | null>(null);
+  const reviewDirty = reviewMode && maskReady && hasUnsavedWork();
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  useEffect(() => {
+    if (!reviewMode || !maskReady || saving || readOnlyLocked || reviewBlocked !== null) return;
+    if (!hasUnsavedWorkRef.current()) return;
+    const timer = window.setTimeout(() => {
+      if (hasUnsavedWorkRef.current()) handleSaveRef.current("draft", { quiet: true }).then((ok) => ok && setReviewSavedAt(Date.now()));
+    }, 1500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objects, reviewMode, maskReady, saving]);
   useEffect(() => {
     // Reload / close tab / typing another address: the browser's own prompt.
     function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -2515,13 +2532,13 @@ export default function ViewerPage() {
     return reviewMode && reviewState?.kind === "reviewable" ? reviewState.handedInId : undefined;
   }
 
-  async function handleSave(status: "draft" | "submitted" = "draft") {
+  async function handleSave(status: "draft" | "submitted" = "draft", opts: { quiet?: boolean } = {}): Promise<boolean> {
     const volume = maskVolumeRef.current;
-    if (!volume || !seriesId || !studyId) return;
+    if (!volume || !seriesId || !studyId) return false;
     if (polygonDraft) {
       // an open outline is not in the mask: saving now would silently leave it out (K4)
       setError(`The outline on slice ${polygonDraft.index + 1} isn't closed yet -- close it or drop it, then save.`);
-      return;
+      return false;
     }
     setSaving(true);
     setError(null);
@@ -2548,13 +2565,15 @@ export default function ViewerPage() {
         refreshJobStatus();
       }
 
-      showSavedMessage(status === "submitted" ? "✓ Marked as annotated" : "✓ Saved");
+      if (!opts.quiet) showSavedMessage(status === "submitted" ? "✓ Marked as annotated" : "✓ Saved");
       if (status === "submitted") {
         if (caseId) askRatingIfDue({ case_id: caseId, job_id: jobId, task: "annotate" });
         advanceToNextOpenCase();
       }
+      return true;
     } catch (err) {
       setError(saveErrorMessage(err));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -3840,24 +3859,26 @@ export default function ViewerPage() {
               </IconButton>
             </div>
           )}
-          <Tip
-            title="Save a draft"
-            description={
-              reviewMode
-                ? "Store your decisions and comments so far without submitting the review yet."
-                : "Store the current drawing as a draft on this case. Save often; you can keep editing afterwards."
-            }
-          >
-            <span className="flex" data-guide="save">
-              <button
-                onClick={() => handleSave("draft")}
-                disabled={saving || !studyId || !maskReady || reviewBlocked !== null || readOnlyLocked}
-                className="rounded border border-blue-500 bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </span>
-          </Tip>
+          {reviewMode ? (
+            // decisions save themselves (UX-rev-1-01, UX-rev-2-03): no button to forget
+            <Tip title="Saved as you go" description="Every decision, reason and comment is saved a moment after you make it. Submit review hands the decision on.">
+              <span className="text-[11px] text-gray-400" data-guide="save" data-testid="review-autosave">
+                {saving ? "Saving…" : reviewDirty ? "Unsaved…" : reviewSavedAt ? "✓ Saved" : "Nothing to save yet"}
+              </span>
+            </Tip>
+          ) : (
+            <Tip title="Save a draft" description="Store the current drawing as a draft on this case. Save often; you can keep editing afterwards.">
+              <span className="flex" data-guide="save">
+                <button
+                  onClick={() => handleSave("draft")}
+                  disabled={saving || !studyId || !maskReady || reviewBlocked !== null || readOnlyLocked}
+                  className="rounded border border-blue-500 bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </span>
+            </Tip>
+          )}
           {!reviewMode && (
             <Tip
               title="Mark as Annotated"

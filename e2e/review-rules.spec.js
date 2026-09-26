@@ -36,7 +36,7 @@ const headerButton = (page, name) => page.locator("header button", { hasText: ne
   if (decided) {
     const { ctx, page } = await openReview(browser, await seriesOf(decided.id), decided.id);
     check("a decided case says so", /already (approved|rejected)/.test(await page.locator('[data-testid="review-blocked"]').innerText().catch(() => "")));
-    check("... and Submit review and Save are off", (await headerButton(page, "Submit review").isDisabled()) && (await headerButton(page, "Save").isDisabled()));
+    check("... and Submit review is off (and there is no Save button: decisions save themselves)", (await headerButton(page, "Submit review").isDisabled()) && (await headerButton(page, "Save").count()) === 0);
     await ctx.close();
   } else check("a decided case exists to check", false);
 
@@ -53,12 +53,13 @@ const headerButton = (page, name) => page.locator("header button", { hasText: ne
     await ctx.close();
   }
 
-  // ---- F-01: the reviewer's Save keeps the case handed in ----
+  // ---- F-01: the reviewer's saved work (saved as they go) keeps the case handed in ----
   await saveMaskAs(at, openSeries, F.STUDY, "submitted");
   {
     const { ctx, page } = await openReview(browser, openSeries, open.id);
     check("a handed-in case can be reviewed", (await page.locator('[data-testid="review-blocked"]').count()) === 0);
-    await headerButton(page, "Save").click(); await page.waitForTimeout(1800);
+    await page.locator("aside button", { hasText: "Accept" }).first().click(); // a decision, which saves itself
+    await page.waitForTimeout(3500);
     const annCase = (await annotJob()).cases.find((c) => c.id === open.id);
     const revCase = (await reviewJob()).cases.find((c) => c.id === open.id);
     check("after the reviewer's Save the annotator still sees it handed in", annCase.status === "done", annCase);

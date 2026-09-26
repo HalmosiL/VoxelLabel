@@ -52,6 +52,17 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.locator('[data-testid="review-comment"]').fill("The edge misses the upper part.");
   await page.waitForTimeout(300);
   check("... with both, Submit is on", !(await submit.isDisabled()));
+  // the decisions save themselves: a reload (or a closed tab) keeps them (UX-rev-1-01, UX-rev-2-03)
+  check("in review there is no Save button to forget", (await page.locator("header button", { hasText: /^Save$/ }).count()) === 0);
+  await page.waitForTimeout(3500);
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid$="-image"]').length >= 1, null, { timeout: 60000 });
+  await page.waitForTimeout(2500);
+  await page.locator('[data-testid^="review-dot-"][data-status="rejected"]').first().click().catch(() => {}); await page.waitForTimeout(300);
+  check("after a reload the rejection, its reason and its comment are still there",
+    (await page.locator('[data-testid^="review-dot-"][data-status="rejected"]').count()) === 1 &&
+    (await page.locator('[data-testid="review-comment"]').inputValue()) === "The edge misses the upper part." &&
+    (await page.locator('[data-testid="reject-reasons"] button.border-red-400').count()) === 1);
   await browser.close();
   // leave the fixture handed in, undecided
   await saveMaskAs(at, seriesId, F.STUDY, "submitted", { objects: plain });
