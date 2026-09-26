@@ -57,6 +57,7 @@ import { ANNOTATE_STEPS, REVIEW_STEPS } from "../guide/viewerSteps";
 import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
 import { polygonMask, scanlineFill } from "../lib/scanlineFill";
 import { returnUrlForCase, safeReturnUrl } from "../lib/returnUrl";
+import { errorText } from "../lib/errorText";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -343,7 +344,7 @@ export default function ViewerPage() {
     if (!jobId) return;
     fetchJobCases(jobId)
       .then(setJobCases)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
   }, [jobId]);
   const jobCaseIndex = jobCases && caseId ? jobCases.findIndex((c) => c.id === caseId) : -1;
   // Which cases still need this person: for an Annotation job every
@@ -385,7 +386,7 @@ export default function ViewerPage() {
       const returnParam = nextReturn ? `&returnUrl=${encodeURIComponent(nextReturn)}` : "";
       navigate(`/viewer/series/${series[0].id}?studyId=${studyId}&caseId=${targetCaseId}${jobParam}${returnParam}`);
     } catch (err) {
-      setError(String(err));
+      setError(errorText(err));
     } finally {
       setCaseNavPending(false);
     }
@@ -405,7 +406,7 @@ export default function ViewerPage() {
     if (opening && caseId && documents === null) {
       listCaseDocuments(caseId)
         .then(setDocuments)
-        .catch((err) => setError(String(err)));
+        .catch((err) => setError(errorText(err)));
     }
   }
   // Opened in an in-page side panel (components/DocumentPanel.tsx), not
@@ -845,7 +846,7 @@ export default function ViewerPage() {
     setRoiLoading(true);
     fetchPlaneHU(seriesId, drag.pane, drag.index, x0, y0, x1, y1)
       .then(setRoiHu)
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(errorText(err)))
       .finally(() => setRoiLoading(false));
   }
 
@@ -857,7 +858,7 @@ export default function ViewerPage() {
   useEffect(() => {
     listAnnotationTypes()
       .then(setAnnotationTypes)
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
   }, []);
 
   const filteredAnnotations = annotations.filter(
@@ -1008,7 +1009,7 @@ export default function ViewerPage() {
         const initialIndex = sorted.findIndex((i) => i.id === routeInstanceId);
         setAxialIndex(initialIndex >= 0 ? initialIndex : 0);
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesId]);
 
@@ -1033,7 +1034,7 @@ export default function ViewerPage() {
         setSagittalIndex((prev) => prev ?? Math.floor((meta.columns ?? 1) / 2));
         setCoronalIndex((prev) => prev ?? Math.floor((meta.rows ?? 1) / 2));
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedInstanceId]);
 
@@ -1080,7 +1081,7 @@ export default function ViewerPage() {
       : fetchAxialBlobUrl(debouncedInstanceId, win.c, win.w, debouncedSharpness || null)
     )
       .then((url) => !cancelled && drawBlobUrlToCanvas(imageCanvasRefs.axial.current, url, columns, rows, "axial", win))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
     return () => {
       cancelled = true;
     };
@@ -1103,7 +1104,7 @@ export default function ViewerPage() {
       .catch((err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 422) setVolumeUnavailable(err.body);
-        else setError(String(err));
+        else setError(errorText(err));
       });
     return () => {
       cancelled = true;
@@ -1127,7 +1128,7 @@ export default function ViewerPage() {
       .catch((err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 422) setVolumeUnavailable(err.body);
-        else setError(String(err));
+        else setError(errorText(err));
       });
     return () => {
       cancelled = true;
@@ -1230,7 +1231,7 @@ export default function ViewerPage() {
       seriesId ? listAnnotations("series", seriesId) : Promise.resolve([]),
     ])
       .then(([instanceAnnotations, seriesAnnotations]) => setAnnotations([...seriesAnnotations, ...instanceAnnotations]))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
   }
 
   // ── Labels & objects: CVAT-style categories + numbered instances ────
@@ -1717,7 +1718,7 @@ export default function ViewerPage() {
     setAutoLoading(true);
     fetchPlaneHU(seriesId, drag.pane, drag.index, x0, y0, x1, y1)
       .then(setAutoHu)
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(errorText(err)))
       .finally(() => setAutoLoading(false));
   }
 
@@ -1778,7 +1779,7 @@ export default function ViewerPage() {
       showHuReadout(event.clientX, event.clientY, "…");
       fetchVoxelHU(seriesId, x, y, z)
         .then((hu) => showHuReadout(event.clientX, event.clientY, `${Math.round(hu)} HU`))
-        .catch((err) => setError(String(err)));
+        .catch((err) => setError(errorText(err)));
       return;
     }
     setError(null);
@@ -2423,9 +2424,19 @@ export default function ViewerPage() {
     window.setTimeout(() => goToCase(next.id), 1400);
   }
 
+  // The labels/objects as they are NOW, not as a callback captured them:
+  // the move to the next case after a hand-in runs from a timer set before
+  // the hand-in's objects were in state, and compared the old objects with
+  // the saved ones -- "unsaved changes" right after handing in (K7).
+  const labelsNowRef = useRef(labels);
+  labelsNowRef.current = labels;
+  const objectsNowRef = useRef(objects);
+  objectsNowRef.current = objects;
+  const maskReadyNowRef = useRef(maskReady);
+  maskReadyNowRef.current = maskReady;
   function hasUnsavedWork(): boolean {
-    if (!maskReady || savedDefsRef.current === null) return false;
-    return maskDirtyRef.current || JSON.stringify({ labels, objects }) !== savedDefsRef.current;
+    if (!maskReadyNowRef.current || savedDefsRef.current === null) return false;
+    return maskDirtyRef.current || JSON.stringify({ labels: labelsNowRef.current, objects: objectsNowRef.current }) !== savedDefsRef.current;
   }
   function markSaved(savedLabels: SegLabel[], savedObjects: SegObject[]) {
     maskDirtyRef.current = false;
@@ -3146,7 +3157,7 @@ export default function ViewerPage() {
     showHuReadout(event.clientX, event.clientY, "…");
     fetchVoxelHU(seriesId, x, y, z)
       .then((hu) => showHuReadout(event.clientX, event.clientY, `${Math.round(hu)} HU`))
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(errorText(err)));
   }
 
   /** Opens the comment popup for whatever object is under (clientX,
@@ -4316,9 +4327,9 @@ function saveErrorMessage(err: unknown): string {
       // plain text already
     }
     if (err.status === 403 && /insufficient study role/i.test(detail)) return "You don't have the role this needs in this study -- only its reviewers can review, only its annotators can annotate.";
-    return detail || String(err);
+    return detail || errorText(err);
   }
-  return String(err);
+  return errorText(err);
 }
 
 // ── Objects sidebar (CVAT-style) ───────────────────────────────────────
