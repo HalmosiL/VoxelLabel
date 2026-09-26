@@ -6,7 +6,7 @@
  * The mask volume stores each voxel's object id (0 = nothing), slice by
  * slice (z * rows * columns + y * columns + x). */
 import type { SegLabel, SegObject } from "../api/annotatorApi";
-import { usableFields } from "../components/ObjectForm";
+import { ObjectAnswers, ObjectField, usableFields } from "../components/ObjectForm";
 
 export interface HandInRow {
   id: number;
@@ -30,9 +30,17 @@ export interface HandInSummary {
   empty: HandInRow[];
   unanswered: HandInRow[];
   sentBack: HandInRow[];
+  /** the case questions not answered (ticks left unticked are answers) */
+  caseUnanswered: string[];
 }
 
-export function handInSummary(volume: Uint8Array | null, sliceSize: number, objects: SegObject[], labels: SegLabel[]): HandInSummary {
+export function handInSummary(
+  volume: Uint8Array | null,
+  sliceSize: number,
+  objects: SegObject[],
+  labels: SegLabel[],
+  caseForm: { fields: ObjectField[]; answers: ObjectAnswers } = { fields: [], answers: {} },
+): HandInSummary {
   const voxels = new Map<number, number>();
   const slices = new Map<number, Set<number>>();
   if (volume && sliceSize > 0) {
@@ -49,13 +57,7 @@ export function handInSummary(volume: Uint8Array | null, sliceSize: number, obje
   const rows = objects.map((obj): HandInRow => {
     const label = labels.find((l) => l.id === obj.label_id);
     const zs = [...(slices.get(obj.id) ?? [])].sort((a, b) => a - b);
-    const unanswered = usableFields(label?.fields)
-      .filter((f) => f.kind !== "check")
-      .filter((f) => {
-        const answer = obj.attributes?.[f.name];
-        return answer === undefined || answer === null || answer === "";
-      })
-      .map((f) => f.name);
+    const unanswered = unansweredOf(label?.fields, obj.attributes);
     return {
       id: obj.id,
       name: label ? `${label.name} ${obj.instance_number}` : `Object ${obj.instance_number}`,
@@ -68,7 +70,20 @@ export function handInSummary(volume: Uint8Array | null, sliceSize: number, obje
       sentBack: obj.review_status === "rejected",
     };
   });
-  return { rows, empty: rows.filter((r) => r.voxels === 0), unanswered: rows.filter((r) => r.unanswered.length > 0), sentBack: rows.filter((r) => r.sentBack) };
+  const caseUnanswered = unansweredOf(caseForm.fields, caseForm.answers);
+  return { rows, empty: rows.filter((r) => r.voxels === 0), unanswered: rows.filter((r) => r.unanswered.length > 0), sentBack: rows.filter((r) => r.sentBack), caseUnanswered };
+}
+
+/** The questions of a form with no answer: a tick box left unticked is an
+ * answer, an unpicked choice or an unset scale is not. */
+function unansweredOf(fields: ObjectField[] | undefined, answers: ObjectAnswers | undefined): string[] {
+  return usableFields(fields)
+    .filter((f) => f.kind !== "check")
+    .filter((f) => {
+      const answer = answers?.[f.name];
+      return answer === undefined || answer === null || answer === "";
+    })
+    .map((f) => f.name);
 }
 
 /** "slice 12", "slices 12–18 (7)", or "not painted". */

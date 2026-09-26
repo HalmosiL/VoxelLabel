@@ -663,6 +663,10 @@ class SaveMaskVolumeBody(BaseModel):
     # version's own id if it is SUBMITTED, else its review_of_id). The
     # save is then a reviewer's draft that keeps the case handed in.
     review_of: str | None = None
+    # questions answered once per case (the surface's case_fields) and the
+    # answers -- sent on only when there are any (UX-ux-admin-16)
+    case_fields: list[dict] = []
+    case_answers: dict = {}
 
 
 # A mask upload is gzip of one byte per voxel; generous for a 512x512x600
@@ -693,7 +697,7 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         if type_names.get(a.get("type_id")) == "segmentation_volume" and _is_mask_key((a.get("payload") or {}).get("mask_volume_key"))
     ]
     if not volume_annotations:
-        return {"mask_gzip_base64": None, "labels": [], "objects": [], "version_id": None, "version_status": None, "review_of_id": None}
+        return {"mask_gzip_base64": None, "labels": [], "objects": [], "case_fields": [], "case_answers": {}, "version_id": None, "version_status": None, "review_of_id": None}
 
     # annotation-service lists oldest-first by the save's own timestamp
     # (then id), so the last one is the newest.
@@ -704,6 +708,8 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
         "mask_gzip_base64": base64.b64encode(gzip_bytes).decode(),
         "labels": payload["labels"],
         "objects": payload["objects"],
+        "case_fields": payload.get("case_fields", []),
+        "case_answers": payload.get("case_answers", {}),
         "version_id": latest["id"],
         # What review mode needs: is this handed-in work (submitted, or a
         # reviewer's draft of it), still to decide, or already decided?
@@ -736,7 +742,13 @@ async def save_mask_volume(
         resp = await _http_client.post(
             f"{ANNOTATION_SERVICE_URL}/annotations/studies/{body.study_id}",
             params=params,
-            json={"mask_volume_key": storage_key, "labels": body.labels, "objects": body.objects},
+            json={
+                "mask_volume_key": storage_key,
+                "labels": body.labels,
+                "objects": body.objects,
+                **({"case_fields": body.case_fields} if body.case_fields else {}),
+                **({"case_answers": body.case_answers} if body.case_answers else {}),
+            },
             headers=_auth_headers(user),
         )
     except httpx.TransportError:

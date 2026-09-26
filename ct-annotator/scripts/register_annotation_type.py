@@ -125,6 +125,15 @@ SEGMENTATION_VOLUME_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        # Questions answered once per case, not per object ("No finding",
+        # image quality, eligibility): their definitions, copied from the
+        # Annotation Surface like a label's fields, and the answers --
+        # a triage question needed a fake object before (UX-ux-admin-16).
+        "case_fields": {"type": "array", "items": OBJECT_FIELD_SCHEMA},
+        "case_answers": {
+            "type": "object",
+            "additionalProperties": {"type": ["string", "boolean", "number"]},
+        },
     },
     "required": ["mask_volume_key", "labels", "objects"],
     "additionalProperties": False,

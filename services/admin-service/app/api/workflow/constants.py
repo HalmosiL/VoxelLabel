@@ -93,4 +93,8 @@ _UNRESTRICTED_SURFACE_CONFIG = {
     "labels": [],
     # the image's own window when a case opens (K8: a Surface can name a preset)
     "default_window": None,
+    # questions answered once per case, not per object ("No finding",
+    # image quality) -- the same field shape as a label's `fields`
+    # (UX-ux-admin-16)
+    "case_fields": [],
 }

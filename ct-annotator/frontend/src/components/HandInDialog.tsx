@@ -17,8 +17,9 @@ export default function HandInDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const { rows, empty, unanswered, sentBack } = summary;
+  const { rows, empty, unanswered, sentBack, caseUnanswered } = summary;
   const warnings: string[] = [];
+  if (caseUnanswered.length) warnings.push(`The case: ${caseUnanswered.join(", ")} not answered.`);
   if (rows.length === 0) warnings.push("There are no objects on this case: it is handed in as \"no findings\".");
   if (empty.length) warnings.push(`${empty.map((r) => r.name).join(", ")} ${empty.length === 1 ? "has" : "have"} nothing painted.`);
   for (const r of unanswered) warnings.push(`${r.name}: ${r.unanswered.join(", ")} not answered.`);

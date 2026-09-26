@@ -349,6 +349,15 @@ def delete_workflow_card(
 WINDOW_PRESET_NAMES = {"Lung", "Soft tissue", "Bone", "Brain"}
 
 
+def _case_fields(config: dict) -> list:
+    """A Surface's case questions: a list of named fields (the label-form
+    shape), or none -- anything else a client stored is not passed on."""
+    fields = config.get("case_fields")
+    if not isinstance(fields, list):
+        return []
+    return [f for f in fields if isinstance(f, dict) and isinstance(f.get("name"), str) and f["name"].strip() and f.get("kind") in ("check", "choice", "scale")]
+
+
 def _window_preset(config: dict) -> str | None:
     value = config.get("default_window")
     return value if value in WINDOW_PRESET_NAMES else None
@@ -440,6 +449,7 @@ def get_surface_config(
             "show_3d": surface.config.get("show_3d", True),
             "labels": surface.config.get("labels", []),
             "default_window": _window_preset(surface.config),
+            "case_fields": _case_fields(surface.config),
         }
 
     if is_review:
@@ -452,9 +462,14 @@ def get_surface_config(
             config["labels"] = _upstream_annotation_labels(db, card)
         # ...and the window the annotators worked in, unless the Review
         # Surface sets its own: a GGN is invisible in soft tissue (K8)
+        upstream = None
         if not config.get("default_window"):
             upstream = _upstream_annotation_surface(db, card)
             config["default_window"] = _window_preset(upstream.config) if upstream is not None else None
+        # ...and the case questions the annotators answered, to read and correct
+        if not config.get("case_fields"):
+            upstream = upstream or _upstream_annotation_surface(db, card)
+            config["case_fields"] = _case_fields(upstream.config) if upstream is not None else []
 
     return {**config, "card_type": card.type.value, "status": compute_job_status(db, card)}
 

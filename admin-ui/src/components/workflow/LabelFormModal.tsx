@@ -6,7 +6,7 @@
  * the right of exactly what an annotator will see under an instance of
  * this label. Edits are a local draft until Save.
  */
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, ReactNode, useState } from "react";
 
 import Modal from "../Modal";
 import { TrashIcon } from "../icons";
@@ -54,12 +54,17 @@ export default function LabelFormModal({
   fields,
   onSave,
   onClose,
+  title,
+  intro,
 }: {
   labelName: string;
   color: string;
   fields: LabelField[];
   onSave: (fields: LabelField[]) => void;
   onClose: () => void;
+  /** instead of "<label> · form" (the case questions use the same editor) */
+  title?: string;
+  intro?: ReactNode;
 }) {
   const [draft, setDraft] = useState<LabelField[]>(() => fields.map((f) => ({ ...f, options: f.options ? [...f.options] : f.options })));
   const problems = draft.map((f) => fieldProblem(f, draft));
@@ -105,11 +110,16 @@ export default function LabelFormModal({
   }
 
   return (
-    <Modal title={`${labelName} · form`} onClose={onClose} maxWidthClassName="max-w-4xl">
+    <Modal title={title ?? `${labelName} · form`} onClose={onClose} maxWidthClassName="max-w-4xl">
       <form onSubmit={submit} className="flex flex-col gap-4" data-testid="label-form-modal">
         <p className="hint">
-          What an annotator fills in for every <b>{labelName}</b> instance, next to its comment -- and what the
-          reviewer sees on the review card. The preview on the right is exactly how it looks in the viewer.
+          {intro ?? (
+            <>
+              What an annotator fills in for every <b>{labelName}</b> instance, next to its comment -- and what the
+              reviewer sees on the review card.
+            </>
+          )}{" "}
+          The preview on the right is exactly how it looks in the viewer.
         </p>
 
         <div className="grid gap-5 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">

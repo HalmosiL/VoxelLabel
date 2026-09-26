@@ -1001,6 +1001,16 @@ export default function ViewerPage() {
   // arrows, Back, reload, closing the tab -- asks first.
   const maskDirtyRef = useRef(false);
   const savedDefsRef = useRef<string | null>(null);
+  // Questions answered once per case (UX-ux-admin-16): the job's surface
+  // defines them (a saved version keeps its own copy for when the surface
+  // is gone), the answers ride with the annotation.
+  const [savedCaseFields, setSavedCaseFields] = useState<ObjectField[]>([]);
+  const [caseAnswers, setCaseAnswers] = useState<ObjectAnswers>({});
+  const savedCaseAnswersRef = useRef("{}");
+  const caseAnswersNowRef = useRef(caseAnswers);
+  caseAnswersNowRef.current = caseAnswers;
+  // the job's own questions win (an admin may add one later); else the saved copy
+  const caseFields: ObjectField[] = surfaceConfig?.case_fields?.length ? surfaceConfig.case_fields : savedCaseFields;
   const drawingRef = useRef(false);
   // Right mouse button always erases for the duration of that one stroke,
   // regardless of which tool is selected -- lets the user fix a slip
@@ -1232,6 +1242,8 @@ export default function ViewerPage() {
       let volume = new Uint8Array(size);
       let loadedLabels: SegLabel[] = [];
       let loadedObjects: SegObject[] = [];
+      let loadedCaseFields: ObjectField[] = [];
+      let loadedCaseAnswers: ObjectAnswers = {};
       try {
         const loaded = await fetchSegmentationVolume(seriesId);
         loadedVersionRef.current = loaded.versionId;
@@ -1243,6 +1255,8 @@ export default function ViewerPage() {
             volume = unpacked;
             loadedLabels = result.labels;
             loadedObjects = result.objects;
+            loadedCaseFields = result.caseFields;
+            loadedCaseAnswers = result.caseAnswers;
           } else {
             console.warn("Saved segmentation size doesn't match this series' current dimensions -- starting empty.");
           }
@@ -1275,6 +1289,9 @@ export default function ViewerPage() {
       maskVolumeRef.current = volume;
       setLabels(loadedLabels);
       setObjects(loadedObjects);
+      setSavedCaseFields(loadedCaseFields);
+      setCaseAnswers(loadedCaseAnswers);
+      savedCaseAnswersRef.current = JSON.stringify(loadedCaseAnswers);
       maskDirtyRef.current = false;
       savedDefsRef.current = JSON.stringify({ labels: loadedLabels, objects: loadedObjects });
       setActiveObjectId(loadedObjects[0]?.id ?? null);
@@ -2641,7 +2658,7 @@ export default function ViewerPage() {
       setError(`The outline on slice ${polygonDraft.index + 1} isn't closed yet -- close it or drop it, then hand in.`);
       return;
     }
-    setHandInDraft(handInSummary(maskVolumeRef.current, rows * columns, objects, labels));
+    setHandInDraft(handInSummary(maskVolumeRef.current, rows * columns, objects, labels, { fields: caseFields, answers: caseAnswers }));
   }
 
   // The labels/objects as they are NOW, not as a callback captured them:
@@ -2656,11 +2673,16 @@ export default function ViewerPage() {
   maskReadyNowRef.current = maskReady;
   function hasUnsavedWork(): boolean {
     if (!maskReadyNowRef.current || savedDefsRef.current === null) return false;
-    return maskDirtyRef.current || JSON.stringify({ labels: labelsNowRef.current, objects: objectsNowRef.current }) !== savedDefsRef.current;
+    return (
+      maskDirtyRef.current ||
+      JSON.stringify({ labels: labelsNowRef.current, objects: objectsNowRef.current }) !== savedDefsRef.current ||
+      JSON.stringify(caseAnswersNowRef.current) !== savedCaseAnswersRef.current
+    );
   }
-  function markSaved(savedLabels: SegLabel[], savedObjects: SegObject[]) {
+  function markSaved(savedLabels: SegLabel[], savedObjects: SegObject[], savedCaseAnswers: ObjectAnswers = caseAnswersNowRef.current) {
     maskDirtyRef.current = false;
     savedDefsRef.current = JSON.stringify({ labels: savedLabels, objects: savedObjects });
+    savedCaseAnswersRef.current = JSON.stringify(savedCaseAnswers);
   }
   /** True when it's fine to leave: nothing unsaved, or the user said so. */
   function confirmLeavingUnsaved(): boolean {
@@ -2685,7 +2707,7 @@ export default function ViewerPage() {
     }, 1500);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects, reviewMode, maskReady, saving]);
+  }, [objects, caseAnswers, reviewMode, maskReady, saving]);
   useEffect(() => {
     // Reload / close tab / typing another address: the browser's own prompt.
     function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -2727,9 +2749,10 @@ export default function ViewerPage() {
       // F-06; see lib/reviewRound.ts).
       const objectsToSave = status === "submitted" ? handInObjects(objects) : objects;
       if (status === "submitted") setObjects(objectsToSave);
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current, reviewSaveOf());
+      const caseForm = { fields: caseFields, answers: caseAnswers };
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current, reviewSaveOf(), caseForm);
       loadedVersionRef.current = saved.id;
-      markSaved(labels, objectsToSave);
+      markSaved(labels, objectsToSave, caseForm.answers);
       trackAction(status === "submitted" ? "mark_annotated" : "save");
       refreshAnnotations();
 
@@ -2784,9 +2807,10 @@ export default function ViewerPage() {
     setError(null);
     try {
       const gzipBytes = await gzipUint8Array(volume);
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current, reviewSaveOf());
+      const caseForm = { fields: caseFields, answers: caseAnswers };
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current, reviewSaveOf(), caseForm);
       loadedVersionRef.current = saved.id;
-      markSaved(labels, objects);
+      markSaved(labels, objects, caseForm.answers);
       const decision = emptyDecision ?? (reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve");
       // The per-object comments travel with the decision too (as the
       // AnnotationReview row's comment), so the annotator -- and the
@@ -4558,6 +4582,13 @@ export default function ViewerPage() {
               <span>Side panel</span>
               <span aria-hidden="true">✕</span>
             </button>
+          )}
+          {caseFields.length > 0 && (
+            <Section title="Case" help="Questions answered once for the whole case, not per object -- a case with no finding needs no object drawn.">
+              <div data-testid="case-form">
+                <ObjectFormEditor fields={caseFields} answers={caseAnswers} onChange={setCaseAnswers} />
+              </div>
+            </Section>
           )}
           {reviewMode && (
             <Section title="Review" guide="review-card" help="The current object and its decision. Accept or Reject each object; a comment explains a rejection to the annotator.">

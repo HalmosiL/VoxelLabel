@@ -33,6 +33,12 @@ describe("handInSummary", () => {
     expect(s.sentBack.map((r) => r.name)).toEqual(["Nodule 1"]);
   });
 
+  it("names the case questions left open", () => {
+    const fields = [{ name: "Finding", kind: "choice" as const, options: ["No finding", "Nodule"] }, { name: "Artefacts", kind: "check" as const }];
+    expect(handInSummary(volume, 4, [], labels, { fields, answers: {} }).caseUnanswered).toEqual(["Finding"]);
+    expect(handInSummary(volume, 4, [], labels, { fields, answers: { Finding: "No finding" } }).caseUnanswered).toEqual([]);
+  });
+
   it("works with no mask loaded", () => {
     expect(handInSummary(null, 4, [obj(1, 1, 1)], labels).empty).toHaveLength(1);
   });

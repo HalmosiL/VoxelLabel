@@ -210,6 +210,9 @@ export interface SurfaceConfig {
   // The window preset cases open in ("Lung", ...), or null for the image's
   // own -- set on the job's Surface; a Review job inherits it (K8).
   default_window?: string | null;
+  // Questions answered once per case ("No finding", image quality) -- the
+  // label-form shape; a Review job reads the Annotation surface's.
+  case_fields?: ObjectField[];
   // The underlying job's own card type ("annotation" or "review") --
   // lets the viewer tell a Review job apart from an Annotation one and
   // switch to the simplified, view-and-decide-only review surface.
@@ -385,6 +388,9 @@ export interface SegmentationVolume {
   gzipBytes: ArrayBuffer;
   labels: SegLabel[];
   objects: SegObject[];
+  /** the case questions as saved with this version, and their answers */
+  caseFields: ObjectField[];
+  caseAnswers: ObjectAnswers;
 }
 
 /** What a series' saved segmentation is: the volume (null when nothing
@@ -460,12 +466,23 @@ export async function fetchSegmentationVolume(seriesId: string): Promise<LoadedS
     version_id?: string | null;
     version_status?: string | null;
     review_of_id?: string | null;
+    case_fields?: ObjectField[];
+    case_answers?: ObjectAnswers;
   }>(API.annotator, `/series/${seriesId}/mask-volume`);
   const version = { versionId: result.version_id ?? null, versionStatus: result.version_status ?? null, reviewOfId: result.review_of_id ?? null };
   // no volume = nothing saved for this series yet (a normal 200 answer,
   // see the backend's get_mask_volume) -- start from an empty volume.
   if (!result.mask_gzip_base64) return { volume: null, ...version };
-  return { volume: { gzipBytes: base64ToArrayBuffer(result.mask_gzip_base64), labels: result.labels, objects: result.objects }, ...version };
+  return {
+    volume: {
+      gzipBytes: base64ToArrayBuffer(result.mask_gzip_base64),
+      labels: result.labels,
+      objects: result.objects,
+      caseFields: result.case_fields ?? [],
+      caseAnswers: result.case_answers ?? {},
+    },
+    ...version,
+  };
 }
 
 export function saveSegmentationVolume(
@@ -482,7 +499,9 @@ export function saveSegmentationVolume(
   baseVersionId?: string | null,
   // Set while reviewing: the handed-in version under review, so this save
   // is a reviewer's draft that keeps the case handed in (F-01).
-  reviewOf?: string | null
+  reviewOf?: string | null,
+  // the case questions and their answers, when the job has any
+  caseForm?: { fields: ObjectField[]; answers: ObjectAnswers }
 ): Promise<{ id: string; status: string }> {
   return apiFetch(API.annotator, `/series/${seriesId}/mask-volume`, {
     method: "POST",
@@ -494,6 +513,7 @@ export function saveSegmentationVolume(
       status,
       ...(baseVersionId !== undefined ? { base_version_id: baseVersionId ?? "" } : {}),
       ...(reviewOf ? { review_of: reviewOf } : {}),
+      ...(caseForm && caseForm.fields.length > 0 ? { case_fields: caseForm.fields, case_answers: caseForm.answers } : {}),
     }),
   });
 }

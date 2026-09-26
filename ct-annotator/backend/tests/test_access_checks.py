@@ -422,3 +422,40 @@ def test_the_series_spacing_is_given_for_the_ruler(api, monkeypatch):
     assert api.get(f"/series/{SERIES}/spacing").json() == {"spacing_mm": [2.0, 0.6, 0.6]}
     api.as_user(OUTSIDER)
     assert api.get(f"/series/{SERIES}/spacing").status_code == 403
+
+
+def test_case_answers_travel_with_the_save_and_come_back(api, monkeypatch):
+    """UX-ux-admin-16: questions answered once per case ride in the payload
+    beside labels/objects -- only when there are any, so a payload without
+    them stays exactly as before."""
+    sent = []
+    monkeypatch.setattr(main, "upload_mask_volume", lambda data: "annotation-masks/new.gz")
+
+    async def post(url, params=None, json=None, headers=None):
+        sent.append(json)
+        return _Resp(200, {"id": "v9", "status": "draft", "review_of_id": None})
+
+    api.fake.post = post
+    api.as_user(MEMBER)
+    fields = [{"name": "Finding", "kind": "choice", "options": ["No finding", "Nodule"]}]
+    api.post(f"/series/{SERIES}/mask-volume", json={**_save_body("v1"), "case_fields": fields, "case_answers": {"Finding": "No finding"}})
+    assert sent[-1]["case_fields"] == fields and sent[-1]["case_answers"] == {"Finding": "No finding"}
+    api.post(f"/series/{SERIES}/mask-volume", json=_save_body("v9"))
+    assert "case_fields" not in sent[-1] and "case_answers" not in sent[-1]
+
+    real_get = api.fake.get
+
+    async def get(url, headers=None, **kw):
+        if url.endswith(f"/annotations/series/{SERIES}"):
+            payload = {"mask_volume_key": "annotation-masks/a.gz", "labels": [], "objects": [], "case_fields": fields, "case_answers": {"Finding": "No finding"}}
+            return _Resp(200, [{"id": "v9", "type_id": "t", "status": "draft", "review_of_id": None, "payload": payload}])
+        return await real_get(url, headers=headers, **kw)
+
+    async def types(user):
+        return [{"id": "t", "name": "segmentation_volume"}]
+
+    api.fake.get = get
+    monkeypatch.setattr(main, "_get_annotation_types", types)
+    monkeypatch.setattr(main, "download_bytes", lambda key: b"gz")
+    r = api.get(f"/series/{SERIES}/mask-volume").json()
+    assert r["case_fields"] == fields and r["case_answers"] == {"Finding": "No finding"}

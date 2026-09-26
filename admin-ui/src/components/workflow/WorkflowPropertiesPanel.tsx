@@ -866,6 +866,9 @@ function AnnotationSurfaceFields({
   const [newLabelName, setNewLabelName] = useState("");
   // Which label's form is open in the editor dialog (index into surfaceLabels).
   const [formEditorIndex, setFormEditorIndex] = useState<number | null>(null);
+  // Questions answered once per case, not per object (UX-ux-admin-16)
+  const caseFields = (card.config.case_fields as LabelField[] | undefined) ?? [];
+  const [caseEditorOpen, setCaseEditorOpen] = useState(false);
 
   function toggleTool(value: string) {
     const next = new Set(tools);
@@ -988,6 +991,35 @@ function AnnotationSurfaceFields({
           </button>
         </form>
       </div>
+      <div className="flex flex-col gap-1.5 border-t border-gray-100 pt-3">
+        <span className="label">Case questions</span>
+        <p className="hint">
+          Asked once for the whole case, not for each object -- e.g. <b>Finding: no finding / nodule / other</b>, or image
+          quality. A case with no finding then needs no object drawn. The reviewer sees and can correct the answers.
+        </p>
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-gray-500" data-testid="case-questions-summary">
+            {caseFields.length ? caseFields.map((f) => f.name || "(unnamed)").join(" · ") : "None"}
+          </span>
+          <button type="button" onClick={() => setCaseEditorOpen(true)} className="btn-secondary btn-sm flex-shrink-0" data-testid="edit-case-questions">
+            {caseFields.length ? "Edit questions" : "Add questions"}
+          </button>
+        </div>
+      </div>
+      {caseEditorOpen && (
+        <LabelFormModal
+          labelName="Case"
+          color="#6b7280"
+          title="Case questions"
+          intro={<>Asked once for the whole case -- the annotator answers them above the objects, and the reviewer sees and can correct them.</>}
+          fields={caseFields}
+          onSave={(fields) => {
+            onPatch(card.id, { config: { ...card.config, case_fields: fields } });
+            setCaseEditorOpen(false);
+          }}
+          onClose={() => setCaseEditorOpen(false)}
+        />
+      )}
       {formEditorIndex !== null && surfaceLabels[formEditorIndex] && (
         <LabelFormModal
           labelName={surfaceLabels[formEditorIndex].name}
