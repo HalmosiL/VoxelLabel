@@ -244,7 +244,11 @@ function CaseLinks({ ids, studyId, cases }: { ids: string[]; studyId: string; ca
 
 function StaleBadge({ card }: { card: WorkflowCard }) {
   if (!card.stale) return null;
-  return <span className="badge-gray">needs re-run</span>;
+  return (
+    <span className="badge-gray self-start" title="Its input changed since it last ran -- run it to bring it up to date.">
+      Out of date -- run it to update
+    </span>
+  );
 }
 
 function LastRun({ card }: { card: WorkflowCard }) {
@@ -488,6 +492,7 @@ function SplitFields({
           + Add part
         </button>
         <p className="hint">Ratios don't need to sum to 1 -- they're normalized automatically.</p>
+        <p className="hint">Running the split makes one Dataset card per part next to it; connect those parts onward -- the Split itself has no output to wire.</p>
       </div>
       <RunButton card={card} onRun={onRun} running={running} label="Run split" />
       <LastRun card={card} />
@@ -770,7 +775,9 @@ function TaskFields({
           Also create/update a Dataset card of just the annotated cases
         </label>
       )}
-      <RunButton card={card} onRun={onRun} running={running} label="Refresh from upstream" />
+      {/* the job's case list comes from its input; "Refresh from upstream" said nothing to a study admin (UX-ux-admin-10) */}
+      <RunButton card={card} onRun={onRun} running={running} label="Update the case list" />
+      <p className="hint -mt-1">Takes in the cases its input has now; the assignee sees them on My Jobs.</p>
       <LastRun card={card} />
       <StaleBadge card={card} />
       {progress && (

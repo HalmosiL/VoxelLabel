@@ -43,7 +43,11 @@ export default function WorkflowNodeShell({
           <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-semibold text-gray-900" title={title}>
             {title}
           </p>
-          {stale && <span className="badge-gray flex-shrink-0 text-[10px]">stale</span>}
+          {stale && (
+            <span className="badge-gray flex-shrink-0 text-[10px]" title="Its input changed since it last ran -- run it to bring it up to date." data-testid="card-out-of-date">
+              out of date
+            </span>
+          )}
         </div>
         {children}
       </div>

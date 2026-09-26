@@ -109,20 +109,45 @@ def _single_incoming_edge(db: Session, card: WorkflowCard) -> WorkflowEdge:
     return edges[0]
 
 
+def card_is_stale(db: Session, card: WorkflowCard, incoming: list[tuple[WorkflowEdge, WorkflowCard]]) -> bool:
+    """Whether Run would change this card: the board's "needs re-run".
+
+    A job card (Annotation/Review) holds a case list read from its inputs,
+    so it is stale exactly when the cases it would read now differ from the
+    ones it holds. By run times alone, a Review fed straight from its
+    Annotation, with "(rejected)" fed back into it, was stale right after
+    every Run: its Run re-runs the Annotation after it (UX-ux-admin-10/21).
+    Other cards keep the run-time rule: an input that ran after them.
+    A Surface card's "surface_config" connection is configuration, never
+    input. `incoming` is the card's (edge, source card) pairs."""
+    data_in = [(edge, source) for edge, source in incoming if edge.target_handle != "surface_config"]
+    if card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW):
+        inputs = [source for edge, source in data_in if edge.target_handle == "input"]
+        if not inputs:
+            return False
+        wanted: set[str] = set()
+        try:
+            for source in inputs:
+                wanted.update(_resolve_output(db, source, set()))
+        except HTTPException:
+            return False  # an input that never ran: Run can't help yet
+        return card.output_case_ids is None or wanted != set(card.output_case_ids)
+    return any(_is_stale(card.last_run_at, source.last_run_at) for _, source in data_in)
+
+
 def _card_is_stale(db: Session, card: WorkflowCard) -> bool:
-    """The same staleness check `_serialize_card` computes for the whole
-    board, for one card in isolation -- lets `run_workflow_card` notice
-    when its own downstream cascade has looped back and changed
+    """card_is_stale for one card in isolation -- lets `run_workflow_card`
+    notice when its own downstream cascade has looped back and changed
     something this card reads from (see `_cascade_run`'s docstring: its
     cycle protection deliberately doesn't re-run a card twice within one
     cascade, so the card that was actually asked to run can come out of
     that cascade already stale again)."""
-    edges = db.query(WorkflowEdge).filter_by(target_card_id=card.id).all()
-    for edge in edges:
+    incoming = []
+    for edge in db.query(WorkflowEdge).filter_by(target_card_id=card.id).all():
         source = db.get(WorkflowCard, edge.source_card_id)
-        if source and _is_stale(card.last_run_at, source.last_run_at):
-            return True
-    return False
+        if source is not None:
+            incoming.append((edge, source))
+    return card_is_stale(db, card, incoming)
 
 
 def _downstream_cards(db: Session, card: WorkflowCard) -> list[WorkflowCard]:

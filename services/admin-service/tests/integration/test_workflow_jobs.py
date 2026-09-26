@@ -600,3 +600,38 @@ def test_the_review_job_is_done_only_when_everything_is_decided(client, db):
     assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "in_progress"
     make_annotation(db, sid, series[1], REVIEWER_SUBJECT, "approved")
     assert _job(client, REVIEWER_SUBJECT, rev["id"])["status"] == "done"
+
+
+def test_a_review_wired_straight_from_its_annotation_settles_after_run(client, db):
+    """UX-ux-admin-10/21: with the Review fed straight from the Annotation
+    card and "(rejected)" fed back into it, Run on the Review re-ran the
+    Annotation after it -- which always re-stamped its run time -- so the
+    Review read "stale / needs re-run" right after every Run. A job card
+    is stale when the cases it would read now differ from the ones it
+    holds, not when something upstream merely ran later."""
+    sid = make_study(client)
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    add_member(client, sid, REVIEWER_SUBJECT, "reviewer")
+    cases = [make_case(client, sid, external=f"p{i}") for i in range(2)]
+    series = [make_series(db, c["id"]) for c in cases]
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    ann = _card(client, sid, "annotation", "Annotate", {"assigned_user_id": ANNOTATOR_SUBJECT}, x=300)
+    rev = _card(client, sid, "review", "Review", {"assigned_user_id": REVIEWER_SUBJECT}, x=600)
+    _edge(client, sid, ds["id"], ann["id"])
+    _edge(client, sid, ann["id"], rev["id"])
+    assert client.post(f"/admin/workflow-cards/{ann['id']}/run").status_code == 200
+    assert client.post(f"/admin/workflow-cards/{rev['id']}/run").status_code == 200
+    card = lambda title: next(c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"] if c["title"] == title)  # noqa: E731
+    _edge(client, sid, card("Review (rejected)")["id"], ann["id"])  # the feedback edge
+    for s in series:
+        make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")
+    make_annotation(db, sid, series[1], REVIEWER_SUBJECT, "rejected")
+    for _ in range(2):
+        assert client.post(f"/admin/workflow-cards/{rev['id']}/run").status_code == 200
+        assert not card("Review")["stale"] and not card("Annotate")["stale"]
+
+    # ... and a real change upstream still says so: the source drops the
+    # case that isn't coming back through "(rejected)" either
+    r = client.patch(f"/admin/workflow-cards/{ds['id']}", json={"config": {"mode": "manual", "case_ids": [cases[1]["id"]]}})
+    assert r.status_code == 200, r.text
+    assert card("Annotate")["stale"]

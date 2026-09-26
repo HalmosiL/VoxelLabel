@@ -2,7 +2,7 @@
 from shared_models.models import WorkflowCard, WorkflowCardType, WorkflowEdge
 from sqlalchemy.orm import Session
 
-from .graph import _dataset_output_ids, _is_stale, _llm_connected_summary, _materialized_children, _output_count
+from .graph import _dataset_output_ids, _llm_connected_summary, _materialized_children, _output_count, card_is_stale
 from .status import _annotation_progress, compute_job_status
 
 
@@ -11,10 +11,10 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
     if card.type == WorkflowCardType.DATASET:
         output_case_ids = _dataset_output_ids(db, card)
 
-    stale = any(
-        _is_stale(card.last_run_at, cards_by_id[edge.source_card_id].last_run_at)
-        for edge in edges_by_target.get(card.id, [])
-        if edge.source_card_id in cards_by_id
+    stale = card_is_stale(
+        db,
+        card,
+        [(edge, cards_by_id[edge.source_card_id]) for edge in edges_by_target.get(card.id, []) if edge.source_card_id in cards_by_id],
     )
 
     # `config["status"]` for an Annotation/Review card is a derived

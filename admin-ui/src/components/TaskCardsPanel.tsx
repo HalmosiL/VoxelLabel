@@ -134,7 +134,7 @@ export default function TaskCardsPanel({
                     </td>
                     <td>
                       <span className="font-medium text-gray-900">{card.title}</span>
-                      {card.stale && <span className="badge-gray ml-2 text-[10px]">stale</span>}
+                      {card.stale && <span className="badge-gray ml-2 text-[10px]" title="Its input changed since it last ran -- run it on the board to bring it up to date.">out of date</span>}
                     </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
@@ -170,7 +170,7 @@ export default function TaskCardsPanel({
                       </span>
                     </td>
                     <td className="text-xs text-gray-600">
-                      {progress ? `${progress.annotated} of ${progress.total} ${progressLabel}` : "not run yet"}
+                      {progress ? `${progress.annotated} of ${progress.total} ${progressLabel}` : "no cases yet"}
                     </td>
                   </tr>
                   {expanded && (

@@ -28,6 +28,12 @@ function SplitNode({ data, selected }: NodeProps<CardNode>) {
           </li>
         ))}
       </ul>
+      {/* the parts are what gets wired on, and they only exist once it ran -- nothing said so (UX-ux-admin-09) */}
+      {counts === null && (
+        <p className="mt-1.5 text-[11px] text-gray-500" data-testid="split-run-hint">
+          Run it to make a card per part -- you connect the parts onward.
+        </p>
+      )}
       <Handle type="target" position={Position.Left} id="input" />
       <Handle type="source" position={Position.Right} id="materialize" isConnectable={false} className="!bg-gray-300" />
     </WorkflowNodeShell>
