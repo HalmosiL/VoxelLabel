@@ -296,6 +296,10 @@ export function anchorOf(el: EventTarget | null): { descriptor: string; element:
 /** "Ctrl+Shift+Z", "Escape", "ArrowUp", "p" -- null for a bare modifier. */
 export function describeKey(e: KeyboardEvent): string | null {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  // A printable character without Ctrl/Meta/Alt is text, not a shortcut:
+  // record THAT one was typed, never which -- text typed while focus had
+  // slipped out of a field was stored letter by letter (K1).
+  if (e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey) return "char";
   const parts: string[] = [];
   if (e.ctrlKey) parts.push("Ctrl");
   if (e.metaKey) parts.push("Meta");

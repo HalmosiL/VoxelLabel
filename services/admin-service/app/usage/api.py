@@ -337,6 +337,21 @@ def read_config(db: Session = Depends(get_db), user: CurrentUser = Depends(get_c
     return effective_config(get_settings(db), user.subject)
 
 
+_MODIFIERS = ("Ctrl+", "Meta+", "Alt+")
+
+
+def _key_name(name: str | None) -> str | None:
+    """A shortcut stays as it is; a plain character (with or without Shift)
+    is stored as "char" -- which character was typed is never kept, even
+    from an older client that still sends it (K1)."""
+    if not name:
+        return name
+    bare = name[len("Shift+"):] if name.startswith("Shift+") else name
+    if len(bare) == 1 and bare != " " and not name.startswith(_MODIFIERS):
+        return "char"
+    return name
+
+
 @router.post("/events")
 def ingest_events(body: EventsBody, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)) -> dict:
     """Stores the batch under the caller's own subject. Filtered by the
@@ -362,7 +377,7 @@ def ingest_events(body: EventsBody, db: Session = Depends(get_db), user: Current
                     app=item.app,
                     event_type=item.event_type,
                     route=item.route,
-                    name=item.name,
+                    name=_key_name(item.name) if item.event_type == "key" else item.name,
                     detail=_clean_detail(item.detail),
                     duration_ms=item.duration_ms,
                     occurred_at=occurred_at,

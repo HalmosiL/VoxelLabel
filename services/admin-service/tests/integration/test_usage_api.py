@@ -665,3 +665,17 @@ def test_one_account_cannot_restyle_or_push_out_other_peoples_snapshots(client, 
     db.expire_all()
     assert db.query(UsageSnapshot).filter_by(user_id=REVIEWER_SUBJECT).count() == 1  # the genuine one survives
     assert db.query(UsageSnapshot).filter_by(user_id=ANNOTATOR_SUBJECT).count() == snapshots.KEEP_PER_USER_SCREEN
+
+
+def test_typed_characters_are_never_stored_only_shortcuts(client, db):
+    """K1: key events carried the typed character, so text typed outside a
+    field (a missed click on the comment box) ended up in telemetry letter
+    by letter. The server keeps shortcuts and stores a plain character as
+    "char", whatever an older client sends."""
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    names = ["r", "Shift+U", "7", "Ctrl+z", "Meta+Shift+z", "Alt+ArrowUp", "Enter", "Space", "ArrowRight"]
+    post(client, [ev("key", "/viewer/:id", app="viewer", at_s=i, name=n) for i, n in enumerate(names)])
+    db.expire_all()
+    stored = [e.name for e in db.query(UsageEvent).filter_by(event_type="key").order_by(UsageEvent.occurred_at).all()]
+    assert stored == ["char", "char", "char", "Ctrl+z", "Meta+Shift+z", "Alt+ArrowUp", "Enter", "Space", "ArrowRight"]
+

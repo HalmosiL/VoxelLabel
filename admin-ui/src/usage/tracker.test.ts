@@ -278,6 +278,20 @@ describe("clicks, mouse, keys", () => {
     expect(describeKey(new KeyboardEvent("keydown", { key: " " }))).toBe("Space");
     expect(describeKey(new KeyboardEvent("keydown", { key: "ArrowUp", altKey: true }))).toBe("Alt+ArrowUp");
   });
+
+  it("never records which character was typed, only that one was (K1)", () => {
+    // Text typed while focus was not in a field (a missed click on the
+    // comment box) was stored letter by letter -- a clinical note in telemetry.
+    for (const key of ["a", "Z", "7", ";", "é"]) {
+      expect(describeKey(new KeyboardEvent("keydown", { key }))).toBe("char");
+      expect(describeKey(new KeyboardEvent("keydown", { key, shiftKey: true }))).toBe("char");
+    }
+    // shortcuts stay shortcuts
+    expect(describeKey(new KeyboardEvent("keydown", { key: "s", ctrlKey: true }))).toBe("Ctrl+s");
+    expect(describeKey(new KeyboardEvent("keydown", { key: "z", metaKey: true, shiftKey: true }))).toBe("Meta+Shift+z");
+    expect(describeKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe("Enter");
+    expect(describeKey(new KeyboardEvent("keydown", { key: "ArrowRight" }))).toBe("ArrowRight");
+  });
 });
 
 describe("versions, devices, request timings, rating cadence", () => {
