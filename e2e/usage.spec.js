@@ -242,7 +242,9 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     // the full suite) -- poll for the real settled value instead.
     const basis = page.locator('[data-testid="usage-basis"]');
     let settled = null;
-    for (let i = 0; i < 20; i++) {
+    // up to 20 s: a 30-day overview over the e2e database's tens of
+    // thousands of events takes seconds, and heavy ones queue two at a time
+    for (let i = 0; i < 66; i++) {
       settled = await basis.innerText();
       if (/ 0 people, 0 sessions, 0 events/.test(settled)) break;
       await page.waitForTimeout(300);
