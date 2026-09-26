@@ -4707,6 +4707,7 @@ export default function ViewerPage() {
                     objects={objects}
                     maskKey={0}
                     onPick={pick3D}
+                    focusObjectId={reviewMode ? (currentReviewObject?.id ?? null) : activeObjectId}
                     onShow2D={maximizedPane === "three_d" ? () => setMaximizedPane(null) : undefined}
                   />
                 ) : (

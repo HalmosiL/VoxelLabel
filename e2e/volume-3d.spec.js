@@ -64,6 +64,10 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.locator('[data-testid="volume-mode-mip"]').click(); await page.waitForTimeout(1500);
   check("MIP is one click", (await page.locator('[data-testid="volume-mode-mip"]').getAttribute("aria-pressed")) === "true");
   check("full screen is there", (await page.locator('[data-testid="volume-fullscreen"]').count()) === 1);
+  // the camera to the selected object (the annotator's first, selected on open)
+  const beforeGo = await shot();
+  await page.locator('[data-testid="volume-goto-object"]').click(); await page.waitForTimeout(1500);
+  check("Go to object flies to the selected object", Number(await view.getAttribute("data-focused-object")) > 0 && !(await shot()).equals(beforeGo), await view.getAttribute("data-focused-object"));
   // a click in 3D goes there in 2D: Orbit, the 3D beside the panes, click the middle
   await page.locator('[data-testid="volume-lung-only"]').uncheck();
   await page.locator('[data-testid="volume-nav-orbit"]').click(); // still MIP: the ray's brightest point

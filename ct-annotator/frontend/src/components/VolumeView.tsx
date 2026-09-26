@@ -5,7 +5,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { fetchAirways, fetchLungMask, fetchVolume3D } from "../api/annotatorApi";
 import { errorText } from "../lib/errorText";
 import { enterFullscreen, exitFullscreen, fullscreenElement, onFullscreenChange } from "../lib/fullscreen";
-import { fillLungHoles, FlyKeys, flyStep, labelPalette, pickAlongRay, shrinkMask, softMask, Vec3, VolumeInfo, windowToUnit } from "../lib/volumeRender";
+import { fillLungHoles, FlyKeys, flyStep, labelPalette, objectBounds, pickAlongRay, shrinkMask, softMask, Vec3, VolumeInfo, windowToUnit } from "../lib/volumeRender";
 
 /** A real 3D view of the CT itself, with the annotation inside it: the
  * volume is ray-marched on the GPU (a 3D texture of the series, see the
@@ -199,6 +199,7 @@ export default function VolumeView({
   maskKey,
   onPick,
   onShow2D,
+  focusObjectId,
 }: {
   seriesId: string | null;
   maskVolume: Uint8Array | null;
@@ -214,6 +215,8 @@ export default function VolumeView({
   onPick?: (p: { x: number; y: number; z: number; objectId: number | null }) => void;
   /** shown next to a pick while the 3D pane fills the screen */
   onShow2D?: () => void;
+  /** the selected object (in review: the one on the card) -- "Go to object" */
+  focusObjectId?: number | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
@@ -253,6 +256,8 @@ export default function VolumeView({
   // CPU copies of what the GPU draws, for picking (lib/volumeRender pickAlongRay)
   const cpu = useRef<{ data: Uint8Array | null; mask: Uint8Array | null; lung: Uint8Array | null; airway: Uint8Array | null }>({ data: null, mask: null, lung: null, airway: null });
   const [picked, setPicked] = useState<{ z: number; objectId: number | null } | null>(null);
+  const [follow, setFollow] = useState(false);
+  const [focused, setFocused] = useState<number | null>(null);
   const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0 });
   const speedRef = useRef(speed);
   speedRef.current = speed;
@@ -402,6 +407,35 @@ export default function VolumeView({
   onPickRef.current = onPick;
   const pickAtRef = useRef(pickAt);
   pickAtRef.current = pickAt;
+
+  /** The camera to an object: at a distance for its size, looking at its
+   * middle (orbiting: turning around it). */
+  function flyTo(id: number) {
+    const w = world.current;
+    if (!w?.mesh || !info || !cpu.current.mask) return;
+    const b = objectBounds(cpu.current.mask, info.dims, id);
+    if (!b) return;
+    w.mesh.updateMatrixWorld();
+    const center = w.mesh.localToWorld(new THREE.Vector3(b.center[0] - 0.5, b.center[1] - 0.5, b.center[2] - 0.5));
+    const s = w.mesh.scale;
+    const extent = Math.max(b.size[0] * Math.abs(s.x), b.size[1] * Math.abs(s.y), b.size[2] * Math.abs(s.z));
+    const distance = Math.max(0.12, extent * 4);
+    const back = new THREE.Vector3(0, 0, 1).applyQuaternion(w.camera.quaternion); // from where it looks now
+    w.camera.position.copy(center).addScaledVector(back, distance);
+    w.camera.lookAt(center);
+    const e = new THREE.Euler().setFromQuaternion(w.camera.quaternion, "YXZ");
+    w.yaw = e.y;
+    w.pitch = e.x;
+    w.orbit.target.copy(center);
+    w.orbit.update();
+    w.dirty = true;
+    setFocused(id);
+  }
+  const flyToRef = useRef(flyTo);
+  flyToRef.current = flyTo;
+  useEffect(() => {
+    if (follow && focusObjectId != null && status === "ready") flyToRef.current(focusObjectId);
+  }, [follow, focusObjectId, status]);
 
   /** In front of the patient, the whole volume in view. */
   function resetView() {
@@ -756,6 +790,7 @@ export default function VolumeView({
       ref={hostRef}
       className="relative h-full min-h-[240px] w-full overflow-hidden bg-black"
       data-testid="volume-view"
+      data-focused-object={focused ?? undefined}
       onPointerEnter={() => (hoveredRef.current = true)}
       onPointerLeave={() => (hoveredRef.current = false)}
     >
@@ -823,6 +858,21 @@ export default function VolumeView({
                 <button type="button" onClick={resetView} className="rounded border border-[#444] px-1.5 py-0.5 hover:bg-[#333]" title="Back in front of the patient (R)" data-testid="volume-reset">
                   Reset
                 </button>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => focusObjectId != null && flyTo(focusObjectId)}
+                  disabled={focusObjectId == null}
+                  className="rounded border border-[#444] px-1.5 py-0.5 hover:bg-[#333] disabled:opacity-40"
+                  title="The camera to the selected object"
+                  data-testid="volume-goto-object"
+                >
+                  Go to object
+                </button>
+                <label className="flex items-center gap-1.5" title="Go along whenever another object is selected (in review: whenever the card steps)">
+                  <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} data-testid="volume-follow" /> Follow
+                </label>
               </div>
               <div className="flex flex-wrap gap-1" role="group" aria-label="Window">
                 {PRESETS.map((p) => (
