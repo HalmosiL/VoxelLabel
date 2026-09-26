@@ -72,13 +72,22 @@ export interface FlyKeys {
   down: boolean;
 }
 
+/** An on-screen stick's push (and the rise/sink buttons), each -1..1. */
+export interface FlyAnalog {
+  forward: number;
+  right: number;
+  up: number;
+}
+
 /** How far the camera moves this frame, in world units: forward/back along
  * where it looks (pitch included -- flying, not walking), left/right on
- * the level, up/down straight. `yaw` 0 looks along -Z (three.js' own). */
-export function flyStep(keys: FlyKeys, yaw: number, pitch: number, speed: number, dt: number): [number, number, number] {
-  const f = (keys.forward ? 1 : 0) - (keys.back ? 1 : 0);
-  const r = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-  const u = (keys.up ? 1 : 0) - (keys.down ? 1 : 0);
+ * the level, up/down straight. `yaw` 0 looks along -Z (three.js' own).
+ * `analog` (a touch screen's stick) adds to the keys, never past full speed. */
+export function flyStep(keys: FlyKeys, yaw: number, pitch: number, speed: number, dt: number, analog?: FlyAnalog): [number, number, number] {
+  const axis = (plus: boolean, minus: boolean, extra = 0) => Math.max(-1, Math.min(1, (plus ? 1 : 0) - (minus ? 1 : 0) + extra));
+  const f = axis(keys.forward, keys.back, analog?.forward);
+  const r = axis(keys.right, keys.left, analog?.right);
+  const u = axis(keys.up, keys.down, analog?.up);
   const fx = -Math.sin(yaw) * Math.cos(pitch);
   const fy = Math.sin(pitch);
   const fz = -Math.cos(yaw) * Math.cos(pitch);
@@ -86,6 +95,16 @@ export function flyStep(keys: FlyKeys, yaw: number, pitch: number, speed: number
   const rz = -Math.sin(yaw);
   const d = speed * dt;
   return [(fx * f + rx * r) * d, (fy * f + u) * d, (fz * f + rz * r) * d];
+}
+
+/** A stick's push from the finger's offset (screen pixels) from its middle:
+ * up the screen is forward; past `radius` is full push the same way; the
+ * innermost tenth is dead, so a resting thumb doesn't drift. */
+export function stickVector(dx: number, dy: number, radius: number): { forward: number; right: number } {
+  const len = Math.hypot(dx, dy);
+  if (len < radius * 0.1) return { forward: 0, right: 0 };
+  const k = Math.min(len, radius) / len / radius;
+  return { forward: -dy * k + 0, right: dx * k + 0 }; // + 0: no -0
 }
 
 /** The lung mask with what the lung encloses filled in, slice by slice:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fillLungHoles, flyStep, labelPalette, objectBounds, pickAlongRay, PickScene, rayBox, shrinkMask, softMask, windowToUnit } from "./volumeRender";
+import { fillLungHoles, flyStep, labelPalette, objectBounds, pickAlongRay, PickScene, rayBox, shrinkMask, softMask, stickVector, windowToUnit } from "./volumeRender";
 
 const info = { huOffset: -1024, huStep: 16 };
 
@@ -45,6 +45,26 @@ describe("volumeRender", () => {
     const [sx, , sz] = flyStep({ ...none, right: true }, 0, 0, 1, 1);
     expect(sx).toBeCloseTo(1);
     expect(sz).toBeCloseTo(0);
+  });
+
+  it("an on-screen stick moves as far as it is pushed, with the keys", () => {
+    const none = { forward: false, back: false, left: false, right: false, up: false, down: false };
+    const [, , z] = flyStep(none, 0, 0, 2, 0.5, { forward: 0.5, right: 0, up: 0 });
+    expect(z).toBeCloseTo(-0.5);
+    // a key and the stick the same way: never faster than full speed
+    const [, , zz] = flyStep({ ...none, forward: true }, 0, 0, 1, 1, { forward: 1, right: 0, up: 0 });
+    expect(zz).toBeCloseTo(-1);
+    const [, uy] = flyStep(none, 0, 0, 1, 1, { forward: 0, right: 0, up: -1 });
+    expect(uy).toBeCloseTo(-1);
+  });
+
+  it("reads a stick's push from the finger's offset", () => {
+    expect(stickVector(0, -40, 40)).toEqual({ forward: 1, right: 0 }); // up the screen is forward
+    expect(stickVector(20, 0, 40)).toEqual({ forward: 0, right: 0.5 });
+    const far = stickVector(300, -300, 40); // past the rim: full push, same direction
+    expect(Math.hypot(far.forward, far.right)).toBeCloseTo(1);
+    expect(far.forward).toBeCloseTo(far.right);
+    expect(stickVector(2, 1, 40)).toEqual({ forward: 0, right: 0 }); // a resting thumb doesn't drift
   });
 });
 

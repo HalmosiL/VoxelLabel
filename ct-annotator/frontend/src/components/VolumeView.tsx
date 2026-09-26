@@ -5,7 +5,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { fetchAirways, fetchLungMask, fetchVessels, fetchVolume3D } from "../api/annotatorApi";
 import { errorText } from "../lib/errorText";
 import { enterFullscreen, exitFullscreen, fullscreenElement, onFullscreenChange } from "../lib/fullscreen";
-import { fillLungHoles, FlyKeys, flyStep, labelPalette, objectBounds, pickAlongRay, shrinkMask, softMask, Vec3, VolumeInfo, windowToUnit } from "../lib/volumeRender";
+import { fillLungHoles, FlyAnalog, FlyKeys, flyStep, labelPalette, objectBounds, pickAlongRay, shrinkMask, softMask, Vec3, VolumeInfo, windowToUnit } from "../lib/volumeRender";
+import TouchFlyPad from "./TouchFlyPad";
 
 /** A real 3D view of the CT itself, with the annotation inside it: the
  * volume is ray-marched on the GPU (a 3D texture of the series, see the
@@ -235,6 +236,8 @@ interface World {
   yaw: number;
   pitch: number;
   keys: FlyKeys;
+  /** the touch screen's stick and rise/sink buttons (TouchFlyPad) */
+  analog: FlyAnalog;
   /** something changed: draw the next frame (only then -- a ray-marched
    * frame is heavy, an idle view shouldn't keep the GPU busy) */
   dirty: boolean;
@@ -308,6 +311,9 @@ export default function VolumeView({
   const [quality, setQuality] = useState(1);
   const [speed, setSpeed] = useState(0.4);
   const [locked, setLocked] = useState(false);
+  // a touch screen flies with an on-screen stick: shown when the device
+  // has touch, or the moment a finger touches the view
+  const [touch, setTouch] = useState(() => typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
   const [fullscreen, setFullscreen] = useState(false);
   const [showPanel, setShowPanel] = useState(true);
   const [lungOnly, setLungOnly] = useState(false);
@@ -360,6 +366,7 @@ export default function VolumeView({
     renderer.setClearColor(0x000000, 1);
     host.appendChild(renderer.domElement);
     renderer.domElement.style.display = "block";
+    renderer.domElement.style.touchAction = "none"; // a finger turns the view, not the page
     renderer.domElement.setAttribute("data-testid", "volume-canvas");
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(50, 1, 0.001, 20);
@@ -382,6 +389,7 @@ export default function VolumeView({
       yaw: 0,
       pitch: 0,
       keys: { forward: false, back: false, left: false, right: false, up: false, down: false },
+      analog: { forward: 0, right: 0, up: 0 },
       dirty: true,
       turn: null,
     };
@@ -425,7 +433,7 @@ export default function VolumeView({
           done();
         }
       } else if (navRef.current === "fly") {
-        const [dx, dy, dz] = flyStep(w.keys, w.yaw, w.pitch, speedRef.current, dt);
+        const [dx, dy, dz] = flyStep(w.keys, w.yaw, w.pitch, speedRef.current, dt, w.analog);
         if (dx || dy || dz) {
           camera.position.x += dx;
           camera.position.y += dy;
@@ -848,11 +856,13 @@ export default function VolumeView({
     const onMove = (e: MouseEvent) => {
       if (navRef.current === "fly" && document.pointerLockElement === canvas) look(e.movementX, e.movementY);
     };
-    // without pointer lock (a touch screen): drag to look
-    let drag: { x: number; y: number } | null = null;
+    // without pointer lock (a touch screen): drag to look -- that finger
+    // only, so a thumb on the stick doesn't turn the view too
+    let drag: { id: number; x: number; y: number } | null = null;
     let press: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
       press = { x: e.clientX, y: e.clientY };
+      if (e.pointerType === "touch") setTouch(true);
       if (navRef.current !== "fly") return;
       if (document.pointerLockElement === canvas) {
         pickAtRef.current(0, 0); // flying: the crosshair in the middle
@@ -862,7 +872,7 @@ export default function VolumeView({
         canvas.requestPointerLock();
         return;
       }
-      drag = { x: e.clientX, y: e.clientY };
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
     };
     // orbiting (or a finger): a click that didn't drag picks where it is
     const onClickUp = (e: PointerEvent) => {
@@ -874,11 +884,13 @@ export default function VolumeView({
       pickAtRef.current(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
     };
     const onPointerMove = (e: PointerEvent) => {
-      if (!drag) return;
+      if (!drag || e.pointerId !== drag.id) return;
       look(e.clientX - drag.x, e.clientY - drag.y);
-      drag = { x: e.clientX, y: e.clientY };
+      drag = { id: drag.id, x: e.clientX, y: e.clientY };
     };
-    const onUp = () => (drag = null);
+    const onUp = (e: PointerEvent) => {
+      if (drag?.id === e.pointerId) drag = null;
+    };
     const onWheel = (e: WheelEvent) => {
       if (navRef.current !== "fly") return;
       e.preventDefault();
@@ -902,6 +914,7 @@ export default function VolumeView({
     const onKeyUp = onKey(false);
     const stopAll = () => {
       for (const k of Object.keys(w.keys) as (keyof FlyKeys)[]) w.keys[k] = false;
+      Object.assign(w.analog, { forward: 0, right: 0, up: 0 });
     };
     document.addEventListener("pointerlockchange", onLockChange);
     document.addEventListener("mousemove", onMove);
@@ -984,11 +997,14 @@ export default function VolumeView({
               )}
             </div>
           )}
+          {nav === "fly" && touch && world.current && <TouchFlyPad analog={world.current.analog} />}
           <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-gray-300" data-testid="volume-hint">
             {nav === "fly"
               ? locked
                 ? "Mouse looks · W A S D move · Space up · Shift down · click picks the middle · wheel speed · R reset · Esc lets go"
-                : "Click the view to fly: mouse looks, W A S D, Space up, Shift down"
+                : touch
+                  ? "Drag to look · the stick flies · ▲ ▼ up and down · tap picks a point"
+                  : "Click the view to fly: mouse looks, W A S D, Space up, Shift down"
               : "Drag to turn · right-drag to move · wheel to zoom · click picks a point"}
           </div>
           {/* one column in the pane: the buttons wrap inside it, the settings open below them */}

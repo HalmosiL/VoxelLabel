@@ -110,7 +110,7 @@ export const ANNOTATE_STEPS: GuideStep[] = [
       <>
         <p>
           The fourth eye turns on the <b>3D</b> pane: the CT itself in 3D with the annotation inside. <b>Drag</b> to look around, the
-          on-screen stick moves you; a tap takes the 2D panes to that point.
+          on-screen stick moves you, <b>▲ ▼</b> rise and sink; a tap takes the 2D panes to that point.
         </p>
       </>
     ),
@@ -347,7 +347,7 @@ export const REVIEW_STEPS: GuideStep[] = [
       <>
         <p>
           The fourth eye turns on the <b>3D</b> pane: the CT itself in 3D with the annotation inside. <b>Drag</b> to look around, the
-          on-screen stick moves you; a tap takes the 2D panes to that point.
+          on-screen stick moves you, <b>▲ ▼</b> rise and sink; a tap takes the 2D panes to that point.
         </p>
       </>
     ),
