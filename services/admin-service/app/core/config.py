@@ -31,6 +31,9 @@ class Settings:
     keycloak_internal_url: str = os.environ.get("KEYCLOAK_INTERNAL_URL", "http://keycloak:8080")
     keycloak_realm: str = os.environ.get("KEYCLOAK_REALM", "ct-platform")
     keycloak_admin_client_id: str = os.environ.get("KEYCLOAK_ADMIN_CLIENT_ID", "admin-service-account")
+    # the public client people sign in with (admin-ui, viewer) -- used to
+    # check a temporary password on the first sign-in (K3)
+    keycloak_login_client_id: str = os.environ.get("KEYCLOAK_LOGIN_CLIENT_ID", "ct-platform")
     keycloak_admin_client_secret: str = os.environ.get("KEYCLOAK_ADMIN_CLIENT_SECRET", "admin-service-account-secret")
     # The Clinical Trial module's chat loop (see app/llm_client.py):
     # a real small local model served by Ollama...

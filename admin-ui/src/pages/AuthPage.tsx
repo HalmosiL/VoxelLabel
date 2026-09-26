@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 
-import { submitRegistrationRequest } from "../api/adminApi";
+import { setInitialPassword, submitRegistrationRequest } from "../api/adminApi";
 import { describeApiError } from "../api/client";
 import { keycloakConfig } from "../config";
 
@@ -53,6 +53,10 @@ async function passwordLogin(username: string, password: string): Promise<AuthTo
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}) as { error_description?: string });
+    // The password is right, but the account still has "update password"
+    // pending (created by an admin with a temporary one): Keycloak refuses
+    // a direct sign-in with this description (K3).
+    if (/not fully set up/i.test(body.error_description ?? "")) throw new SetupRequired();
     throw new Error(
       response.status === 401 || response.status === 400
         ? "Incorrect username or password."
@@ -60,6 +64,12 @@ async function passwordLogin(username: string, password: string): Promise<AuthTo
     );
   }
   return response.json();
+}
+
+class SetupRequired extends Error {
+  constructor() {
+    super("setup required");
+  }
 }
 
 /** The one surface a person who isn't signed in ever sees: sign in, or
@@ -149,6 +159,7 @@ function SignInForm({ onAuthenticated }: { onAuthenticated: (tokens: AuthTokens)
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [choosingPassword, setChoosingPassword] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -161,9 +172,14 @@ function SignInForm({ onAuthenticated }: { onAuthenticated: (tokens: AuthTokens)
       // this whole tree with the authenticated app, so there's no
       // "logged in, form still sitting there enabled" state to clean up.
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof SetupRequired) setChoosingPassword(true);
+      else setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
     }
+  }
+
+  if (choosingPassword) {
+    return <ChoosePasswordForm username={username} temporaryPassword={password} onAuthenticated={onAuthenticated} />;
   }
 
   return (
@@ -186,6 +202,65 @@ function SignInForm({ onAuthenticated }: { onAuthenticated: (tokens: AuthTokens)
       {error && <p className="alert-error">{error}</p>}
       <button type="submit" disabled={busy} data-testid="signin-submit" className="btn-primary mt-1 justify-center py-2.5">
         {busy ? "Signing in…" : "Sign in"}
+      </button>
+    </form>
+  );
+}
+
+/** First sign-in with a temporary password: the person picks their own,
+ * then is signed in with it. It used to end at "Incorrect username or
+ * password", although the password was right (K3). */
+function ChoosePasswordForm({
+  username,
+  temporaryPassword,
+  onAuthenticated,
+}: {
+  username: string;
+  temporaryPassword: string;
+  onAuthenticated: (tokens: AuthTokens) => void;
+}) {
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (next !== repeat) {
+      setError("The two passwords don't match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await setInitialPassword(username, temporaryPassword, next);
+      onAuthenticated(await passwordLogin(username, next));
+    } catch (err) {
+      setError(describeApiError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4" data-testid="initial-password-form">
+      <div>
+        <p className="text-sm font-semibold text-gray-900">Choose your own password</p>
+        <p className="mt-1 text-sm text-gray-500">
+          Welcome, {username}. Your administrator gave you a temporary password -- pick your own now (at least 8 characters). You'll use it from
+          then on.
+        </p>
+      </div>
+      <label className="field">
+        <span className="label">New password</span>
+        <input className="input" type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" autoFocus required />
+      </label>
+      <label className="field">
+        <span className="label">Repeat the new password</span>
+        <input className="input" type="password" value={repeat} onChange={(e) => setRepeat(e.target.value)} autoComplete="new-password" required />
+      </label>
+      {error && <p className="alert-error">{error}</p>}
+      <button type="submit" disabled={busy} data-testid="initial-password-submit" className="btn-primary mt-1 justify-center py-2.5">
+        {busy ? "Saving…" : "Save password and sign in"}
       </button>
     </form>
   );

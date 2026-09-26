@@ -3,7 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const submitRegistrationRequest = vi.fn();
-vi.mock("../api/adminApi", () => ({ submitRegistrationRequest: (...a: unknown[]) => submitRegistrationRequest(...a) }));
+const setInitialPassword = vi.fn();
+vi.mock("../api/adminApi", () => ({
+  submitRegistrationRequest: (...a: unknown[]) => submitRegistrationRequest(...a),
+  setInitialPassword: (...a: unknown[]) => setInitialPassword(...a),
+}));
 vi.mock("../keycloak", () => ({ default: {} }));
 
 import { ApiError } from "../api/client";
@@ -43,6 +47,32 @@ describe("AuthPage sign in", () => {
     expect(await screen.findByText(/Incorrect username or password/)).toBeInTheDocument();
     expect(onAuthenticated).not.toHaveBeenCalled();
     expect(screen.getByTestId("signin-submit")).toBeEnabled();
+  });
+
+  it("a new colleague with a temporary password chooses their own and is signed in (K3)", async () => {
+    // Keycloak refuses a direct sign-in while "update password" is pending
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "invalid_grant", error_description: "Account is not fully set up" }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "a", refresh_token: "r", id_token: "i" }), { status: 200 }));
+    setInitialPassword.mockResolvedValue(undefined);
+    const onAuthenticated = vi.fn();
+    render(<AuthPage onAuthenticated={onAuthenticated} />);
+    await userEvent.type(screen.getByLabelText("Username"), "new.colleague");
+    await userEvent.type(screen.getByLabelText("Password"), "Temp-1");
+    await userEvent.click(screen.getByTestId("signin-submit"));
+    expect(await screen.findByText(/Choose your own password/)).toBeInTheDocument();
+    expect(screen.queryByText(/Incorrect username or password/)).toBeNull();
+    await userEvent.type(screen.getByLabelText("New password"), "Chosen-1234");
+    await userEvent.type(screen.getByLabelText("Repeat the new password"), "Chosen-12xx");
+    await userEvent.click(screen.getByTestId("initial-password-submit"));
+    expect(await screen.findByText(/don't match/)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("Repeat the new password"));
+    await userEvent.type(screen.getByLabelText("Repeat the new password"), "Chosen-1234");
+    await userEvent.click(screen.getByTestId("initial-password-submit"));
+    await waitFor(() => expect(onAuthenticated).toHaveBeenCalledWith({ access_token: "a", refresh_token: "r", id_token: "i" }));
+    expect(setInitialPassword).toHaveBeenCalledWith("new.colleague", "Temp-1", "Chosen-1234");
+    expect((fetchMock.mock.calls[1][1]?.body as URLSearchParams).get("password")).toBe("Chosen-1234");
   });
 
   it("shows the session-ended notice left by main.tsx, once", () => {

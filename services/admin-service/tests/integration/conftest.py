@@ -98,6 +98,27 @@ class FakeKeycloak:
         self.calls.append(("delete_user", user_id))
         self.users.pop(user_id, None)
 
+    # passwords, for the first-sign-in flow: username -> password
+    passwords: dict = {}
+
+    def password_status(self, username, password):
+        """What Keycloak's direct grant says: "ok", "setup_required"
+        (right password, but a required action such as UPDATE_PASSWORD is
+        pending) or "invalid"."""
+        user = self.find_user_by_username(username)
+        if user is None or self.passwords.get(username) != password:
+            return "invalid"
+        return "setup_required" if user["required_actions"] else "ok"
+
+    def find_user_by_username(self, username):
+        return next((dict(u) for u in self.users.values() if u["username"] == username), None)
+
+    def finish_first_password(self, user_id, new_password):
+        self.calls.append(("finish_first_password", user_id))
+        user = self.users[user_id]
+        user["required_actions"] = [a for a in user["required_actions"] if a != "UPDATE_PASSWORD"]
+        self.passwords[user["username"]] = new_password
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema():
@@ -128,14 +149,16 @@ def keycloak(monkeypatch):
     import app.api.audit  # noqa: E401
     import app.api.registration
     import app.api.studies
+    import app.api.account
     import app.api.users
     import app.notifications.api
     import app.notifications.events
     import app.pipeline_health.api
     import app.study_analytics.api
     import app.usage.api
-    for mod in (app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events, app.usage.api, app.pipeline_health.api, app.study_analytics.api):
-        for name in ("list_realm_users", "get_user", "create_user", "update_user", "set_admin_role", "reset_password", "delete_user"):
+    fake.passwords = {}
+    for mod in (app.api.account, app.api.audit, app.api.registration, app.api.studies, app.api.users, app.notifications.api, app.notifications.events, app.usage.api, app.pipeline_health.api, app.study_analytics.api):
+        for name in ("list_realm_users", "get_user", "create_user", "update_user", "set_admin_role", "reset_password", "delete_user", "password_status", "find_user_by_username", "finish_first_password"):
             if hasattr(mod, name):
                 monkeypatch.setattr(mod, name, getattr(fake, name))
     return fake

@@ -1066,6 +1066,18 @@ export async function submitRegistrationRequest(input: RegistrationRequestInput)
   return response.json();
 }
 
+/** The first sign-in of an account an admin created: its temporary
+ * password plus the person's own new one (no login needed -- the
+ * temporary password is the proof; K3). */
+export async function setInitialPassword(username: string, currentPassword: string, newPassword: string): Promise<void> {
+  const response = await fetch(`${base}/public/account/initial-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+}
+
 /** Every submission through that form -- listed here for the Users
  * page's "Registration requests" panel (global admin only). */
 export function listRegistrationRequests(status?: RegistrationRequest["status"]): Promise<RegistrationRequest[]> {

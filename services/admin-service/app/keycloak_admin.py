@@ -134,6 +134,41 @@ def reset_password(user_id: str, password: str, temporary: bool = True) -> None:
     response.raise_for_status()
 
 
+def password_status(username: str, password: str) -> str:
+    """Checks a sign-in the way the sign-in page does (Keycloak's direct
+    grant): "ok", "setup_required" -- the password is right but an action
+    such as "update password" is still pending, which Keycloak refuses as
+    "Account is not fully set up" -- or "invalid"."""
+    response = httpx.post(
+        f"{settings.keycloak_internal_url}/realms/{settings.keycloak_realm}/protocol/openid-connect/token",
+        data={"grant_type": "password", "client_id": settings.keycloak_login_client_id, "username": username, "password": password},
+        timeout=10,
+    )
+    if response.status_code == 200:
+        return "ok"
+    description = (response.json() if response.headers.get("content-type", "").startswith("application/json") else {}).get("error_description", "")
+    return "setup_required" if "not fully set up" in description.lower() else "invalid"
+
+
+def find_user_by_username(username: str) -> dict | None:
+    response = httpx.get(_users_url(), headers=_headers(), params={"username": username, "exact": "true"})
+    response.raise_for_status()
+    match = next((u for u in response.json() if u.get("username") == username), None)
+    return _serialize_user(match, match["id"] in _admin_role_user_ids()) if match else None
+
+
+def finish_first_password(user_id: str, new_password: str) -> None:
+    """Sets the person's own password and clears the pending "update
+    password" action, so they can sign in on the admin-ui's own page."""
+    reset_password(user_id, new_password, temporary=False)
+    current = httpx.get(_users_url(user_id), headers=_headers())
+    current.raise_for_status()
+    representation = current.json()
+    representation["requiredActions"] = [a for a in representation.get("requiredActions") or [] if a != "UPDATE_PASSWORD"]
+    response = httpx.put(_users_url(user_id), headers=_headers(), json=representation)
+    response.raise_for_status()
+
+
 def delete_user(user_id: str) -> None:
     response = httpx.delete(_users_url(user_id), headers=_headers())
     response.raise_for_status()
