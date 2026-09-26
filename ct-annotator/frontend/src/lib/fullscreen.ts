@@ -18,8 +18,9 @@ export function fullscreenElement(): Element | null {
   return d.fullscreenElement ?? d.webkitFullscreenElement ?? null;
 }
 
-export async function enterFullscreen(): Promise<boolean> {
-  const el = document.documentElement as WebkitElement;
+/** The whole page full screen -- or just `target` (the 3D view's own). */
+export async function enterFullscreen(target?: Element): Promise<boolean> {
+  const el = (target ?? document.documentElement) as WebkitElement;
   try {
     if (el.requestFullscreen) await el.requestFullscreen();
     else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();

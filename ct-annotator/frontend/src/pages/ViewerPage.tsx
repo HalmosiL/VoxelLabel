@@ -55,6 +55,7 @@ import Tip from "../components/Tip";
 import ViewAsTabs from "../components/ViewAsTabs";
 import { isPlatformAdmin, readViewAs, withViewAs, writeViewAs, ViewAs } from "../viewAs";
 import Viewer3D from "../components/Viewer3D";
+import VolumeView from "../components/VolumeView";
 import GuideTour from "../guide/GuideTour";
 import { useGuide } from "../guide/useGuide";
 import { ANNOTATE_STEPS, REVIEW_STEPS } from "../guide/viewerSteps";
@@ -526,6 +527,9 @@ export default function ViewerPage() {
     rememberOverlayStyle(style);
   }
   const [peeking, setPeeking] = useState(false);
+  // the 3D pane: the CT itself, ray-marched with the annotation inside
+  // (components/VolumeView), or the annotation's own surfaces (Viewer3D)
+  const [threeDView, setThreeDView] = useState<"volume" | "surfaces">("volume");
   // round 2 of a review: the mask sent back last time, drawn as a ghost (G)
   const prevMaskRef = useRef<Uint8Array | null>(null);
   const [showLastRound, setShowLastRound] = useState(false);
@@ -4203,6 +4207,7 @@ export default function ViewerPage() {
                   >
                     <button
                       onClick={() => togglePaneVisible(pane)}
+                      data-testid={`show-pane-${pane}`}
                       className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
                         paneVisible[pane] ? "text-gray-300 hover:bg-[#333]" : "text-gray-600 hover:bg-[#333] hover:text-gray-400"
                       }`}
@@ -4633,6 +4638,21 @@ export default function ViewerPage() {
             >
               <div className="flex flex-shrink-0 items-center justify-center gap-1.5 bg-[#111] py-1">
                 <span className="text-center text-[11px] uppercase tracking-wider text-gray-400">3D</span>
+                <div className="flex rounded border border-[#333]" role="group" aria-label="3D view">
+                  {(["volume", "surfaces"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setThreeDView(v)}
+                      aria-pressed={threeDView === v}
+                      data-testid={`three-d-${v}`}
+                      title={v === "volume" ? "The CT itself in 3D, with the annotation inside" : "Only the annotation's surfaces"}
+                      className={`px-1.5 text-[10px] uppercase tracking-wider ${threeDView === v ? "bg-blue-500/25 text-blue-200" : "text-gray-500 hover:text-white"}`}
+                    >
+                      {v === "volume" ? "CT volume" : "Surfaces"}
+                    </button>
+                  ))}
+                </div>
                 {shownMaximized === "three_d" &&
                   allowedPaneKeys
                     .filter((p) => p !== "three_d")
@@ -4650,6 +4670,7 @@ export default function ViewerPage() {
                     ))}
                 <button
                   onClick={() => toggleMaximized("three_d")}
+                  data-testid="pane-three_d-maximize"
                   className="text-gray-500 hover:text-white"
                   title={maximizedPane === "three_d" ? "Restore" : "Maximize"}
                 >
@@ -4660,16 +4681,29 @@ export default function ViewerPage() {
                 </button>
               </div>
               <div className="relative min-h-0 flex-1 overflow-hidden bg-black" style={only3d ? undefined : { height: paneSize }}>
-                <Viewer3D
-                  maskVolume={maskVolumeRef.current}
-                  rows={rows}
-                  columns={columns}
-                  numSlices={numSlices}
-                  labels={labels}
-                  objects={objects}
-                  refreshKey={0}
-                  seriesId={seriesId}
-                />
+                {threeDView === "volume" ? (
+                  <VolumeView
+                    seriesId={seriesId}
+                    maskVolume={maskReady ? maskVolumeRef.current : null}
+                    rows={rows}
+                    columns={columns}
+                    numSlices={numSlices}
+                    labels={labels}
+                    objects={objects}
+                    maskKey={0}
+                  />
+                ) : (
+                  <Viewer3D
+                    maskVolume={maskVolumeRef.current}
+                    rows={rows}
+                    columns={columns}
+                    numSlices={numSlices}
+                    labels={labels}
+                    objects={objects}
+                    refreshKey={0}
+                    seriesId={seriesId}
+                  />
+                )}
               </div>
             </div>
           )}

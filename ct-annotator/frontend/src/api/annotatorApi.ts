@@ -193,6 +193,27 @@ export async function fetchLungMask(seriesId: string): Promise<LungMask> {
   return { data, numSlices: result.num_slices, rows: result.rows, columns: result.columns };
 }
 
+/** The CT volume for the 3D view (backend's get_volume_3d): one byte per
+ * voxel, columns fastest, then rows, then slices. */
+export async function fetchVolume3D(seriesId: string): Promise<{ data: Uint8Array; info: import("../lib/volumeRender").VolumeInfo }> {
+  const resp = await fetch(`${API.annotator}/series/${seriesId}/volume-3d`, { headers: { Authorization: `Bearer ${keycloak.token}` } });
+  if (!resp.ok) throw new ApiError(resp.status, await resp.text());
+  const nums = (h: string) => (resp.headers.get(h) ?? "").split(",").map(Number);
+  const [x, y, z] = nums("X-Volume-Dims");
+  const [sx, sy, sz] = nums("X-Volume-Spacing");
+  const data = await gunzipToUint8Array(await resp.arrayBuffer());
+  return {
+    data,
+    info: {
+      dims: [x, y, z],
+      spacing: [sx || 1, sy || 1, sz || 1],
+      factor: Number(resp.headers.get("X-Volume-Factor") ?? 1) || 1,
+      huOffset: Number(resp.headers.get("X-Hu-Offset") ?? -1024),
+      huStep: Number(resp.headers.get("X-Hu-Step") ?? 16),
+    },
+  };
+}
+
 export interface SurfaceConfig {
   tools: string[];
   panes: string[];

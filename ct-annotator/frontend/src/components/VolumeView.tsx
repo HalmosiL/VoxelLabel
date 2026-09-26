@@ -1,0 +1,720 @@
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
+import { fetchLungMask, fetchVolume3D } from "../api/annotatorApi";
+import { errorText } from "../lib/errorText";
+import { enterFullscreen, exitFullscreen, fullscreenElement, onFullscreenChange } from "../lib/fullscreen";
+import { fillLungHoles, FlyKeys, flyStep, labelPalette, shrinkMask, VolumeInfo, windowToUnit } from "../lib/volumeRender";
+
+/** A real 3D view of the CT itself, with the annotation inside it: the
+ * volume is ray-marched on the GPU (a 3D texture of the series, see the
+ * backend's get_volume_3d), every painted object drawn in its label's
+ * colour. Opacity, smoothing, window, MIP and shading are set live; the
+ * camera flies like a game character -- click the view, then the mouse
+ * looks, WASD moves, Space goes up, Shift down, Esc lets go -- right into
+ * the volume if you like, or orbits it. Nothing here changes the
+ * annotation. */
+
+type Mode = "volume" | "mip";
+type Nav = "fly" | "orbit";
+
+const PRESETS: { name: string; center: number; width: number }[] = [
+  { name: "Lung", center: -600, width: 1500 },
+  { name: "Soft tissue", center: 40, width: 400 },
+  { name: "Bone", center: 400, width: 1800 },
+  { name: "Skin", center: -300, width: 800 },
+];
+/** Vessels and nodules inside the lungs: soft tissue bright, the lung
+ * itself faint -- with "Only inside the lungs" on, or the chest wall
+ * (the same density) would hide it all. */
+const VESSELS = { center: -350, width: 900 };
+
+const VERTEX = /* glsl */ `
+out vec3 vLocal;
+void main() {
+  vLocal = position + 0.5; // the unit box, 0..1 like the texture
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const FRAGMENT = /* glsl */ `
+precision highp float;
+precision highp sampler3D;
+in vec3 vLocal;
+out highp vec4 fragColor;
+uniform sampler3D uVolume;
+uniform sampler3D uMask;
+uniform sampler3D uLung;
+uniform bool uLungOnly;
+uniform float uNearCut;
+uniform sampler2D uPalette;
+uniform vec3 uCamLocal;
+uniform vec3 uTexel;
+uniform vec2 uWindow;
+uniform float uOpacity;
+uniform float uMaskOpacity;
+uniform float uSmooth;
+uniform float uSteps;
+uniform int uMode;
+uniform bool uShade;
+uniform bool uShowMask;
+
+float sampleVolume(vec3 p) {
+  float v = texture(uVolume, p).r;
+  if (uSmooth > 0.0) {
+    vec3 o = uTexel * uSmooth;
+    v = (v * 2.0 + texture(uVolume, p + vec3(o.x, 0, 0)).r + texture(uVolume, p - vec3(o.x, 0, 0)).r
+               + texture(uVolume, p + vec3(0, o.y, 0)).r + texture(uVolume, p - vec3(0, o.y, 0)).r
+               + texture(uVolume, p + vec3(0, 0, o.z)).r + texture(uVolume, p - vec3(0, 0, o.z)).r) / 8.0;
+  }
+  return v;
+}
+
+float windowed(float v) {
+  return clamp((v - uWindow.x) / (uWindow.y - uWindow.x), 0.0, 1.0);
+}
+
+vec2 hitBox(vec3 o, vec3 d) {
+  vec3 inv = 1.0 / d;
+  vec3 t0 = (vec3(0.0) - o) * inv;
+  vec3 t1 = (vec3(1.0) - o) * inv;
+  vec3 tmin = min(t0, t1);
+  vec3 tmax = max(t0, t1);
+  return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
+}
+
+void main() {
+  vec3 dir = normalize(vLocal - uCamLocal);
+  vec2 t = hitBox(uCamLocal, dir);
+  float tStart = max(max(t.x, 0.0), uNearCut); // from the camera when it is inside; minus the cut
+  if (t.y <= tStart) discard;
+  float dt = 1.732 / uSteps;
+  vec4 acc = vec4(0.0);
+  float best = 0.0;
+  vec4 maskHit = vec4(0.0);
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * dt;
+  for (float s = tStart + jitter; s < t.y; s += dt) {
+    vec3 p = uCamLocal + dir * s;
+    float a = windowed(sampleVolume(p));
+    if (uLungOnly && texture(uLung, p).r < 0.5 / 255.0) a = 0.0;
+    vec4 lc = vec4(0.0);
+    if (uShowMask) {
+      float id = texture(uMask, p).r * 255.0;
+      if (id > 0.5) lc = texture(uPalette, vec2((floor(id + 0.5) + 0.5) / 256.0, 0.5));
+    }
+    if (uMode == 1) {
+      best = max(best, a);
+      if (lc.a > 0.0 && maskHit.a == 0.0) maskHit = vec4(lc.rgb, 1.0);
+      continue;
+    }
+    vec3 col = vec3(a);
+    float alpha = a * a * uOpacity;
+    if (uShade && alpha > 0.01) {
+      vec3 g = vec3(
+        windowed(texture(uVolume, p + vec3(uTexel.x, 0, 0)).r) - windowed(texture(uVolume, p - vec3(uTexel.x, 0, 0)).r),
+        windowed(texture(uVolume, p + vec3(0, uTexel.y, 0)).r) - windowed(texture(uVolume, p - vec3(0, uTexel.y, 0)).r),
+        windowed(texture(uVolume, p + vec3(0, 0, uTexel.z)).r) - windowed(texture(uVolume, p - vec3(0, 0, uTexel.z)).r));
+      float gl = length(g);
+      if (gl > 1e-4) col *= 0.35 + 0.65 * abs(dot(g / gl, dir));
+    }
+    if (lc.a > 0.0) {
+      col = mix(col, lc.rgb, 0.85);
+      alpha = max(alpha, uMaskOpacity);
+    }
+    // the same look whatever the step length
+    alpha = 1.0 - pow(1.0 - clamp(alpha, 0.0, 0.999), dt * 200.0);
+    acc.rgb += (1.0 - acc.a) * alpha * col;
+    acc.a += (1.0 - acc.a) * alpha;
+    if (acc.a > 0.97) break;
+  }
+  if (uMode == 1) {
+    vec3 c = vec3(best);
+    if (maskHit.a > 0.0 && uShowMask) c = mix(c, maskHit.rgb, uMaskOpacity);
+    fragColor = vec4(c, 1.0);
+  } else {
+    fragColor = vec4(acc.rgb, 1.0);
+  }
+}
+`;
+
+interface World {
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  mesh: THREE.Mesh | null;
+  material: THREE.ShaderMaterial | null;
+  maskTex: THREE.Data3DTexture | null;
+  paletteTex: THREE.DataTexture;
+  orbit: OrbitControls;
+  yaw: number;
+  pitch: number;
+  keys: FlyKeys;
+  /** something changed: draw the next frame (only then -- a ray-marched
+   * frame is heavy, an idle view shouldn't keep the GPU busy) */
+  dirty: boolean;
+}
+
+export default function VolumeView({
+  seriesId,
+  maskVolume,
+  rows,
+  columns,
+  numSlices,
+  labels,
+  objects,
+  maskKey,
+}: {
+  seriesId: string | null;
+  maskVolume: Uint8Array | null;
+  rows: number;
+  columns: number;
+  numSlices: number;
+  labels: { id: number; color: string }[];
+  objects: { id: number; label_id: number; hidden: boolean }[];
+  /** bumped by the parent when the painting may have changed */
+  maskKey: number;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const canvasHostRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error" | "nowebgl">("loading");
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<VolumeInfo | null>(null);
+
+  const [mode, setMode] = useState<Mode>("volume");
+  const [nav, setNav] = useState<Nav>("fly");
+  const [center, setCenter] = useState(-600);
+  const [width, setWidth] = useState(1500);
+  const [opacity, setOpacity] = useState(0.25);
+  const [smooth, setSmooth] = useState(0.5);
+  const [shade, setShade] = useState(true);
+  const [showMask, setShowMask] = useState(true);
+  const [maskOpacity, setMaskOpacity] = useState(0.8);
+  const [quality, setQuality] = useState(1);
+  const [speed, setSpeed] = useState(0.4);
+  const [locked, setLocked] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [showPanel, setShowPanel] = useState(true);
+  const [lungOnly, setLungOnly] = useState(false);
+  const [lungState, setLungState] = useState<"none" | "loading" | "ready" | "error">("none");
+  const [nearCut, setNearCut] = useState(0);
+  // painting changes the mask in place: "Update annotation" (or a new or
+  // deleted object) sends it to the GPU again
+  const [maskTick, setMaskTick] = useState(0);
+  const objectIds = objects.map((o) => o.id).join(",");
+
+  // the three.js world, made once per mount
+  const world = useRef<World | null>(null);
+  const hoveredRef = useRef(false);
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+  const navRef = useRef(nav);
+  navRef.current = nav;
+
+  // ── renderer, camera, controls, the frame loop ─────────────────────────
+  useEffect(() => {
+    const host = canvasHostRef.current;
+    if (!host) return;
+    const probe = document.createElement("canvas");
+    if (!probe.getContext("webgl2")) {
+      setStatus("nowebgl");
+      return;
+    }
+    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.setClearColor(0x000000, 1);
+    host.appendChild(renderer.domElement);
+    renderer.domElement.style.display = "block";
+    renderer.domElement.setAttribute("data-testid", "volume-canvas");
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.001, 20);
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.enabled = false;
+    orbit.enableDamping = true;
+    const paletteTex = new THREE.DataTexture(new Uint8Array(256 * 4), 256, 1, THREE.RGBAFormat);
+    paletteTex.minFilter = THREE.NearestFilter;
+    paletteTex.magFilter = THREE.NearestFilter;
+    paletteTex.needsUpdate = true;
+    const w: World = {
+      renderer,
+      scene,
+      camera,
+      mesh: null,
+      material: null,
+      maskTex: null,
+      paletteTex,
+      orbit,
+      yaw: 0,
+      pitch: 0,
+      keys: { forward: false, back: false, left: false, right: false, up: false, down: false },
+      dirty: true,
+    };
+    orbit.addEventListener("change", () => (w.dirty = true));
+    world.current = w;
+    resetView();
+
+    const resize = () => {
+      const r = host.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(r.width));
+      const height = Math.max(1, Math.floor(r.height));
+      renderer.setSize(width, height, false);
+      renderer.domElement.style.width = `${width}px`;
+      renderer.domElement.style.height = `${height}px`;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      w.dirty = true;
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+
+    let last = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (navRef.current === "fly") {
+        const [dx, dy, dz] = flyStep(w.keys, w.yaw, w.pitch, speedRef.current, dt);
+        if (dx || dy || dz) {
+          camera.position.x += dx;
+          camera.position.y += dy;
+          camera.position.z += dz;
+          w.dirty = true;
+        }
+        camera.rotation.set(w.pitch, w.yaw, 0, "YXZ");
+      } else {
+        orbit.update();
+      }
+      if (!w.dirty) {
+        frame = requestAnimationFrame(tick);
+        return;
+      }
+      w.dirty = false;
+      if (w.mesh && w.material) {
+        w.mesh.updateMatrixWorld();
+        const local = w.mesh.worldToLocal(camera.position.clone()).addScalar(0.5);
+        (w.material.uniforms.uCamLocal.value as THREE.Vector3).copy(local);
+      }
+      renderer.render(scene, camera);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      orbit.dispose();
+      w.material?.dispose();
+      w.mesh?.geometry.dispose();
+      w.maskTex?.dispose();
+      paletteTex.dispose();
+      (w.material?.uniforms.uVolume.value as THREE.Texture | undefined)?.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+      world.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** In front of the patient, the whole volume in view. */
+  function resetView() {
+    const w = world.current;
+    if (!w) return;
+    w.yaw = 0;
+    w.pitch = 0;
+    w.camera.position.set(0, 0, 1.6);
+    w.camera.rotation.set(0, 0, 0, "YXZ");
+    w.orbit.target.set(0, 0, 0);
+    w.orbit.update();
+    w.dirty = true;
+  }
+
+  // ── the CT volume: fetched once per series, uploaded as a 3D texture ───
+  useEffect(() => {
+    if (!seriesId || status === "nowebgl") return;
+    let cancelled = false;
+    setStatus("loading");
+    setError(null);
+    fetchVolume3D(seriesId)
+      .then(({ data, info }) => {
+        const w = world.current;
+        if (cancelled || !w) return;
+        const [x, y, z] = info.dims;
+        const tex = new THREE.Data3DTexture(data as Uint8Array<ArrayBuffer>, x, y, z);
+        tex.format = THREE.RedFormat;
+        tex.type = THREE.UnsignedByteType;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.unpackAlignment = 1;
+        tex.needsUpdate = true;
+        const emptyMask = new THREE.Data3DTexture(new Uint8Array(1), 1, 1, 1);
+        emptyMask.format = THREE.RedFormat;
+        emptyMask.needsUpdate = true;
+        const material = new THREE.ShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: VERTEX,
+          fragmentShader: FRAGMENT,
+          side: THREE.BackSide,
+          uniforms: {
+            uVolume: { value: tex },
+            uMask: { value: emptyMask },
+            uLung: { value: emptyMask },
+            uLungOnly: { value: false },
+            uNearCut: { value: 0 },
+            uPalette: { value: w.paletteTex },
+            uCamLocal: { value: new THREE.Vector3() },
+            uTexel: { value: new THREE.Vector3(1 / x, 1 / y, 1 / z) },
+            uWindow: { value: new THREE.Vector2(0, 1) },
+            uOpacity: { value: 0.25 },
+            uMaskOpacity: { value: 0.8 },
+            uSmooth: { value: 0.5 },
+            uSteps: { value: 400 },
+            uMode: { value: 0 },
+            uShade: { value: true },
+            uShowMask: { value: true },
+          },
+        });
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+        // real proportions: columns x rows x slices in mm, the largest 1 unit
+        const [sx, sy, sz] = info.spacing;
+        const size = [x * sx, y * sy, z * sz];
+        const m = Math.max(...size);
+        // Seen from the default camera (+Z, looking at the patient's front):
+        // slices run down the screen, the first at the top (as on the
+        // sagittal and coronal panes); the rows run from the front (row 0,
+        // anterior) away from the viewer; the columns run to the right --
+        // the patient's left on the viewer's right, as facing a person. The
+        // rows need a mirror for that (three.js flips the face culling of
+        // a mirrored object itself).
+        mesh.scale.set(size[0] / m, -size[1] / m, size[2] / m);
+        mesh.rotation.x = Math.PI / 2;
+        if (w.mesh) {
+          w.scene.remove(w.mesh);
+          w.mesh.geometry.dispose();
+          w.material?.dispose();
+        }
+        w.scene.add(mesh);
+        w.mesh = mesh;
+        w.material = material;
+        w.maskTex = emptyMask;
+        w.dirty = true;
+        setInfo(info);
+        setStatus("ready");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(errorText(err));
+        setStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesId]);
+
+  // ── the annotation: its mask at the volume's size, its colours ─────────
+  useEffect(() => {
+    const w = world.current;
+    if (!w?.material || !info || !maskVolume || !rows || !columns || !numSlices) return;
+    if (maskVolume.length !== rows * columns * numSlices) return;
+    const small = shrinkMask(maskVolume, rows, columns, numSlices, info.factor);
+    const [x, y, z] = info.dims;
+    if (small.length !== x * y * z) return; // a series changed under us
+    const tex = new THREE.Data3DTexture(small === maskVolume ? small.slice() : small, x, y, z);
+    tex.format = THREE.RedFormat;
+    tex.type = THREE.UnsignedByteType;
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.unpackAlignment = 1;
+    tex.needsUpdate = true;
+    w.maskTex?.dispose();
+    w.maskTex = tex;
+    w.material.uniforms.uMask.value = tex;
+    w.dirty = true;
+  }, [info, maskVolume, rows, columns, numSlices, maskKey, maskTick, objectIds]);
+
+  useEffect(() => {
+    const w = world.current;
+    if (!w) return;
+    (w.paletteTex.image.data as Uint8Array).set(labelPalette(objects, labels));
+    w.paletteTex.needsUpdate = true;
+    w.dirty = true;
+  }, [objects, labels, info]);
+
+  // ── the lungs (the backend's own segmentation), for "Only inside the lungs"
+  useEffect(() => {
+    if (!lungOnly || lungState !== "none" || !seriesId || !info) return;
+    setLungState("loading");
+    fetchLungMask(seriesId)
+      .then((m) => {
+        const w = world.current;
+        if (!w?.material) return;
+        const [x, y, z] = info.dims;
+        const shrunk = shrinkMask(m.data, m.rows, m.columns, m.numSlices, info.factor);
+        if (shrunk.length !== x * y * z) throw new Error("size");
+        const small = fillLungHoles(shrunk, x, y, z);
+        const tex = new THREE.Data3DTexture(small, x, y, z);
+        tex.format = THREE.RedFormat;
+        tex.type = THREE.UnsignedByteType;
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.unpackAlignment = 1;
+        tex.needsUpdate = true;
+        w.material.uniforms.uLung.value = tex;
+        w.dirty = true;
+        setLungState("ready");
+      })
+      .catch(() => setLungState("error"));
+  }, [lungOnly, lungState, seriesId, info]);
+
+  // ── the knobs, straight into the shader ─────────────────────────────────
+  useEffect(() => {
+    const u = world.current?.material?.uniforms;
+    if (!u || !info) return;
+    const [lo, hi] = windowToUnit(center, width, info);
+    (u.uWindow.value as THREE.Vector2).set(lo, hi);
+    u.uOpacity.value = opacity;
+    u.uMaskOpacity.value = maskOpacity;
+    u.uSmooth.value = smooth;
+    u.uSteps.value = Math.round(Math.max(...info.dims) * 1.6 * quality);
+    u.uMode.value = mode === "mip" ? 1 : 0;
+    u.uShade.value = shade;
+    u.uShowMask.value = showMask;
+    u.uLungOnly.value = lungOnly && lungState === "ready";
+    u.uNearCut.value = nearCut;
+    if (world.current) world.current.dirty = true;
+  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut]);
+
+  // ── flying: pointer lock + mouse look, WASD / Space / Shift ─────────────
+  useEffect(() => {
+    const w = world.current;
+    if (!w) return;
+    w.orbit.enabled = nav === "orbit";
+    if (nav === "orbit") {
+      if (document.pointerLockElement) document.exitPointerLock();
+      w.orbit.target.set(0, 0, 0);
+      w.orbit.update();
+    } else {
+      // take over the orbit camera's direction
+      const e = new THREE.Euler().setFromQuaternion(w.camera.quaternion, "YXZ");
+      w.yaw = e.y;
+      w.pitch = e.x;
+    }
+    w.dirty = true;
+  }, [nav]);
+
+  useEffect(() => {
+    const w = world.current;
+    if (!w) return;
+    const canvas = w.renderer.domElement;
+    const onLockChange = () => setLocked(document.pointerLockElement === canvas);
+    const look = (dx: number, dy: number) => {
+      w.yaw -= dx * 0.0025;
+      w.pitch = Math.max(-1.5, Math.min(1.5, w.pitch - dy * 0.0025));
+      w.dirty = true;
+    };
+    const onMove = (e: MouseEvent) => {
+      if (navRef.current === "fly" && document.pointerLockElement === canvas) look(e.movementX, e.movementY);
+    };
+    // without pointer lock (a touch screen): drag to look
+    let drag: { x: number; y: number } | null = null;
+    const onDown = (e: PointerEvent) => {
+      if (navRef.current !== "fly") return;
+      if (e.pointerType === "mouse" && canvas.requestPointerLock) {
+        canvas.requestPointerLock();
+        return;
+      }
+      drag = { x: e.clientX, y: e.clientY };
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!drag) return;
+      look(e.clientX - drag.x, e.clientY - drag.y);
+      drag = { x: e.clientX, y: e.clientY };
+    };
+    const onUp = () => (drag = null);
+    const onWheel = (e: WheelEvent) => {
+      if (navRef.current !== "fly") return;
+      e.preventDefault();
+      setSpeed((s) => Math.max(0.05, Math.min(3, s * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
+    };
+    const KEY: Record<string, keyof FlyKeys> = { KeyW: "forward", KeyS: "back", KeyA: "left", KeyD: "right", Space: "up", ShiftLeft: "down", ShiftRight: "down" };
+    const active = () => navRef.current === "fly" && (document.pointerLockElement === canvas || hoveredRef.current);
+    const onKey = (down: boolean) => (e: KeyboardEvent) => {
+      const k = KEY[e.code];
+      if (!k) {
+        if (down && e.code === "KeyR" && active()) resetView();
+        return;
+      }
+      if (down && !active()) return;
+      // the viewer's own keys (WASD pan, Space peek, ...) stay out of it
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      w.keys[k] = down;
+    };
+    const onKeyDown = onKey(true);
+    const onKeyUp = onKey(false);
+    const stopAll = () => {
+      for (const k of Object.keys(w.keys) as (keyof FlyKeys)[]) w.keys[k] = false;
+    };
+    document.addEventListener("pointerlockchange", onLockChange);
+    document.addEventListener("mousemove", onMove);
+    canvas.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onUp);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", stopAll);
+    return () => {
+      document.removeEventListener("pointerlockchange", onLockChange);
+      document.removeEventListener("mousemove", onMove);
+      canvas.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", stopAll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  useEffect(() => onFullscreenChange(() => setFullscreen(fullscreenElement() === hostRef.current)), []);
+  function toggleFullscreen() {
+    if (fullscreenElement() === hostRef.current) exitFullscreen();
+    else if (hostRef.current) enterFullscreen(hostRef.current);
+  }
+
+  const slider = (label: string, value: number, min: number, max: number, step: number, set: (v: number) => void, testId: string, show?: string) => (
+    <label className="flex flex-col gap-0.5">
+      <span className="flex justify-between text-[10px] uppercase tracking-wide text-gray-400">
+        {label}
+        <span className="font-mono normal-case text-gray-300">{show ?? value}</span>
+      </span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => set(Number(e.target.value))} data-testid={testId} className="accent-blue-500" />
+    </label>
+  );
+
+  return (
+    <div
+      ref={hostRef}
+      className="relative h-full min-h-[240px] w-full overflow-hidden bg-black"
+      data-testid="volume-view"
+      onPointerEnter={() => (hoveredRef.current = true)}
+      onPointerLeave={() => (hoveredRef.current = false)}
+    >
+      <div ref={canvasHostRef} className="absolute inset-0" />
+
+      {status !== "ready" && (
+        <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-gray-400" data-testid="volume-status">
+          {status === "loading" && "Loading the CT for 3D…"}
+          {status === "error" && (error ?? "The 3D view couldn't load this series.")}
+          {status === "nowebgl" && "This browser has no WebGL 2, which the 3D view needs."}
+        </div>
+      )}
+
+      {status === "ready" && (
+        <>
+          <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-gray-300" data-testid="volume-hint">
+            {nav === "fly"
+              ? locked
+                ? "Mouse looks · W A S D move · Space up · Shift down · wheel speed · R reset · Esc lets go"
+                : "Click the view to fly: mouse looks, W A S D, Space up, Shift down"
+              : "Drag to turn · right-drag to move · wheel to zoom"}
+          </div>
+          <div className="absolute right-2 top-2 flex gap-1">
+            <button type="button" onClick={() => setShowPanel((v) => !v)} className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333]" data-testid="volume-panel-toggle">
+              {showPanel ? "Hide settings" : "Settings"}
+            </button>
+            <button type="button" onClick={toggleFullscreen} className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333]" data-testid="volume-fullscreen">
+              {fullscreen ? "Exit full screen" : "Full screen"}
+            </button>
+          </div>
+          {showPanel && (
+            <div className="absolute left-2 top-2 flex max-h-[calc(100%-3rem)] w-56 flex-col gap-2 overflow-y-auto rounded border border-[#333] bg-black/75 p-2.5 text-[11px] text-gray-200" data-testid="volume-panel">
+              <div className="flex gap-1" role="group" aria-label="Rendering">
+                {(["volume", "mip"] as const).map((m) => (
+                  <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} data-testid={`volume-mode-${m}`} className={`flex-1 rounded border px-1.5 py-0.5 ${mode === m ? "border-blue-500 bg-blue-500/25" : "border-[#444] hover:bg-[#333]"}`}>
+                    {m === "volume" ? "Volume" : "MIP"}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-1" role="group" aria-label="Camera">
+                {(["fly", "orbit"] as const).map((n) => (
+                  <button key={n} type="button" onClick={() => setNav(n)} aria-pressed={nav === n} data-testid={`volume-nav-${n}`} className={`flex-1 rounded border px-1.5 py-0.5 ${nav === n ? "border-blue-500 bg-blue-500/25" : "border-[#444] hover:bg-[#333]"}`}>
+                    {n === "fly" ? "Fly (WASD)" : "Orbit"}
+                  </button>
+                ))}
+                <button type="button" onClick={resetView} className="rounded border border-[#444] px-1.5 py-0.5 hover:bg-[#333]" title="Back in front of the patient (R)" data-testid="volume-reset">
+                  Reset
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Window">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    onClick={() => {
+                      setCenter(p.center);
+                      setWidth(p.width);
+                    }}
+                    className={`rounded border px-1.5 py-0.5 ${center === p.center && width === p.width ? "border-blue-500 bg-blue-500/25" : "border-[#444] hover:bg-[#333]"}`}
+                    data-testid={`volume-preset-${p.name}`}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCenter(VESSELS.center);
+                    setWidth(VESSELS.width);
+                    setLungOnly(true);
+                    setOpacity(0.35);
+                  }}
+                  className={`rounded border px-1.5 py-0.5 ${lungOnly && center === VESSELS.center && width === VESSELS.width ? "border-blue-500 bg-blue-500/25" : "border-[#444] hover:bg-[#333]"}`}
+                  title="Vessels and nodules inside the lungs, the chest wall left out"
+                  data-testid="volume-preset-Vessels"
+                >
+                  Lung vessels
+                </button>
+              </div>
+              <label className="flex items-center gap-2" title="Draw only what lies inside the lungs (the annotation always shows) -- the chest wall has the same density as vessels and nodules, and hides them">
+                <input type="checkbox" checked={lungOnly} onChange={(e) => setLungOnly(e.target.checked)} data-testid="volume-lung-only" />
+                Only inside the lungs
+                {lungOnly && lungState === "loading" && <span className="text-gray-500">finding the lungs…</span>}
+                {lungOnly && lungState === "error" && <span className="text-red-400">no lungs found</span>}
+              </label>
+              {slider("Center (HU)", center, -1000, 1500, 10, setCenter, "volume-center")}
+              {slider("Width (HU)", width, 50, 4000, 10, setWidth, "volume-width")}
+              {mode === "volume" && slider("Opacity", opacity, 0.01, 1, 0.01, setOpacity, "volume-opacity", `${Math.round(opacity * 100)}%`)}
+              {slider("Smoothing", smooth, 0, 3, 0.25, setSmooth, "volume-smooth")}
+              {slider("Cut away in front", nearCut, 0, 1.5, 0.02, setNearCut, "volume-near-cut", nearCut ? `${Math.round(nearCut * 100)}%` : "off")}
+              {slider("Quality", quality, 0.5, 2, 0.25, setQuality, "volume-quality", `${quality}×`)}
+              {mode === "volume" && (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={shade} onChange={(e) => setShade(e.target.checked)} data-testid="volume-shade" /> Shading
+                </label>
+              )}
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={showMask} onChange={(e) => setShowMask(e.target.checked)} data-testid="volume-show-mask" /> Annotation
+                </label>
+                <button type="button" onClick={() => setMaskTick((n) => n + 1)} className="ml-auto rounded border border-[#444] px-1.5 py-0.5 text-[10px] hover:bg-[#333]" title="Show the painting as it is now" data-testid="volume-update-mask">
+                  Update
+                </button>
+              </div>
+              {showMask && slider("Annotation opacity", maskOpacity, 0.05, 1, 0.05, setMaskOpacity, "volume-mask-opacity", `${Math.round(maskOpacity * 100)}%`)}
+              {nav === "fly" && slider("Flying speed", Math.round(speed * 100) / 100, 0.05, 3, 0.05, setSpeed, "volume-speed")}
+              {info && (
+                <p className="text-[10px] text-gray-500">
+                  {info.dims.join(" × ")} voxels · {info.spacing.map((s) => s.toFixed(2)).join(" × ")} mm
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
