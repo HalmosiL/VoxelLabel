@@ -602,6 +602,23 @@ export default function ViewerPage() {
   // rows/columns/numSlices for the same reason.
   const paneSizeRef = useRef(paneSize);
   paneSizeRef.current = paneSize;
+  // The pan is in screen pixels of the pane: when the pane grows or shrinks
+  // (Maximize, a resized window) it scales with it, so what was centred
+  // stays centred -- Maximize pushed the nodule to the edge (UX-rev-2-04).
+  const lastPaneSizeRef = useRef(paneSize);
+  useEffect(() => {
+    const before = lastPaneSizeRef.current;
+    lastPaneSizeRef.current = paneSize;
+    if (before <= 0 || before === paneSize) return;
+    const k = paneSize / before;
+    setZoom((prev) => {
+      const next = { ...prev };
+      for (const pane of PANE_ORDER) next[pane] = { ...prev[pane], panX: prev[pane].panX * k, panY: prev[pane].panY * k };
+      return next;
+    });
+    // setZoom is declared further down; this only runs after render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneSize]);
 
   useEffect(() => {
     const el = paneRowRef.current;
@@ -3016,11 +3033,13 @@ export default function ViewerPage() {
   }
 
   // How much of the pane's own width/height the object's bounding box
-  // should fill after a jump -- comfortably zoomed in without touching
-  // the pane's edges. Same 1..15 range as the wheel-zoom handler.
-  const JUMP_ZOOM_FILL_FRACTION = 0.18;
+  // should fill after a jump, and how far a jump zooms at most: a small
+  // nodule came up 8-15x, pixelated, with no lung around it to judge it
+  // against (UX-rev-2-04, UX-rev-1-06) -- a reviewer asked for ~3x. The
+  // wheel still zooms to 15x.
+  const JUMP_ZOOM_FILL_FRACTION = 0.3;
   const JUMP_ZOOM_MIN_SCALE = 1;
-  const JUMP_ZOOM_MAX_SCALE = 15;
+  const JUMP_ZOOM_MAX_SCALE = 4;
   // A bounding box narrower than this (in native pixels) is treated as
   // this wide instead -- otherwise a one-voxel-thin sliver of an object
   // on this particular slice would compute an enormous scale purely
@@ -3509,7 +3528,8 @@ export default function ViewerPage() {
   }
 
   function handlePaneDoubleClick(pane: PaneKey) {
-    if (tab !== "view") return;
+    // a drawing tool's double-click is two dots; review draws nothing (UX-rev-1-06)
+    if (tab !== "view" && !reviewMode) return;
     setZoom((prev) => ({ ...prev, [pane]: IDLE_ZOOM }));
   }
 
