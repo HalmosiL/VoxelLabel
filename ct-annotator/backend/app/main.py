@@ -43,6 +43,7 @@ from app.storage import (
     upload_mask,
     upload_mask_volume,
 )
+from app.volume_3d import HU_OFFSET, HU_STEP, downsample_for_3d
 
 app = FastAPI(title="CT Annotator Viewer -- thin backend")
 # File storage being unreachable answers 503, not 500 (I-08).
@@ -65,7 +66,8 @@ app.add_middleware(
     # Custom response headers aren't in the browser's default CORS-safelisted
     # set -- get_plane_hu's X-Box-* headers need this to be readable from
     # the frontend's fetch() call (a cross-origin request, different ports).
-    expose_headers=["X-Box-Width", "X-Box-Height", "X-Box-X0", "X-Box-Y0"],
+    # ... and get_volume_3d's X-Volume-* / X-Hu-* for the 3D view.
+    expose_headers=["X-Box-Width", "X-Box-Height", "X-Box-X0", "X-Box-Y0", "X-Volume-Dims", "X-Volume-Spacing", "X-Volume-Factor", "X-Hu-Offset", "X-Hu-Step"],
 )
 
 # Parsed pydicom Dataset per instance id, so a window/level tweak doesn't
@@ -78,7 +80,9 @@ _dataset_cache: dict[str, tuple[float, object]] = {}
 # ~1 GB after a single afternoon of use on a 7 GB host. Now every
 # insert prunes expired entries and keeps only the most recent few.
 _MAX_CACHED_VOLUMES = 3
-_MAX_CACHED_DATASETS = 600
+# Each holds its decoded pixels next to the file's bytes (~1 MB for a
+# 512x512 slice): 600 was more than half the container's memory.
+_MAX_CACHED_DATASETS = 300
 
 
 
@@ -284,7 +288,11 @@ async def _get_volume(series_id: str, user: CurrentUser) -> np.ndarray:
     async def _load(instance: dict) -> np.ndarray:
         async with semaphore:
             dataset = await _get_dataset(instance["id"], user)
-            return rescaled_pixels(dataset)
+            # HU fits int16: half a float32 volume, and the container
+            # (1.5 GB) was killed with three of those cached next to a lung
+            # segmentation. Converted slice by slice, so no float copy of
+            # the whole volume ever exists.
+            return np.rint(np.clip(rescaled_pixels(dataset), -32768, 32767)).astype(np.int16)
 
     slices = await asyncio.gather(*(_load(instance) for instance in ordered))
     sizes = {s.shape for s in slices}
@@ -432,6 +440,31 @@ async def _series_spacing(series_id: str, user: CurrentUser) -> tuple[float, flo
     first = await _get_dataset(ordered[0]["id"], user)
     second = await _get_dataset(ordered[1]["id"], user) if len(ordered) > 1 else None
     return series_spacing(first, second)
+
+
+@app.get("/series/{series_id}/volume-3d")
+async def get_volume_3d(series_id: str, user: CurrentUser = Depends(get_current_user)) -> Response:
+    """The CT volume for the 3D view (components/VolumeView): gzip of one
+    byte per voxel (z, y, x), HU in HU_STEP steps from HU_OFFSET, averaged
+    down in-plane to at most MAX_EDGE. The headers say its size and its
+    real voxel size in mm, so the view keeps the patient's proportions."""
+    volume = await _get_volume(series_id, user)
+    small, factor = await asyncio.to_thread(downsample_for_3d, volume)
+    spacing = await _series_spacing(series_id, user) or (1.0, 1.0, 1.0)
+    body = await asyncio.to_thread(gzip.compress, small.tobytes(), 6)
+    z, y, x = small.shape
+    return Response(
+        content=body,
+        media_type="application/octet-stream",
+        headers={
+            "X-Volume-Dims": f"{x},{y},{z}",
+            "X-Volume-Spacing": f"{spacing[2] * factor},{spacing[1] * factor},{spacing[0]}",
+            "X-Volume-Factor": str(factor),
+            "X-Hu-Offset": str(HU_OFFSET),
+            "X-Hu-Step": str(HU_STEP),
+            "Cache-Control": "private, max-age=600",
+        },
+    )
 
 
 @app.get("/series/{series_id}/spacing")

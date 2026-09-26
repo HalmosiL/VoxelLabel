@@ -491,3 +491,47 @@ def test_the_previous_round_is_the_last_rejected_version(api, monkeypatch):
     # a first round has none
     rows[:] = rows[2:]
     assert api.get(f"/series/{SERIES}/previous-round").json() == {"version_id": None, "mask_gzip_base64": None, "objects": [], "labels": []}
+
+
+def test_the_3d_volume_comes_small_with_its_size_and_spacing(api, monkeypatch):
+    import gzip
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(main._volume_cache, SERIES, (main.time.monotonic(), np.zeros((3, 4, 4), dtype=np.float32)))
+
+    async def dataset(instance_id, user):
+        return SimpleNamespace(PixelSpacing=[0.5, 0.6], SliceThickness=2.0)
+
+    monkeypatch.setattr(main, "_get_dataset", dataset)
+    api.as_user(MEMBER)
+    r = api.get(f"/series/{SERIES}/volume-3d")
+    assert r.status_code == 200
+    assert r.headers["x-volume-dims"] == "4,4,3" and r.headers["x-volume-spacing"] == "0.6,0.5,2.0"
+    assert len(gzip.decompress(r.content)) == 48
+    api.as_user(OUTSIDER)
+    assert api.get(f"/series/{SERIES}/volume-3d").status_code == 403
+
+
+def test_the_cached_volume_is_int16_hu(api, monkeypatch):
+    """Memory: three cached float32 volumes plus 600 datasets and a lung
+    segmentation outgrew the container's 1.5 GB and it was killed mid-3D.
+    HU fits int16 -- half the memory, rounded to the unit."""
+    main._volume_cache.clear()
+
+    async def two_instances(url, user):
+        return [{"id": "i1", "instance_number": 1}, {"id": "i2", "instance_number": 2}]
+
+    async def dataset(instance_id, user):
+        return instance_id
+
+    planes = {"i1": np.full((2, 2), -1000.4, dtype=np.float32), "i2": np.full((2, 2), 40.6, dtype=np.float32)}
+    monkeypatch.setattr(main, "_series_instances_checked", two_instances)
+    monkeypatch.setattr(main, "_require_series_access", lambda *a, **k: _noop())
+    monkeypatch.setattr(main, "_get_dataset", dataset)
+    monkeypatch.setattr(main, "rescaled_pixels", lambda ds: planes[ds])
+    import asyncio
+
+    volume = asyncio.run(main._get_volume(SERIES, MEMBER))
+    assert volume.dtype == np.int16 and volume.shape == (2, 2, 2)
+    assert volume[0, 0, 0] == -1000 and volume[1, 1, 1] == 41
+    main._volume_cache.clear()
