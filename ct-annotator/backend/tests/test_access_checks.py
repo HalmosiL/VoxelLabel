@@ -535,3 +535,23 @@ def test_the_cached_volume_is_int16_hu(api, monkeypatch):
     assert volume.dtype == np.int16 and volume.shape == (2, 2, 2)
     assert volume[0, 0, 0] == -1000 and volume[1, 1, 1] == 41
     main._volume_cache.clear()
+
+
+def test_the_airways_come_like_the_lung_mask(api, monkeypatch):
+    import base64
+    import gzip
+
+    main._airway_cache.clear()
+    monkeypatch.setattr(main, "segment_airways", lambda vol, sp: (np.ones(vol.shape, dtype=np.uint8), {"found": True, "threshold_hu": -910, "volume_ml": 1.0, "seed": [0, 0, 0]}))
+
+    async def spacing(series_id, user):
+        return (1.0, 1.0, 1.0)
+
+    monkeypatch.setattr(main, "_series_spacing", spacing)
+    api.as_user(MEMBER)
+    r = api.get(f"/series/{SERIES}/airways").json()
+    assert r["found"] is True and r["threshold_hu"] == -910 and (r["num_slices"], r["rows"], r["columns"]) == (2, 2, 2)
+    assert len(gzip.decompress(base64.b64decode(r["mask_gzip_base64"]))) == 8
+    api.as_user(OUTSIDER)
+    assert api.get(f"/series/{SERIES}/airways").status_code == 403
+    main._airway_cache.clear()

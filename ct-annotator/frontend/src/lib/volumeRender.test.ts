@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fillLungHoles, flyStep, labelPalette, shrinkMask, windowToUnit } from "./volumeRender";
+import { fillLungHoles, flyStep, labelPalette, shrinkMask, softMask, windowToUnit } from "./volumeRender";
 
 const info = { huOffset: -1024, huStep: 16 };
 
@@ -65,5 +65,16 @@ describe("fillLungHoles", () => {
     const open = m.slice();
     open[2 * 5 + 3] = 0; // the ring opens to the right
     expect(fillLungHoles(open, 5, 5, 1)[2 * 5 + 2]).toBe(0);
+  });
+});
+
+describe("softMask", () => {
+  it("turns a 0/1 edge into a ramp and keeps the inside full", () => {
+    // 1 row of 5, 1 slice: 0 0 1 1 1
+    const f = softMask(new Uint8Array([0, 0, 1, 1, 1]), 5, 1, 1);
+    expect(f[0]).toBe(0);
+    expect(f[1]).toBeGreaterThan(0);
+    expect(f[1]).toBeLessThan(f[2]);
+    expect(f[4]).toBe(255);
   });
 });

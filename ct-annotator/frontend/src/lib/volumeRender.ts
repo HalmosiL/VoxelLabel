@@ -128,3 +128,27 @@ export function fillLungHoles(mask: Uint8Array, x: number, y: number, z: number)
   }
   return out;
 }
+
+/** A 0/1 mask as a soft 0..255 field: blurred once along each axis with
+ * [1 2 1]. Sampled with linear filtering and cut at the middle, its edge
+ * becomes a smooth surface instead of voxel steps (x fastest, then y, z). */
+export function softMask(mask: Uint8Array, x: number, y: number, z: number): Uint8Array {
+  let a = new Uint16Array(mask.length);
+  for (let i = 0; i < mask.length; i++) a[i] = mask[i] ? 255 : 0;
+  const pass = (src: Uint16Array, stride: number, size: number, count: (i: number) => number) => {
+    const out = new Uint16Array(src.length);
+    for (let i = 0; i < src.length; i++) {
+      const c = count(i);
+      const prev = c > 0 ? src[i - stride] : src[i];
+      const next = c < size - 1 ? src[i + stride] : src[i];
+      out[i] = (prev + 2 * src[i] + next + 2) >> 2;
+    }
+    return out;
+  };
+  a = pass(a, 1, x, (i) => i % x);
+  a = pass(a, x, y, (i) => Math.floor(i / x) % y);
+  a = pass(a, x * y, z, (i) => Math.floor(i / (x * y)));
+  const out = new Uint8Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = a[i];
+  return out;
+}

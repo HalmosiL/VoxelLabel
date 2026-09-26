@@ -214,6 +214,16 @@ export async function fetchVolume3D(seriesId: string): Promise<{ data: Uint8Arra
   };
 }
 
+/** The bronchial tree the backend segments from the CT (app/airways.py). */
+export async function fetchAirways(seriesId: string): Promise<{ data: Uint8Array; rows: number; columns: number; numSlices: number; found: boolean; thresholdHu: number | null; volumeMl: number }> {
+  const r = await apiFetch<{ mask_gzip_base64: string; num_slices: number; rows: number; columns: number; found: boolean; threshold_hu: number | null; volume_ml: number }>(
+    API.annotator,
+    `/series/${seriesId}/airways`
+  );
+  const data = await gunzipToUint8Array(base64ToArrayBuffer(r.mask_gzip_base64));
+  return { data, rows: r.rows, columns: r.columns, numSlices: r.num_slices, found: r.found, thresholdHu: r.threshold_hu, volumeMl: r.volume_ml };
+}
+
 export interface SurfaceConfig {
   tools: string[];
   panes: string[];

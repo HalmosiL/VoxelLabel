@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from scipy import ndimage
 
+from app.airways import segment_airways
 from app.auth import CurrentUser, get_current_user
 from app.config import (
     ADMIN_SERVICE_URL,
@@ -578,8 +579,10 @@ async def get_lung_mask(series_id: str, user: CurrentUser = Depends(get_current_
         mask = cached[1]
     else:
         volume = await _get_volume(series_id, user)
-        mask = _segment_lungs(volume)
+        # seconds of scipy work: off the event loop, so other requests go on
+        mask = await asyncio.to_thread(_segment_lungs, volume)
         _lung_mask_cache[series_id] = (now, mask)
+        _prune_cache(_lung_mask_cache, _MAX_CACHED_VOLUMES)
 
     gzip_bytes = gzip.compress(mask.tobytes())
     return {
@@ -587,6 +590,34 @@ async def get_lung_mask(series_id: str, user: CurrentUser = Depends(get_current_
         "num_slices": mask.shape[0],
         "rows": mask.shape[1],
         "columns": mask.shape[2],
+    }
+
+
+_airway_cache: dict[str, tuple[float, tuple[np.ndarray, dict]]] = {}
+
+
+@app.get("/series/{series_id}/airways")
+async def get_airways(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """The bronchial tree, segmented from the CT (app/airways.py): a mask
+    like the lung mask's, and how it was found (the threshold it stopped
+    at, its volume). `found` is false when no trachea could be told apart."""
+    await _require_series_access(series_id, user)
+    cached = _airway_cache.get(series_id)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
+        mask, info = cached[1]
+    else:
+        volume = await _get_volume(series_id, user)
+        spacing = await _series_spacing(series_id, user) or (1.0, 1.0, 1.0)
+        mask, info = await asyncio.to_thread(segment_airways, volume, spacing)
+        _airway_cache[series_id] = (now, (mask, info))
+        _prune_cache(_airway_cache, _MAX_CACHED_VOLUMES)
+    return {
+        "mask_gzip_base64": base64.b64encode(await asyncio.to_thread(gzip.compress, mask.tobytes())).decode(),
+        "num_slices": mask.shape[0],
+        "rows": mask.shape[1],
+        "columns": mask.shape[2],
+        **info,
     }
 
 

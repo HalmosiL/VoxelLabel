@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { fetchLungMask, fetchVolume3D } from "../api/annotatorApi";
+import { fetchAirways, fetchLungMask, fetchVolume3D } from "../api/annotatorApi";
 import { errorText } from "../lib/errorText";
 import { enterFullscreen, exitFullscreen, fullscreenElement, onFullscreenChange } from "../lib/fullscreen";
-import { fillLungHoles, FlyKeys, flyStep, labelPalette, shrinkMask, VolumeInfo, windowToUnit } from "../lib/volumeRender";
+import { fillLungHoles, FlyKeys, flyStep, labelPalette, shrinkMask, softMask, VolumeInfo, windowToUnit } from "../lib/volumeRender";
 
 /** A real 3D view of the CT itself, with the annotation inside it: the
  * volume is ray-marched on the GPU (a 3D texture of the series, see the
@@ -48,6 +48,10 @@ uniform sampler3D uMask;
 uniform sampler3D uLung;
 uniform bool uLungOnly;
 uniform float uNearCut;
+uniform sampler3D uAirway;
+uniform bool uShowAirway;
+uniform vec3 uAirwayColor;
+uniform float uAirwayOpacity;
 uniform sampler2D uPalette;
 uniform vec3 uCamLocal;
 uniform vec3 uTexel;
@@ -97,15 +101,32 @@ void main() {
   for (float s = tStart + jitter; s < t.y; s += dt) {
     vec3 p = uCamLocal + dir * s;
     float a = windowed(sampleVolume(p));
-    if (uLungOnly && texture(uLung, p).r < 0.5 / 255.0) a = 0.0;
+    // a soft edge (softMask + linear filtering): a smooth cut, not voxel steps
+    if (uLungOnly) a *= smoothstep(0.35, 0.65, texture(uLung, p).r);
     vec4 lc = vec4(0.0);
     if (uShowMask) {
       float id = texture(uMask, p).r * 255.0;
       if (id > 0.5) lc = texture(uPalette, vec2((floor(id + 0.5) + 0.5) / 256.0, 0.5));
     }
+    // the bronchial tree: a smooth, shaded surface where its soft field crosses the middle
+    vec4 aw = vec4(0.0);
+    if (uShowAirway) {
+      float f = texture(uAirway, p).r;
+      if (f > 0.4) {
+        vec3 g = vec3(
+          texture(uAirway, p + vec3(uTexel.x, 0, 0)).r - texture(uAirway, p - vec3(uTexel.x, 0, 0)).r,
+          texture(uAirway, p + vec3(0, uTexel.y, 0)).r - texture(uAirway, p - vec3(0, uTexel.y, 0)).r,
+          texture(uAirway, p + vec3(0, 0, uTexel.z)).r - texture(uAirway, p - vec3(0, 0, uTexel.z)).r);
+        float gl = length(g);
+        vec3 c = uAirwayColor;
+        if (gl > 1e-4) c *= 0.3 + 0.7 * abs(dot(g / gl, dir));
+        aw = vec4(c, uAirwayOpacity);
+      }
+    }
     if (uMode == 1) {
       best = max(best, a);
       if (lc.a > 0.0 && maskHit.a == 0.0) maskHit = vec4(lc.rgb, 1.0);
+      if (aw.a > 0.0 && maskHit.a == 0.0) maskHit = vec4(aw.rgb, 1.0);
       continue;
     }
     vec3 col = vec3(a);
@@ -117,6 +138,10 @@ void main() {
         windowed(texture(uVolume, p + vec3(0, 0, uTexel.z)).r) - windowed(texture(uVolume, p - vec3(0, 0, uTexel.z)).r));
       float gl = length(g);
       if (gl > 1e-4) col *= 0.35 + 0.65 * abs(dot(g / gl, dir));
+    }
+    if (aw.a > 0.0) {
+      col = aw.rgb;
+      alpha = max(alpha, aw.a);
     }
     if (lc.a > 0.0) {
       col = mix(col, lc.rgb, 0.85);
@@ -130,7 +155,7 @@ void main() {
   }
   if (uMode == 1) {
     vec3 c = vec3(best);
-    if (maskHit.a > 0.0 && uShowMask) c = mix(c, maskHit.rgb, uMaskOpacity);
+    if (maskHit.a > 0.0 && (uShowMask || uShowAirway)) c = mix(c, maskHit.rgb, uMaskOpacity);
     fragColor = vec4(c, 1.0);
   } else {
     fragColor = vec4(acc.rgb, 1.0);
@@ -198,6 +223,10 @@ export default function VolumeView({
   const [lungOnly, setLungOnly] = useState(false);
   const [lungState, setLungState] = useState<"none" | "loading" | "ready" | "error">("none");
   const [nearCut, setNearCut] = useState(0);
+  const [showAirways, setShowAirways] = useState(false);
+  const [airwayState, setAirwayState] = useState<"none" | "loading" | "ready" | "notfound" | "error">("none");
+  const [airwayInfo, setAirwayInfo] = useState<{ thresholdHu: number | null; volumeMl: number } | null>(null);
+  const [airwayOpacity, setAirwayOpacity] = useState(0.9);
   // painting changes the mask in place: "Update annotation" (or a new or
   // deleted object) sends it to the GPU again
   const [maskTick, setMaskTick] = useState(0);
@@ -361,6 +390,10 @@ export default function VolumeView({
             uLung: { value: emptyMask },
             uLungOnly: { value: false },
             uNearCut: { value: 0 },
+            uAirway: { value: emptyMask },
+            uShowAirway: { value: false },
+            uAirwayColor: { value: new THREE.Color("#38bdf8") },
+            uAirwayOpacity: { value: 0.9 },
             uPalette: { value: w.paletteTex },
             uCamLocal: { value: new THREE.Vector3() },
             uTexel: { value: new THREE.Vector3(1 / x, 1 / y, 1 / z) },
@@ -452,12 +485,12 @@ export default function VolumeView({
         const [x, y, z] = info.dims;
         const shrunk = shrinkMask(m.data, m.rows, m.columns, m.numSlices, info.factor);
         if (shrunk.length !== x * y * z) throw new Error("size");
-        const small = fillLungHoles(shrunk, x, y, z);
+        const small = softMask(fillLungHoles(shrunk, x, y, z), x, y, z);
         const tex = new THREE.Data3DTexture(small, x, y, z);
         tex.format = THREE.RedFormat;
         tex.type = THREE.UnsignedByteType;
-        tex.minFilter = THREE.NearestFilter;
-        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
         tex.unpackAlignment = 1;
         tex.needsUpdate = true;
         w.material.uniforms.uLung.value = tex;
@@ -466,6 +499,36 @@ export default function VolumeView({
       })
       .catch(() => setLungState("error"));
   }, [lungOnly, lungState, seriesId, info]);
+
+  // ── the bronchial tree, segmented by the backend (app/airways.py) ─────────
+  useEffect(() => {
+    if (!showAirways || airwayState !== "none" || !seriesId || !info) return;
+    setAirwayState("loading");
+    fetchAirways(seriesId)
+      .then((a) => {
+        const w = world.current;
+        if (!w?.material) return;
+        if (!a.found) {
+          setAirwayState("notfound");
+          return;
+        }
+        const [x, y, z] = info.dims;
+        const shrunk = shrinkMask(a.data, a.rows, a.columns, a.numSlices, info.factor);
+        if (shrunk.length !== x * y * z) throw new Error("size");
+        const tex = new THREE.Data3DTexture(softMask(shrunk, x, y, z), x, y, z);
+        tex.format = THREE.RedFormat;
+        tex.type = THREE.UnsignedByteType;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.unpackAlignment = 1;
+        tex.needsUpdate = true;
+        w.material.uniforms.uAirway.value = tex;
+        w.dirty = true;
+        setAirwayInfo({ thresholdHu: a.thresholdHu, volumeMl: a.volumeMl });
+        setAirwayState("ready");
+      })
+      .catch(() => setAirwayState("error"));
+  }, [showAirways, airwayState, seriesId, info]);
 
   // ── the knobs, straight into the shader ─────────────────────────────────
   useEffect(() => {
@@ -482,8 +545,10 @@ export default function VolumeView({
     u.uShowMask.value = showMask;
     u.uLungOnly.value = lungOnly && lungState === "ready";
     u.uNearCut.value = nearCut;
+    u.uShowAirway.value = showAirways && airwayState === "ready";
+    u.uAirwayOpacity.value = airwayOpacity;
     if (world.current) world.current.dirty = true;
-  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut]);
+  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut, showAirways, airwayState, airwayOpacity]);
 
   // ── flying: pointer lock + mouse look, WASD / Space / Shift ─────────────
   useEffect(() => {
@@ -685,6 +750,19 @@ export default function VolumeView({
                 {lungOnly && lungState === "loading" && <span className="text-gray-500">finding the lungs…</span>}
                 {lungOnly && lungState === "error" && <span className="text-red-400">no lungs found</span>}
               </label>
+              <label className="flex flex-wrap items-center gap-x-2" title="The bronchial tree, found from the CT: the trachea, then everything connected to it below a threshold that rises until it would leak into the lung">
+                <input type="checkbox" checked={showAirways} onChange={(e) => setShowAirways(e.target.checked)} data-testid="volume-airways" />
+                <span style={{ color: "#38bdf8" }}>Airways</span>
+                {showAirways && airwayState === "loading" && <span className="text-gray-500">segmenting…</span>}
+                {showAirways && airwayState === "notfound" && <span className="text-amber-300">no trachea found</span>}
+                {showAirways && airwayState === "error" && <span className="text-red-400">failed</span>}
+                {showAirways && airwayState === "ready" && airwayInfo && (
+                  <span className="text-gray-500" data-testid="volume-airways-info">
+                    {airwayInfo.volumeMl} mL · to {airwayInfo.thresholdHu} HU
+                  </span>
+                )}
+              </label>
+              {showAirways && airwayState === "ready" && slider("Airway opacity", airwayOpacity, 0.1, 1, 0.05, setAirwayOpacity, "volume-airway-opacity", `${Math.round(airwayOpacity * 100)}%`)}
               {slider("Center (HU)", center, -1000, 1500, 10, setCenter, "volume-center")}
               {slider("Width (HU)", width, 50, 4000, 10, setWidth, "volume-width")}
               {mode === "volume" && slider("Opacity", opacity, 0.01, 1, 0.01, setOpacity, "volume-opacity", `${Math.round(opacity * 100)}%`)}

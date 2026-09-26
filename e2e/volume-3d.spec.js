@@ -1,7 +1,8 @@
 // A real 3D view of the CT: the volume ray-marched on the GPU with the
 // annotation inside it, opacity / smoothing / window / MIP live, a camera
 // that flies like a game character (W A S D, Space, Shift) and "Only inside
-// the lungs" for vessels and nodules. WebGL here is software (SwiftShader).
+// the lungs" (with a smooth edge) for vessels and nodules, and the bronchial
+// tree segmented from the CT. WebGL here is software (SwiftShader).
 const { chromium } = require("playwright");
 const { F, token } = require("./helpers");
 const ADMIN = "http://localhost:8004", VIEWER = "http://localhost:5174";
@@ -51,6 +52,12 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.locator('[data-testid="volume-preset-Vessels"]').click();
   await page.waitForTimeout(4000);
   check("Lung vessels turns on Only inside the lungs", await page.locator('[data-testid="volume-lung-only"]').isChecked() && !/no lungs found/.test(await panel.innerText()));
+  // the bronchial tree, segmented from the CT: a volume and where it stopped, or (the
+  // fixture's tiny synthetic series has no trachea) says so -- never a failure
+  await page.locator('[data-testid="volume-airways"]').check();
+  await page.waitForFunction(() => /mL · to -?\d+ HU|no trachea found|failed/.test(document.querySelector('[data-testid="volume-panel"]')?.innerText || ""), null, { timeout: 60000 }).catch(() => {});
+  const airways = await panel.innerText();
+  check("Airways segments the tree (or says there is no trachea)", /mL · to -?\d+ HU|no trachea found/.test(airways) && !/failed/.test(airways), airways.slice(0, 300));
   await page.locator('[data-testid="volume-mode-mip"]').click(); await page.waitForTimeout(1500);
   check("MIP is one click", (await page.locator('[data-testid="volume-mode-mip"]').getAttribute("aria-pressed")) === "true");
   check("full screen is there", (await page.locator('[data-testid="volume-fullscreen"]').count()) === 1);
