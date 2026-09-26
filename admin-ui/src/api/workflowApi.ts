@@ -337,6 +337,8 @@ export interface PipelineTemplateDTO {
   description: string;
   cards: PipelineTemplateCardDTO[];
   edges: PipelineTemplateEdgeDTO[];
+  // connections from a card a maker card creates when it runs (see templateFromBoard, K5)
+  feedback?: PipelineTemplateEdgeDTO[];
   created_by: string | null;
   created_at: string;
 }
@@ -350,6 +352,7 @@ export function createPipelineTemplate(input: {
   description: string;
   cards: PipelineTemplateCardDTO[];
   edges: PipelineTemplateEdgeDTO[];
+  feedback?: PipelineTemplateEdgeDTO[];
 }): Promise<PipelineTemplateDTO> {
   return apiFetch(base, "/admin/pipeline-templates", {
     method: "POST",

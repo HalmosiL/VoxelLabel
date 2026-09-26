@@ -52,6 +52,7 @@ import PipelineStore from "../components/workflow/PipelineStore";
 import {
   PipelineTemplate,
   pipelineTemplateToCreateInput,
+  templateFromBoard,
   TEMPLATE_DRAG_DATA_FORMAT,
 } from "../components/workflow/pipelineTemplates";
 import SaveTemplateModal from "../components/workflow/SaveTemplateModal";
@@ -409,6 +410,7 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
     setInsertingTemplateId(template.id);
     history.record(nodes, realEdges);
     const keyToId = new Map<string, string>();
+    const runResultByKey = new Map<string, WorkflowCard>();
     try {
       for (const card of template.cards) {
         const created = await createWorkflowCard(studyId, {
@@ -448,13 +450,21 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       // (a template's own root Dataset) is skipped too -- Running one
       // requires exactly one incoming connection.
       const hasIncomingEdge = new Set(template.edges.map((e) => e.targetKey));
-      const runResultByKey = new Map<string, WorkflowCard>();
+      const typeOf = new Map(template.cards.map((c) => [c.key, c.type]));
+      // Runs a card once every card it reads from (by the template's own
+      // edges) is ready: a data card, or one that has run. A card whose
+      // input only arrives through `feedback` (a Split's lane) waits for
+      // the wiring below -- running its Review first failed the insert (K5).
+      const ready = (key: string) =>
+        template.edges.filter((e) => e.targetKey === key).every((e) => !_AUTO_RUN_TEMPLATE_TYPES.has(typeOf.get(e.sourceKey)!) || runResultByKey.has(e.sourceKey));
+      const runIfReady = async (key: string) => {
+        const id = keyToId.get(key);
+        if (!id || runResultByKey.has(key) || !_AUTO_RUN_TEMPLATE_TYPES.has(typeOf.get(key)!) || !ready(key)) return;
+        runResultByKey.set(key, await runWorkflowCard(id));
+      };
       for (const card of template.cards) {
-        if (!_AUTO_RUN_TEMPLATE_TYPES.has(card.type) || !hasIncomingEdge.has(card.key)) continue;
-        const cardId = keyToId.get(card.key);
-        if (!cardId) continue;
-        const result = await runWorkflowCard(cardId);
-        runResultByKey.set(card.key, result);
+        if (!hasIncomingEdge.has(card.key)) continue;
+        await runIfReady(card.key);
       }
 
       // Now that Review/Split have actually materialized their named
@@ -463,16 +473,43 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       // Review's freshly-created "(rejected)" Dataset back into
       // Annotation's input, completing the loop the template promises
       // instead of leaving it as just a diagram.
-      for (const fb of template.feedback ?? []) {
-        const childId = runResultByKey.get(fb.sourceKey)?.materialized_card_ids?.[fb.sourceHandle];
-        const targetId = keyToId.get(fb.targetKey);
-        if (!childId || !targetId) continue;
-        await createWorkflowEdge(studyId, {
-          source_card_id: childId,
-          source_handle: "output",
-          target_card_id: targetId,
-          target_handle: fb.targetHandle,
-        });
+      // In passes: a connection can come from a card that only exists once
+      // its maker has run, and its maker may only get its input from an
+      // earlier connection (a saved two-lane board: Split -> Lane A ->
+      // Annotation -> "(annotated)" -> Review). Each pass wires what it
+      // can, then runs the cards that just got an input (K5).
+      const madeChild = (maker: WorkflowCard | undefined, handle: string) =>
+        maker?.materialized_card_ids?.[handle] ?? (handle === "output" ? maker?.materialized_card_id ?? undefined : undefined);
+      let pending = [...(template.feedback ?? [])];
+      for (let pass = 0; pass < 6 && pending.length > 0; pass++) {
+        const wired = new Set<string>();
+        const left: typeof pending = [];
+        for (const fb of pending) {
+          const childId = madeChild(runResultByKey.get(fb.sourceKey), fb.sourceHandle);
+          const targetId = keyToId.get(fb.targetKey);
+          if (!childId || !targetId) {
+            left.push(fb);
+            continue;
+          }
+          await createWorkflowEdge(studyId, {
+            source_card_id: childId,
+            source_handle: "output",
+            target_card_id: targetId,
+            target_handle: fb.targetHandle,
+          });
+          wired.add(fb.targetKey);
+        }
+        if (wired.size === 0) break;
+        for (const key of wired) {
+          // re-run what just got an input (it may have run before, with less)...
+          runResultByKey.delete(key);
+          await runIfReady(key);
+        }
+        // ...then what reads from it, in template order, so their made cards exist too
+        for (const card of template.cards) {
+          if (hasIncomingEdge.has(card.key)) await runIfReady(card.key);
+        }
+        pending = left;
       }
 
       // A plain create-cards-then-create-edges insert could patch local
@@ -485,7 +522,9 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
       // All or nothing: a template that fails halfway (a card or a
       // connection refused) takes back what it already placed, instead
       // of leaving half a pipeline on the board (C-14).
-      await Promise.all([...keyToId.values()].map((id) => deleteWorkflowCard(id).catch(() => undefined)));
+      // the cards a Split/Review already made on this insert go too (K5)
+      const made = [...runResultByKey.values()].flatMap((r) => [...Object.values(r.materialized_card_ids ?? {}), ...(r.materialized_card_id ? [r.materialized_card_id] : [])]);
+      await Promise.all([...keyToId.values(), ...made].map((id) => deleteWorkflowCard(id).catch(() => undefined)));
       refreshBoard();
       setError(`The template couldn't be inserted, so nothing was added: ${describeApiError(err)}`);
     } finally {
@@ -575,32 +614,20 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   function handleSaveTemplate(title: string, description: string) {
     const selected = nodes.filter((n) => n.selected);
     if (selected.length === 0) return;
-    const minX = Math.min(...selected.map((n) => n.position.x));
-    const minY = Math.min(...selected.map((n) => n.position.y));
-    const selectedIds = new Set(selected.map((n) => n.id));
-
-    const template = {
+    // cards a Split/Review makes itself stay out; their links become feedback (K5)
+    const template = templateFromBoard(
       title,
       description,
-      cards: selected.map((n) => ({
-        key: n.id,
-        type: n.data.card.type,
-        title: n.data.card.title,
-        x: n.position.x - minX,
-        y: n.position.y - minY,
+      selected.map((n) => ({
+        id: n.id,
+        x: n.position.x,
+        y: n.position.y,
         width: n.width ?? n.data.card.width ?? 200,
         height: n.height ?? n.data.card.height ?? 90,
-        config: n.data.card.config,
+        card: n.data.card,
       })),
-      edges: realEdges
-        .filter((e) => selectedIds.has(e.source) && selectedIds.has(e.target))
-        .map((e) => ({
-          sourceKey: e.source,
-          sourceHandle: e.sourceHandle ?? "output",
-          targetKey: e.target,
-          targetHandle: e.targetHandle ?? "input",
-        })),
-    };
+      realEdges
+    );
 
     createPipelineTemplate(pipelineTemplateToCreateInput(template))
       .then(() => {

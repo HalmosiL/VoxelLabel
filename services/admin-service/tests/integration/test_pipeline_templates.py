@@ -59,3 +59,28 @@ def test_a_template_that_could_not_be_inserted_is_refused(client, db):
     assert post([_card("a", "dataset"), _card("a", "annotation")], []).status_code == 422  # duplicate key
     assert post([_card("a", "dataset"), _card("b", "annotation")], [edge("a", "b", th="bogus")]).status_code == 422
     assert post([_card("a", "dataset"), _card("b", "annotation")], [edge("a", "b")]).status_code == 201
+
+
+def test_a_template_keeps_the_connections_of_cards_its_makers_create(client, db):
+    """K5: a card a Split or Review makes when it runs (Lane A,
+    "... (rejected)") is not stored as a card any more -- inserting ran the
+    maker and left a second, empty Lane A wired to the job. Its connection
+    is kept as `feedback` (maker key + output handle -> target), checked
+    like the edges."""
+    cards = [_card("split", "split"), _card("annot", "annotation"), _card("review", "review")]
+    body = {
+        "title": "two lanes", "cards": cards,
+        "edges": [{"source_key": "annot", "source_handle": "output", "target_key": "review", "target_handle": "input"}],
+        "feedback": [
+            {"source_key": "split", "source_handle": "part_0", "target_key": "annot", "target_handle": "input"},
+            {"source_key": "review", "source_handle": "rejected", "target_key": "annot", "target_handle": "input"},
+        ],
+    }
+    r = client.post("/admin/pipeline-templates", json=body)
+    assert r.status_code == 201, r.text
+    stored = next(t for t in client.get("/admin/pipeline-templates").json() if t["id"] == r.json()["id"])
+    assert stored["feedback"] == body["feedback"]
+    bad = {**body, "feedback": [{"source_key": "nope", "source_handle": "part_0", "target_key": "annot", "target_handle": "input"}]}
+    assert client.post("/admin/pipeline-templates", json=bad).status_code == 422
+    no_maker = {**body, "feedback": [{"source_key": "annot", "source_handle": "part_0", "target_key": "review", "target_handle": "input"}]}
+    assert client.post("/admin/pipeline-templates", json=no_maker).status_code == 422  # an annotation makes no "part_0"

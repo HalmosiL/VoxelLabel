@@ -592,6 +592,12 @@ class PipelineTemplate(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     cards: Mapped[list] = mapped_column(JSONB, nullable=False)
     edges: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Connections from a card one of the template's cards makes when it
+    # runs (a Split's lane, a Review's "rejected"): {source_key = the maker,
+    # source_handle = its output, target_key, target_handle}. Wired to the
+    # freshly made card at insert time -- the made cards themselves are not
+    # stored (K5).
+    feedback: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     # The Keycloak subject that saved this template -- lets its own
     # author delete it without needing the global "admin" realm role
     # (see delete_pipeline_template); nullable because a future

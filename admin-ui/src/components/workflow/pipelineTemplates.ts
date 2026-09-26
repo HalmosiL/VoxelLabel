@@ -1,4 +1,4 @@
-import { PipelineTemplateDTO, WorkflowCardConfig, WorkflowCardType } from "../../api/workflowApi";
+import { PipelineTemplateDTO, WorkflowCard, WorkflowCardConfig, WorkflowCardType } from "../../api/workflowApi";
 
 /** One card in a pipeline template -- `key` is a local, template-scoped
  * reference (not a real card id) so the template's own edges can name
@@ -91,6 +91,57 @@ export interface PipelineTemplate {
 // search, so the drop handler needs the complete template up front.
 export const TEMPLATE_DRAG_DATA_FORMAT = "application/x-workflow-pipeline-template";
 
+/** The selected part of a board as a template. A card a Split, Review or
+ * Annotation makes itself when it runs (Lane A, "... (rejected)") is left
+ * out -- inserting the template runs its maker, which makes a fresh one --
+ * and a connection drawn from such a card is kept as `feedback` from its
+ * maker's output instead. Saving them as ordinary cards gave an inserted
+ * template a second, empty Lane A wired to the job while the real one sat
+ * unconnected on top of it (K5). A made card whose maker isn't selected
+ * stays an ordinary card. */
+export function templateFromBoard(
+  title: string,
+  description: string,
+  selected: { id: string; x: number; y: number; width: number; height: number; card: WorkflowCard }[],
+  edges: { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }[]
+): { title: string; description: string; cards: PipelineTemplateCard[]; edges: PipelineTemplateEdge[]; feedback: PipelineTemplateFeedback[] } {
+  const byId = new Map(selected.map((n) => [n.id, n]));
+  // made card id -> its maker's key and output handle
+  const madeBy = new Map<string, { key: string; handle: string }>();
+  for (const n of selected) {
+    const makerId = n.card.materialized_from?.card_id;
+    const maker = makerId ? byId.get(makerId) : undefined;
+    if (!maker) continue;
+    const handles = Object.entries(maker.card.materialized_card_ids ?? {});
+    const handle = handles.find(([, id]) => id === n.id)?.[0] ?? (maker.card.materialized_card_id === n.id ? "output" : undefined);
+    if (handle) madeBy.set(n.id, { key: maker.id, handle });
+  }
+  const kept = selected.filter((n) => !madeBy.has(n.id));
+  const minX = Math.min(...kept.map((n) => n.x));
+  const minY = Math.min(...kept.map((n) => n.y));
+  const inSelection = edges.filter((e) => byId.has(e.source) && byId.has(e.target));
+  return {
+    title,
+    description,
+    cards: kept.map((n) => ({
+      key: n.id,
+      type: n.card.type,
+      title: n.card.title,
+      x: n.x - minX,
+      y: n.y - minY,
+      width: n.width,
+      height: n.height,
+      config: n.card.config,
+    })),
+    edges: inSelection
+      .filter((e) => !madeBy.has(e.source) && !madeBy.has(e.target))
+      .map((e) => ({ sourceKey: e.source, sourceHandle: e.sourceHandle ?? "output", targetKey: e.target, targetHandle: e.targetHandle ?? "input" })),
+    feedback: inSelection
+      .filter((e) => madeBy.has(e.source) && !madeBy.has(e.target))
+      .map((e) => ({ sourceKey: madeBy.get(e.source)!.key, sourceHandle: madeBy.get(e.source)!.handle, targetKey: e.target, targetHandle: e.targetHandle ?? "input" })),
+  };
+}
+
 /** Converts a saved template as the API returns it (edges keyed
  * source_key/target_key, matching the backend's own field names) into
  * this module's own PipelineTemplate shape (sourceKey/targetKey) --
@@ -108,6 +159,12 @@ export function pipelineTemplateFromDTO(dto: PipelineTemplateDTO): PipelineTempl
       targetKey: e.target_key,
       targetHandle: e.target_handle,
     })),
+    feedback: (dto.feedback ?? []).map((e) => ({
+      sourceKey: e.source_key,
+      sourceHandle: e.source_handle,
+      targetKey: e.target_key,
+      targetHandle: e.target_handle,
+    })),
     createdBy: dto.created_by,
   };
 }
@@ -119,17 +176,20 @@ export function pipelineTemplateToCreateInput(template: {
   description: string;
   cards: PipelineTemplateCard[];
   edges: PipelineTemplateEdge[];
+  feedback?: PipelineTemplateFeedback[];
 }) {
+  const toDTO = (e: PipelineTemplateEdge) => ({
+    source_key: e.sourceKey,
+    source_handle: e.sourceHandle,
+    target_key: e.targetKey,
+    target_handle: e.targetHandle,
+  });
   return {
     title: template.title,
     description: template.description,
     cards: template.cards,
-    edges: template.edges.map((e) => ({
-      source_key: e.sourceKey,
-      source_handle: e.sourceHandle,
-      target_key: e.targetKey,
-      target_handle: e.targetHandle,
-    })),
+    edges: template.edges.map(toDTO),
+    feedback: (template.feedback ?? []).map(toDTO),
   };
 }
 

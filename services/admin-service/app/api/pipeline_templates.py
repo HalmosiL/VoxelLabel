@@ -52,6 +52,7 @@ class PipelineTemplateIn(BaseModel):
     description: str = ""
     cards: list[PipelineTemplateCardIn]
     edges: list[PipelineTemplateEdgeIn]
+    feedback: list[PipelineTemplateEdgeIn] = Field(default_factory=list)
 
 
 # Card config keys that only mean something on the study they came from.
@@ -73,6 +74,7 @@ def _serialize(template: PipelineTemplate) -> dict:
         "description": template.description,
         "cards": _structure_only(template.cards),
         "edges": template.edges,
+        "feedback": template.feedback or [],
         "created_by": template.created_by,
         "created_at": template.created_at.isoformat(),
     }
@@ -101,6 +103,23 @@ def _check_insertable(body: PipelineTemplateIn) -> None:
             raise HTTPException(status_code=422, detail="An edge of the template points at a card it doesn't have")
         if edge.source_handle not in _SOURCE_HANDLES or edge.target_handle not in _TARGET_HANDLES:
             raise HTTPException(status_code=422, detail="An edge of the template uses a connection point cards don't have")
+    types = {c.key: c.type for c in body.cards}
+    for fb in body.feedback:
+        if fb.source_key not in keys or fb.target_key not in keys or fb.target_handle not in _TARGET_HANDLES:
+            raise HTTPException(status_code=422, detail="A connection of the template points at a card it doesn't have")
+        if not _makes(types[fb.source_key], fb.source_handle):
+            raise HTTPException(status_code=422, detail=f"A '{types[fb.source_key]}' card doesn't make a '{fb.source_handle}' output")
+
+
+def _makes(card_type: str, handle: str) -> bool:
+    """Whether a card of this type makes a card for this output when it runs."""
+    if card_type == WorkflowCardType.SPLIT.value:
+        return handle.startswith("part_") and handle[5:].isdigit()
+    if card_type == WorkflowCardType.REVIEW.value:
+        return handle in ("approved", "rejected")
+    if card_type == WorkflowCardType.CRITERION.value:
+        return handle in ("included", "excluded")
+    return card_type == WorkflowCardType.ANNOTATION.value and handle == "output"
 
 
 # The Store is for those who build boards somewhere; before, any logged-in
@@ -134,6 +153,7 @@ def create_pipeline_template(
         description=body.description,
         cards=_structure_only([c.model_dump() for c in body.cards]),
         edges=[e.model_dump() for e in body.edges],
+        feedback=[f.model_dump() for f in body.feedback],
         created_by=user.subject,
     )
     db.add(template)

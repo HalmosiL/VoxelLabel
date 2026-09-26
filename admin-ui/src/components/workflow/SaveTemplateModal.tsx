@@ -29,7 +29,9 @@ export default function SaveTemplateModal({
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="hint">
           The selected {cardCount} card(s) (and the connections between them) will become a new, reusable template in
-          the Store -- anyone will be able to drag it onto any study's board.
+          the Store for everyone who builds boards. It keeps the structure, surfaces and label forms; who is assigned
+          each job and which cases a dataset holds stay with this study -- you pick assignees after inserting. Cards a
+          Split or Review makes when it runs are made fresh on insert.
         </p>
         <label className="field">
           <span className="label">Title</span>
