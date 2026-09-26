@@ -61,6 +61,7 @@ import { errorText } from "../lib/errorText";
 import { caseCounterText } from "../lib/caseCounter";
 import { initialWindow, rememberedWindowPreset, rememberWindowPreset, WINDOW_PRESETS } from "../lib/windowPreset";
 import { handInSummary, HandInSummary } from "../lib/handInSummary";
+import { clampPosition, rememberedLayout, rememberedPosition, rememberLayout, rememberPosition } from "../lib/viewState";
 import { offerUndo, onUndone } from "../lib/undoStore";
 import HandInDialog from "../components/HandInDialog";
 import KeyboardHelp from "../components/KeyboardHelp";
@@ -511,12 +512,10 @@ export default function ViewerPage() {
   // 3D starts hidden -- it's the heaviest pane to render and most
   // sessions are 2D-drawing-first, so showing it only on request avoids
   // paying for a WebGL context/build most views won't need immediately.
-  const [paneVisible, setPaneVisible] = useState<Record<VisiblePaneKey, boolean>>({
-    sagittal: true,
-    coronal: true,
-    axial: true,
-    three_d: false,
-  });
+  // ... unless this browser remembers another layout (lib/viewState.ts)
+  const [paneVisible, setPaneVisible] = useState<Record<VisiblePaneKey, boolean>>(
+    () => rememberedLayout()?.visible ?? { sagittal: true, coronal: true, axial: true, three_d: false },
+  );
   function togglePaneVisible(pane: VisiblePaneKey) {
     setPaneVisible((prev) => ({ ...prev, [pane]: !prev[pane] }));
   }
@@ -526,7 +525,8 @@ export default function ViewerPage() {
   // visiblePaneKeys below) so exactly one pane renders, full width --
   // toggling it back off returns to whatever paneVisible already had,
   // no separate "remembered state" bookkeeping needed.
-  const [maximizedPane, setMaximizedPane] = useState<VisiblePaneKey | null>(null);
+  const [maximizedPane, setMaximizedPane] = useState<VisiblePaneKey | null>(() => rememberedLayout()?.maximized ?? null);
+  useEffect(() => rememberLayout({ visible: paneVisible, maximized: maximizedPane }), [paneVisible, maximizedPane]);
   // Tablet: a finger instead of a mouse (touch gestures, bigger targets,
   // touch hints in the footer) and, below ~1100px, the side panel as a
   // drawer over the panes instead of next to them.
@@ -3074,6 +3074,36 @@ export default function ViewerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewMode, currentReviewObject?.id]);
 
+  // Where this case was left (lib/viewState.ts): the next visit opens
+  // there; a first visit opens an annotator on the first object, when
+  // there is one -- every load started on slice 1 (UX-annot-1-08). Review
+  // opens on the object under review (above), and a link to a particular
+  // slice wins over both.
+  const positionReadyForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!seriesId || positionReadyForRef.current === seriesId) return;
+    if (!maskReady || !numSlices || !rows || !columns) return;
+    if (jobId && !surfaceConfig && !surfaceFailed) return; // not yet known whether this is a review
+    positionReadyForRef.current = seriesId;
+    if (reviewMode) return;
+    if (instances[0]?.id !== routeInstanceId) return;
+    const remembered = rememberedPosition(seriesId);
+    if (remembered) {
+      const p = clampPosition(remembered, { slices: numSlices, rows, columns });
+      setAxialIndex(p.axial);
+      if (p.coronal !== null) setCoronalIndex(p.coronal);
+      if (p.sagittal !== null) setSagittalIndex(p.sagittal);
+      return;
+    }
+    if (objects.length > 0) jumpToObject(objects[0].id, { silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesId, maskReady, numSlices, rows, columns, surfaceConfig, surfaceFailed, reviewMode]);
+  useEffect(() => {
+    if (!seriesId || positionReadyForRef.current !== seriesId || reviewMode) return;
+    const timer = window.setTimeout(() => rememberPosition(seriesId, { axial: axialIndex, coronal: coronalIndex, sagittal: sagittalIndex }), 600);
+    return () => window.clearTimeout(timer);
+  }, [seriesId, axialIndex, coronalIndex, sagittalIndex, reviewMode]);
+
   function goToPrevReviewObject() {
     setReviewIndex((i) => Math.max(0, i - 1));
   }
@@ -4231,7 +4261,7 @@ export default function ViewerPage() {
                     label={PANE_LABELS[pane]}
                     accentClass="accent-blue-500"
                     orientation="vertical"
-                    counter={<SliceNumber index={cfg.index} />}
+                    counter={<SliceNumber index={cfg.index} testId={`slice-number-${pane}`} />}
                   />
                 </div>
                 </div>
