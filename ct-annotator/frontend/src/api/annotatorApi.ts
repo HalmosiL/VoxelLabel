@@ -377,7 +377,11 @@ export interface SegObject {
   review_comment?: string;
   // The last finished review round's verdict, kept when the case is
   // handed in again (see lib/reviewRound.ts, F-06).
-  previous_review?: { status: "accepted" | "rejected"; reject_reason?: string; review_comment?: string };
+  previous_review?: { status: "accepted" | "rejected"; reject_reason?: string; review_comment?: string; reply?: string };
+  // The annotator's answer to the reviewer's comment on a rejected object
+  // ("that's a crossing vessel") -- moves into previous_review with the
+  // verdict at the next hand-in, where the reviewer reads it (UX-rev-1-21).
+  reply?: string;
   // The label's form filled for this object (field name -> true for a
   // tick, the chosen option, or the scale's number) -- see
   // components/ObjectForm.tsx.

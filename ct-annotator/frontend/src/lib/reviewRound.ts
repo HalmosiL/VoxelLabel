@@ -45,12 +45,13 @@ export function reviewCommentText(objects: SegObject[], labels: SegLabel[]): str
 export function handInObjects(objects: SegObject[]): SegObject[] {
   return objects.map((o) => {
     const decided = o.review_status === "accepted" || o.review_status === "rejected";
-    const next: SegObject = { ...o, review_status: undefined, reject_reason: undefined, review_comment: undefined };
+    const next: SegObject = { ...o, review_status: undefined, reject_reason: undefined, review_comment: undefined, reply: undefined };
     if (decided) {
       next.previous_review = {
         status: o.review_status as "accepted" | "rejected",
         ...(o.reject_reason ? { reject_reason: o.reject_reason } : {}),
         ...(o.review_comment && o.review_comment.trim() ? { review_comment: o.review_comment.trim() } : {}),
+        ...(o.reply && o.reply.trim() ? { reply: o.reply.trim() } : {}),
       };
     }
     return next;
@@ -69,7 +70,7 @@ export function previousReviewText(obj: SegObject): string | null {
   const prev = obj.previous_review;
   if (!prev) return null;
   const reason = prev.status === "rejected" ? rejectReasonLabel(prev.reject_reason)?.toLowerCase() : undefined;
-  return `${prev.status}${reason ? ` (${reason})` : ""}${prev.review_comment ? `: ${prev.review_comment}` : ""}`;
+  return `${prev.status}${reason ? ` (${reason})` : ""}${prev.review_comment ? `: ${prev.review_comment}` : ""}${prev.reply ? ` · annotator's reply: ${prev.reply}` : ""}`;
 }
 
 /** What the reviewer sent back, for the annotator's rework banner: each

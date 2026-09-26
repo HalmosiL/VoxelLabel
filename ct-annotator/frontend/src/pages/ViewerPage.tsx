@@ -1402,6 +1402,9 @@ export default function ViewerPage() {
   function setObjectComment(id: number, comment: string) {
     setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, comment } : o)));
   }
+  function setObjectReply(id: number, reply: string) {
+    setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, reply } : o)));
+  }
 
   /** The reviewer's own comment on an object -- never the annotator's note (F-02). */
   function setObjectReviewComment(id: number, review_comment: string) {
@@ -4689,6 +4692,7 @@ export default function ViewerPage() {
               onToggleHidden={toggleObjectHidden}
               onDeleteObject={deleteObject}
               onSetComment={setObjectComment}
+              onSetReply={setObjectReply}
               onSetAttributes={setObjectAttributes}
               fieldsOf={fieldsOfLabel}
               openRequest={formRequest}
@@ -5047,6 +5051,7 @@ function ObjectsPanel({
   onToggleHidden,
   onDeleteObject,
   onSetComment,
+  onSetReply,
   onSetAttributes,
   fieldsOf,
   openRequest,
@@ -5064,6 +5069,7 @@ function ObjectsPanel({
   onToggleHidden: (id: number) => void;
   onDeleteObject: (id: number) => void;
   onSetComment: (id: number, comment: string) => void;
+  onSetReply: (id: number, reply: string) => void;
   onSetAttributes: (id: number, attributes: ObjectAnswers) => void;
   /** The label's per-object form definition (empty = comment only). */
   fieldsOf: (label: SegLabel) => ObjectField[];
@@ -5231,6 +5237,17 @@ function ObjectsPanel({
                           className="w-full resize-none rounded border border-[#444] bg-[#2a2a3e] p-1.5 text-[11px] text-gray-200 placeholder:text-gray-500"
                         />
                         {reviewedNote(obj)}
+                        {obj.review_status === "rejected" && (
+                          <textarea
+                            value={obj.reply ?? ""}
+                            onChange={(e) => onSetReply(obj.id, e.target.value)}
+                            placeholder="Reply to the reviewer (optional) -- e.g. why you kept it as it is…"
+                            title="The reviewer reads it next to their comment when you hand the case in again"
+                            rows={2}
+                            data-testid={`reply-${obj.id}`}
+                            className="w-full resize-none rounded border border-red-900/60 bg-[#2a2a3e] p-1.5 text-[11px] text-gray-200 placeholder:text-gray-500"
+                          />
+                        )}
                       </div>
                     )}
                     </li>

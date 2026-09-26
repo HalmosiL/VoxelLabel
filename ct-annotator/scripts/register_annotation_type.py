@@ -105,6 +105,8 @@ SEGMENTATION_VOLUME_SCHEMA = {
                     "reject_reason": {"type": "string", "maxLength": 32},
                     # the reviewer's comment to the annotator on this object
                     "review_comment": {"type": "string"},
+                    # the annotator's answer to the reviewer's comment (UX-rev-1-21)
+                    "reply": {"type": "string"},
                     # the previous review round's verdict on this object
                     "previous_review": {
                         "type": "object",
@@ -112,6 +114,7 @@ SEGMENTATION_VOLUME_SCHEMA = {
                             "status": {"type": "string", "enum": ["accepted", "rejected"]},
                             "reject_reason": {"type": "string", "maxLength": 32},
                             "review_comment": {"type": "string"},
+                            "reply": {"type": "string"},
                         },
                         "required": ["status"],
                         "additionalProperties": False,

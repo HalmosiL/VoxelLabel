@@ -62,3 +62,12 @@ describe("sentBackItems", () => {
     expect(sentBackItems([], labels, null)).toEqual([]);
   });
 });
+
+describe("the annotator's reply", () => {
+  it("travels with the verdict at the hand-in, and the reviewer reads it", () => {
+    const [next] = handInObjects([obj(1, 1, 1, { review_status: "rejected", reject_reason: "missed", review_comment: "add slice 55", reply: " crossing vessel " })]);
+    expect(next.reply).toBeUndefined();
+    expect(next.previous_review).toEqual({ status: "rejected", reject_reason: "missed", review_comment: "add slice 55", reply: "crossing vessel" });
+    expect(previousReviewText(next)).toBe("rejected (missed finding): add slice 55 · annotator's reply: crossing vessel");
+  });
+});
