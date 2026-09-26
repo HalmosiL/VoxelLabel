@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fillLungHoles, flyStep, labelPalette, shrinkMask, softMask, windowToUnit } from "./volumeRender";
+import { fillLungHoles, flyStep, labelPalette, objectBounds, pickAlongRay, PickScene, rayBox, shrinkMask, softMask, windowToUnit } from "./volumeRender";
 
 const info = { huOffset: -1024, huStep: 16 };
 
@@ -76,5 +76,48 @@ describe("softMask", () => {
     expect(f[1]).toBeGreaterThan(0);
     expect(f[1]).toBeLessThan(f[2]);
     expect(f[4]).toBe(255);
+  });
+});
+
+describe("picking in 3D", () => {
+  // a 4x4x4 volume: empty, with a bright block at x=2, and object 5 at (1,1,1)
+  const dims: [number, number, number] = [4, 4, 4];
+  const data = new Uint8Array(64);
+  const at = (i: number, j: number, k: number) => (k * 4 + j) * 4 + i;
+  for (let j = 0; j < 4; j++) for (let k = 0; k < 4; k++) data[at(2, j, k)] = 255;
+  const scene = (extra: Partial<PickScene> = {}): PickScene => ({
+    dims, data, window: [0, 1], opacity: 1, mode: "volume", mask: null, lung: null, airway: null, nearCut: 0, clipLo: [0, 0, 0], clipHi: [1, 1, 1], ...extra,
+  });
+
+  it("finds where a ray enters and leaves the box", () => {
+    expect(rayBox([-1, 0.5, 0.5], [1, 0, 0])).toEqual([1, 2]);
+    expect(rayBox([-1, 2, 0.5], [1, 0, 0])).toBeNull();
+  });
+
+  it("lands where the volume turns opaque", () => {
+    const hit = pickAlongRay([-0.5, 0.6, 0.6], [1, 0, 0], scene());
+    expect(hit?.objectId).toBeNull();
+    expect(hit!.point[0]).toBeGreaterThanOrEqual(0.5);
+    expect(hit!.point[0]).toBeLessThan(0.75);
+  });
+
+  it("an annotated object in the way is what is picked", () => {
+    const mask = new Uint8Array(64);
+    mask[at(1, 1, 1)] = 5;
+    expect(pickAlongRay([-0.5, 0.3, 0.3], [1, 0, 0], scene({ mask }))?.objectId).toBe(5);
+  });
+
+  it("a clipped-away part can't be picked", () => {
+    expect(pickAlongRay([-0.5, 0.6, 0.6], [1, 0, 0], scene({ clipHi: [0.4, 1, 1] }))).toBeNull();
+  });
+
+  it("an object's middle and size", () => {
+    const mask = new Uint8Array(64);
+    mask[at(1, 1, 1)] = 5;
+    mask[at(2, 1, 1)] = 5;
+    const b = objectBounds(mask, dims, 5)!;
+    expect(b.center).toEqual([0.5, 0.375, 0.375]);
+    expect(b.size).toEqual([0.5, 0.25, 0.25]);
+    expect(objectBounds(mask, dims, 9)).toBeNull();
   });
 });

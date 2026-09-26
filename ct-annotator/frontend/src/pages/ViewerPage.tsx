@@ -3352,6 +3352,21 @@ export default function ViewerPage() {
     [reviewMode, maskReady, currentReviewObject?.id, rows, columns],
   );
 
+  /** A click in the 3D view: the 2D panes go to that voxel, and an object
+   * hit is selected (in review: the card steps to it). */
+  function pick3D(p: { x: number; y: number; z: number; objectId: number | null }) {
+    setAxialIndex(p.z);
+    setCoronalIndex(p.y);
+    setSagittalIndex(p.x);
+    if (p.objectId === null) return;
+    if (reviewMode) {
+      const i = reviewOrderedObjects.findIndex((o) => o.id === p.objectId);
+      if (i >= 0) setReviewIndex(i);
+    } else if (objects.some((o) => o.id === p.objectId)) {
+      setActiveObjectId(p.objectId);
+    }
+  }
+
   function goToPrevReviewObject() {
     setReviewIndex((i) => Math.max(0, i - 1));
   }
@@ -4691,6 +4706,8 @@ export default function ViewerPage() {
                     labels={labels}
                     objects={objects}
                     maskKey={0}
+                    onPick={pick3D}
+                    onShow2D={maximizedPane === "three_d" ? () => setMaximizedPane(null) : undefined}
                   />
                 ) : (
                   <Viewer3D

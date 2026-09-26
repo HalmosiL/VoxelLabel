@@ -5,7 +5,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { fetchAirways, fetchLungMask, fetchVolume3D } from "../api/annotatorApi";
 import { errorText } from "../lib/errorText";
 import { enterFullscreen, exitFullscreen, fullscreenElement, onFullscreenChange } from "../lib/fullscreen";
-import { fillLungHoles, FlyKeys, flyStep, labelPalette, shrinkMask, softMask, VolumeInfo, windowToUnit } from "../lib/volumeRender";
+import { fillLungHoles, FlyKeys, flyStep, labelPalette, pickAlongRay, shrinkMask, softMask, Vec3, VolumeInfo, windowToUnit } from "../lib/volumeRender";
 
 /** A real 3D view of the CT itself, with the annotation inside it: the
  * volume is ray-marched on the GPU (a 3D texture of the series, see the
@@ -52,6 +52,9 @@ uniform sampler3D uAirway;
 uniform bool uShowAirway;
 uniform vec3 uAirwayColor;
 uniform float uAirwayOpacity;
+uniform vec3 uPick;
+uniform bool uShowPick;
+uniform vec3 uAspect;
 uniform sampler2D uPalette;
 uniform vec3 uCamLocal;
 uniform vec3 uTexel;
@@ -101,6 +104,11 @@ void main() {
   for (float s = tStart + jitter; s < t.y; s += dt) {
     vec3 p = uCamLocal + dir * s;
     float a = windowed(sampleVolume(p));
+    // the picked point: a small yellow ball, round in real proportions
+    if (uShowPick && length((p - uPick) * uAspect) < 0.012) {
+      fragColor = vec4(1.0, 0.85, 0.2, 1.0) * (1.0 - acc.a) + vec4(acc.rgb, 0.0);
+      return;
+    }
     // a soft edge (softMask + linear filtering): a smooth cut, not voxel steps
     if (uLungOnly) a *= smoothstep(0.35, 0.65, texture(uLung, p).r);
     vec4 lc = vec4(0.0);
@@ -189,6 +197,8 @@ export default function VolumeView({
   labels,
   objects,
   maskKey,
+  onPick,
+  onShow2D,
 }: {
   seriesId: string | null;
   maskVolume: Uint8Array | null;
@@ -199,6 +209,11 @@ export default function VolumeView({
   objects: { id: number; label_id: number; hidden: boolean }[];
   /** bumped by the parent when the painting may have changed */
   maskKey: number;
+  /** a click in the view: the voxel it landed on (the series' own
+   * columns/rows/slices), and the object there if any */
+  onPick?: (p: { x: number; y: number; z: number; objectId: number | null }) => void;
+  /** shown next to a pick while the 3D pane fills the screen */
+  onShow2D?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
@@ -235,6 +250,10 @@ export default function VolumeView({
   // the three.js world, made once per mount
   const world = useRef<World | null>(null);
   const hoveredRef = useRef(false);
+  // CPU copies of what the GPU draws, for picking (lib/volumeRender pickAlongRay)
+  const cpu = useRef<{ data: Uint8Array | null; mask: Uint8Array | null; lung: Uint8Array | null; airway: Uint8Array | null }>({ data: null, mask: null, lung: null, airway: null });
+  const [picked, setPicked] = useState<{ z: number; objectId: number | null } | null>(null);
+  const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0 });
   const speedRef = useRef(speed);
   speedRef.current = speed;
   const navRef = useRef(nav);
@@ -345,6 +364,45 @@ export default function VolumeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** A click at (ndcX, ndcY) of the view: march that ray through the same
+   * scene the shader draws, mark the point, tell the parent. */
+  function pickAt(ndcX: number, ndcY: number) {
+    const w = world.current;
+    if (!w?.mesh || !w.material || !info || !cpu.current.data) return;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), w.camera);
+    w.mesh.updateMatrixWorld();
+    const o = w.mesh.worldToLocal(ray.ray.origin.clone()).addScalar(0.5);
+    const far = w.mesh.worldToLocal(ray.ray.origin.clone().add(ray.ray.direction)).addScalar(0.5);
+    const d = far.clone().sub(o).normalize();
+    const st = settingsRef.current;
+    const hit = pickAlongRay([o.x, o.y, o.z], [d.x, d.y, d.z], {
+      dims: info.dims,
+      data: cpu.current.data,
+      window: windowToUnit(st.center, st.width, info),
+      opacity: st.opacity,
+      mode: st.mode,
+      mask: st.showMask ? cpu.current.mask : null,
+      lung: st.lungOnly ? cpu.current.lung : null,
+      airway: st.showAirways ? cpu.current.airway : null,
+      nearCut: st.nearCut,
+      clipLo: [0, 0, 0],
+      clipHi: [1, 1, 1],
+    });
+    if (!hit) return;
+    const [px, py, pz] = hit.point as Vec3;
+    (w.material.uniforms.uPick.value as THREE.Vector3).set(px, py, pz);
+    w.material.uniforms.uShowPick.value = true;
+    w.dirty = true;
+    const at = { x: Math.min(columns - 1, Math.floor(px * columns)), y: Math.min(rows - 1, Math.floor(py * rows)), z: Math.min(numSlices - 1, Math.floor(pz * numSlices)), objectId: hit.objectId };
+    setPicked({ z: at.z, objectId: at.objectId });
+    onPickRef.current?.(at);
+  }
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+  const pickAtRef = useRef(pickAt);
+  pickAtRef.current = pickAt;
+
   /** In front of the patient, the whole volume in view. */
   function resetView() {
     const w = world.current;
@@ -358,6 +416,11 @@ export default function VolumeView({
     w.dirty = true;
   }
 
+  // a small pane (beside the 2D ones) would be all settings: start them folded
+  useEffect(() => {
+    if (status === "ready" && (hostRef.current?.getBoundingClientRect().width ?? 1000) < 520) setShowPanel(false);
+  }, [status]);
+
   // ── the CT volume: fetched once per series, uploaded as a 3D texture ───
   useEffect(() => {
     if (!seriesId || status === "nowebgl") return;
@@ -369,6 +432,7 @@ export default function VolumeView({
         const w = world.current;
         if (cancelled || !w) return;
         const [x, y, z] = info.dims;
+        cpu.current.data = data;
         const tex = new THREE.Data3DTexture(data as Uint8Array<ArrayBuffer>, x, y, z);
         tex.format = THREE.RedFormat;
         tex.type = THREE.UnsignedByteType;
@@ -394,6 +458,9 @@ export default function VolumeView({
             uShowAirway: { value: false },
             uAirwayColor: { value: new THREE.Color("#38bdf8") },
             uAirwayOpacity: { value: 0.9 },
+            uPick: { value: new THREE.Vector3() },
+            uShowPick: { value: false },
+            uAspect: { value: new THREE.Vector3(1, 1, 1) },
             uPalette: { value: w.paletteTex },
             uCamLocal: { value: new THREE.Vector3() },
             uTexel: { value: new THREE.Vector3(1 / x, 1 / y, 1 / z) },
@@ -421,6 +488,7 @@ export default function VolumeView({
         // a mirrored object itself).
         mesh.scale.set(size[0] / m, -size[1] / m, size[2] / m);
         mesh.rotation.x = Math.PI / 2;
+        (material.uniforms.uAspect.value as THREE.Vector3).set(size[0] / m, size[1] / m, size[2] / m);
         if (w.mesh) {
           w.scene.remove(w.mesh);
           w.mesh.geometry.dispose();
@@ -453,7 +521,9 @@ export default function VolumeView({
     const small = shrinkMask(maskVolume, rows, columns, numSlices, info.factor);
     const [x, y, z] = info.dims;
     if (small.length !== x * y * z) return; // a series changed under us
-    const tex = new THREE.Data3DTexture(small === maskVolume ? small.slice() : small, x, y, z);
+    const copy = small === maskVolume ? small.slice() : small;
+    cpu.current.mask = copy;
+    const tex = new THREE.Data3DTexture(copy, x, y, z);
     tex.format = THREE.RedFormat;
     tex.type = THREE.UnsignedByteType;
     tex.minFilter = THREE.NearestFilter;
@@ -486,6 +556,7 @@ export default function VolumeView({
         const shrunk = shrinkMask(m.data, m.rows, m.columns, m.numSlices, info.factor);
         if (shrunk.length !== x * y * z) throw new Error("size");
         const small = softMask(fillLungHoles(shrunk, x, y, z), x, y, z);
+        cpu.current.lung = small;
         const tex = new THREE.Data3DTexture(small, x, y, z);
         tex.format = THREE.RedFormat;
         tex.type = THREE.UnsignedByteType;
@@ -515,7 +586,9 @@ export default function VolumeView({
         const [x, y, z] = info.dims;
         const shrunk = shrinkMask(a.data, a.rows, a.columns, a.numSlices, info.factor);
         if (shrunk.length !== x * y * z) throw new Error("size");
-        const tex = new THREE.Data3DTexture(softMask(shrunk, x, y, z), x, y, z);
+        const soft = softMask(shrunk, x, y, z);
+        cpu.current.airway = soft;
+        const tex = new THREE.Data3DTexture(soft, x, y, z);
         tex.format = THREE.RedFormat;
         tex.type = THREE.UnsignedByteType;
         tex.minFilter = THREE.LinearFilter;
@@ -546,6 +619,7 @@ export default function VolumeView({
     u.uLungOnly.value = lungOnly && lungState === "ready";
     u.uNearCut.value = nearCut;
     u.uShowAirway.value = showAirways && airwayState === "ready";
+    settingsRef.current = { center, width, opacity, mode, showMask, lungOnly: lungOnly && lungState === "ready", showAirways: showAirways && airwayState === "ready", nearCut };
     u.uAirwayOpacity.value = airwayOpacity;
     if (world.current) world.current.dirty = true;
   }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut, showAirways, airwayState, airwayOpacity]);
@@ -583,13 +657,28 @@ export default function VolumeView({
     };
     // without pointer lock (a touch screen): drag to look
     let drag: { x: number; y: number } | null = null;
+    let press: { x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
+      press = { x: e.clientX, y: e.clientY };
       if (navRef.current !== "fly") return;
+      if (document.pointerLockElement === canvas) {
+        pickAtRef.current(0, 0); // flying: the crosshair in the middle
+        return;
+      }
       if (e.pointerType === "mouse" && canvas.requestPointerLock) {
         canvas.requestPointerLock();
         return;
       }
       drag = { x: e.clientX, y: e.clientY };
+    };
+    // orbiting (or a finger): a click that didn't drag picks where it is
+    const onClickUp = (e: PointerEvent) => {
+      const p = press;
+      press = null;
+      if (!p || Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) return;
+      if (navRef.current === "fly" && e.pointerType === "mouse") return;
+      const r = canvas.getBoundingClientRect();
+      pickAtRef.current(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!drag) return;
@@ -624,6 +713,7 @@ export default function VolumeView({
     document.addEventListener("pointerlockchange", onLockChange);
     document.addEventListener("mousemove", onMove);
     canvas.addEventListener("pointerdown", onDown);
+    canvas.addEventListener("pointerup", onClickUp);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onUp);
     canvas.addEventListener("wheel", onWheel, { passive: false });
@@ -634,6 +724,7 @@ export default function VolumeView({
       document.removeEventListener("pointerlockchange", onLockChange);
       document.removeEventListener("mousemove", onMove);
       canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointerup", onClickUp);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("wheel", onWheel);
@@ -680,12 +771,31 @@ export default function VolumeView({
 
       {status === "ready" && (
         <>
+          {locked && (
+            <div className="pointer-events-none absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2" aria-hidden="true">
+              <div className="absolute left-1/2 top-0 h-full w-px bg-yellow-300/80" />
+              <div className="absolute left-0 top-1/2 h-px w-full bg-yellow-300/80" />
+            </div>
+          )}
+          {picked && (
+            <div className="absolute bottom-9 left-2 flex items-center gap-2 rounded bg-black/70 px-2 py-1 text-[11px] text-yellow-200" data-testid="volume-picked">
+              <span>
+                Picked: slice {picked.z + 1}
+                {picked.objectId !== null ? ` · object ${picked.objectId}` : ""} -- the 2D panes are there
+              </span>
+              {onShow2D && (
+                <button type="button" onClick={onShow2D} className="rounded border border-yellow-400/50 px-1.5 text-[10px] hover:bg-yellow-400/10" data-testid="volume-show-2d">
+                  Show 2D
+                </button>
+              )}
+            </div>
+          )}
           <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-gray-300" data-testid="volume-hint">
             {nav === "fly"
               ? locked
-                ? "Mouse looks · W A S D move · Space up · Shift down · wheel speed · R reset · Esc lets go"
+                ? "Mouse looks · W A S D move · Space up · Shift down · click picks the middle · wheel speed · R reset · Esc lets go"
                 : "Click the view to fly: mouse looks, W A S D, Space up, Shift down"
-              : "Drag to turn · right-drag to move · wheel to zoom"}
+              : "Drag to turn · right-drag to move · wheel to zoom · click picks a point"}
           </div>
           <div className="absolute right-2 top-2 flex gap-1">
             <button type="button" onClick={() => setShowPanel((v) => !v)} className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333]" data-testid="volume-panel-toggle">
@@ -696,7 +806,7 @@ export default function VolumeView({
             </button>
           </div>
           {showPanel && (
-            <div className="absolute left-2 top-2 flex max-h-[calc(100%-3rem)] w-56 flex-col gap-2 overflow-y-auto rounded border border-[#333] bg-black/75 p-2.5 text-[11px] text-gray-200" data-testid="volume-panel">
+            <div className="absolute left-2 top-10 flex max-h-[calc(100%-5rem)] w-56 max-w-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto rounded border border-[#333] bg-black/75 p-2.5 text-[11px] text-gray-200" data-testid="volume-panel">
               <div className="flex gap-1" role="group" aria-label="Rendering">
                 {(["volume", "mip"] as const).map((m) => (
                   <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} data-testid={`volume-mode-${m}`} className={`flex-1 rounded border px-1.5 py-0.5 ${mode === m ? "border-blue-500 bg-blue-500/25" : "border-[#444] hover:bg-[#333]"}`}>

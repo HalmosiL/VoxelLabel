@@ -152,3 +152,102 @@ export function softMask(mask: Uint8Array, x: number, y: number, z: number): Uin
   for (let i = 0; i < a.length; i++) out[i] = a[i];
   return out;
 }
+
+export type Vec3 = [number, number, number];
+
+/** What a pick sees: the same volumes and settings the shader draws with.
+ * Every field is at the volume's size (dims), x fastest; soft masks are
+ * 0..255 (cut at the middle), the object mask holds ids. */
+export interface PickScene {
+  dims: Vec3;
+  data: Uint8Array;
+  window: [number, number];
+  opacity: number;
+  mode: "volume" | "mip";
+  mask: Uint8Array | null;
+  lung: Uint8Array | null;
+  airway: Uint8Array | null;
+  nearCut: number;
+  clipLo: Vec3;
+  clipHi: Vec3;
+}
+
+/** Where a ray (origin and direction in the box's 0..1 space) enters and
+ * leaves [lo, hi]; null when it misses. */
+export function rayBox(o: Vec3, d: Vec3, lo: Vec3 = [0, 0, 0], hi: Vec3 = [1, 1, 1]): [number, number] | null {
+  let t0 = -Infinity;
+  let t1 = Infinity;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(d[i]) < 1e-12) {
+      if (o[i] < lo[i] || o[i] > hi[i]) return null;
+      continue;
+    }
+    const a = (lo[i] - o[i]) / d[i];
+    const b = (hi[i] - o[i]) / d[i];
+    t0 = Math.max(t0, Math.min(a, b));
+    t1 = Math.min(t1, Math.max(a, b));
+  }
+  return t1 > Math.max(t0, 0) ? [t0, t1] : null;
+}
+
+/** The point a click lands on: along the ray, the first annotated object,
+ * or where the drawn volume turns half opaque (MIP: its brightest point).
+ * Nearest-voxel sampling -- a pick doesn't need the shader's smoothness. */
+export function pickAlongRay(o: Vec3, d: Vec3, s: PickScene): { point: Vec3; objectId: number | null } | null {
+  const hit = rayBox(o, d, s.clipLo, s.clipHi);
+  if (!hit) return null;
+  const [x, y, z] = s.dims;
+  const step = 0.5 / Math.max(x, y, z);
+  const idx = (p: Vec3) => {
+    const i = Math.min(x - 1, Math.max(0, Math.floor(p[0] * x)));
+    const j = Math.min(y - 1, Math.max(0, Math.floor(p[1] * y)));
+    const k = Math.min(z - 1, Math.max(0, Math.floor(p[2] * z)));
+    return (k * y + j) * x + i;
+  };
+  const [lo, hi] = s.window;
+  let acc = 0;
+  let best = -1;
+  let bestPoint: Vec3 | null = null;
+  for (let t = Math.max(hit[0], 0, s.nearCut); t < hit[1]; t += step) {
+    const p: Vec3 = [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
+    const i = idx(p);
+    if (s.mask && s.mask[i]) return { point: p, objectId: s.mask[i] };
+    if (s.airway && s.airway[i] >= 128) return { point: p, objectId: null };
+    let a = Math.min(1, Math.max(0, (s.data[i] / 255 - lo) / (hi - lo)));
+    if (s.lung && s.lung[i] < 128) a = 0;
+    if (s.mode === "mip") {
+      if (a > best) {
+        best = a;
+        bestPoint = p;
+      }
+      continue;
+    }
+    const alpha = 1 - Math.pow(1 - Math.min(0.999, a * a * s.opacity), step * 200);
+    acc += (1 - acc) * alpha;
+    if (acc > 0.5) return { point: p, objectId: null };
+  }
+  return bestPoint && best > 0.05 ? { point: bestPoint, objectId: null } : null;
+}
+
+/** An object's middle and extent in the box's 0..1 space (from the mask at
+ * the volume's size), or null when nothing of it is painted. */
+export function objectBounds(mask: Uint8Array, dims: Vec3, id: number): { center: Vec3; size: Vec3 } | null {
+  const [x, y] = dims;
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let n = 0; n < mask.length; n++) {
+    if (mask[n] !== id) continue;
+    const i = n % x;
+    const j = Math.floor(n / x) % y;
+    const k = Math.floor(n / (x * y));
+    const c = [i, j, k];
+    for (let a = 0; a < 3; a++) {
+      if (c[a] < lo[a]) lo[a] = c[a];
+      if (c[a] > hi[a]) hi[a] = c[a];
+    }
+  }
+  if (lo[0] === Infinity) return null;
+  const center = [0, 1, 2].map((a) => (lo[a] + hi[a] + 1) / 2 / dims[a]) as Vec3;
+  const size = [0, 1, 2].map((a) => (hi[a] - lo[a] + 1) / dims[a]) as Vec3;
+  return { center, size };
+}

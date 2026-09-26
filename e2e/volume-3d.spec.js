@@ -30,6 +30,9 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.locator('[data-testid="show-pane-three_d"]').click();
   await page.locator('[data-testid="pane-three_d-maximize"]').click();
   const panel = page.locator('[data-testid="volume-panel"]');
+  // it loaded while the pane was small, so its settings started folded
+  await page.locator('[data-testid="volume-panel-toggle"]').waitFor({ timeout: 60000 }).catch(() => {});
+  if (!(await panel.isVisible())) await page.locator('[data-testid="volume-panel-toggle"]').click();
   check("the 3D pane opens on the CT volume", await panel.waitFor({ timeout: 60000 }).then(() => true, () => false) && (await page.locator('[data-testid="three-d-volume"]').getAttribute("aria-pressed")) === "true");
   check("... with its size and real voxel size", /voxels · [\d.]+ × [\d.]+ × [\d.]+ mm/.test(await panel.innerText()));
   await page.locator('[data-testid="volume-panel-toggle"]').click(); // settings out of the picture
@@ -61,6 +64,20 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.locator('[data-testid="volume-mode-mip"]').click(); await page.waitForTimeout(1500);
   check("MIP is one click", (await page.locator('[data-testid="volume-mode-mip"]').getAttribute("aria-pressed")) === "true");
   check("full screen is there", (await page.locator('[data-testid="volume-fullscreen"]').count()) === 1);
+  // a click in 3D goes there in 2D: Orbit, the 3D beside the panes, click the middle
+  await page.locator('[data-testid="volume-lung-only"]').uncheck();
+  await page.locator('[data-testid="volume-nav-orbit"]').click(); // still MIP: the ray's brightest point
+  await page.locator('[data-testid="volume-reset"]').click();
+  await page.locator('[data-testid="pane-three_d-maximize"]').click(); await page.waitForTimeout(1500);
+  // the settings fold themselves out of the way when the pane gets small
+  if (await page.locator('[data-testid="volume-panel"]').isVisible()) await page.locator('[data-testid="volume-panel-toggle"]').click();
+  await page.locator('[data-testid="volume-mode-volume"]').waitFor({ state: "detached", timeout: 2000 }).catch(() => {});
+  const vb = await page.locator('[data-testid="volume-canvas"]').boundingBox();
+  await page.mouse.click(vb.x + vb.width / 2, vb.y + vb.height / 2); await page.waitForTimeout(800);
+  const pickedText = await page.locator('[data-testid="volume-picked"]').innerText().catch(() => "");
+  const pickedSlice = Number((pickedText.match(/slice (\d+)/) || [])[1]);
+  check("a click in 3D picks a point", pickedSlice > 0, pickedText);
+  check("... and the axial pane goes to its slice", Number(await page.locator('[data-testid="slice-number-axial"]').innerText().catch(() => "0")) === pickedSlice, pickedSlice);
   await page.locator('[data-testid="three-d-surfaces"]').click(); await page.waitForTimeout(800);
   check("the surfaces view is still one click away", (await page.locator('[data-testid="volume-view"]').count()) === 0);
   check("no shader or page errors", errors.length === 0, errors.slice(0, 3));
