@@ -229,7 +229,8 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
     // the count first, since a real job can have many objects to decide.
     let guard = 0;
     // a rejection stays on its object: step to each object still undecided, then accept it
-    while (await page.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 60) {
+    // (200: every run of this spec adds objects to the fixture case -- 68 by now)
+    while (await page.locator("header button", { hasText: "Submit review" }).isDisabled() && guard++ < 200) {
       const pending = page.locator('[data-testid^="review-dot-"][data-status="pending"]');
       if ((await pending.count()) === 0) break;
       await pending.first().click(); await page.waitForTimeout(150);
