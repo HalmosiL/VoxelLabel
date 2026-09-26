@@ -735,9 +735,13 @@ export default function ViewerPage() {
   // ── Polygon tool: click a sequence of points, close the loop to fill
   // the interior with the active object -- points are in the same
   // native slice-pixel space canvasPoint()/stampCircle already use.
-  const [polygonDraft, setPolygonDraft] = useState<{ pane: PaneKey; points: { x: number; y: number }[] } | null>(null);
+  // An outline belongs to the slice it was started on (`index`): it used to
+  // stay on screen on other slices and was silently left out of a save when
+  // never closed -- the tablet resident lost 4 of 6 slices (K4).
+  const [polygonDraft, setPolygonDraft] = useState<{ pane: PaneKey; index: number; points: { x: number; y: number }[] } | null>(null);
   const [polygonCursor, setPolygonCursor] = useState<{ x: number; y: number } | null>(null);
   const POLYGON_CLOSE_RADIUS_PX = 10;
+  const POLYGON_CLOSE_RADIUS_TOUCH_PX = 24;
 
   // ── Auto-contour tool: drag a box, fetch that box's raw HU values
   // once, then grow a region from the box's center entirely client-side
@@ -1638,13 +1642,19 @@ export default function ViewerPage() {
    * 10 voxels was ~72 screen px at 9x zoom, so a small nodule's outline
    * closed itself on the 4th click (E-08). */
   function polygonCloseRadius(pane: PaneKey): number {
+    // a fingertip is not a mouse pointer: ~24 screen px to hit the first point on touch (K4)
+    const radius = coarse ? POLYGON_CLOSE_RADIUS_TOUCH_PX : POLYGON_CLOSE_RADIUS_PX;
     const canvas = overlayRefs[pane].current;
     const rect = canvas?.getBoundingClientRect();
-    if (!canvas || !rect || rect.width === 0) return POLYGON_CLOSE_RADIUS_PX;
-    return POLYGON_CLOSE_RADIUS_PX * (canvas.width / rect.width);
+    if (!canvas || !rect || rect.width === 0) return radius;
+    return radius * (canvas.width / rect.width);
   }
 
   function handlePolygonClick(pane: PaneKey, point: { x: number; y: number }) {
+    if (polygonDraft && polygonDraft.pane === pane && polygonDraft.index !== currentIndex(pane)) {
+      setError(`An outline on slice ${polygonDraft.index + 1} isn't closed yet -- go back to close it, or drop it, before starting another.`);
+      return;
+    }
     if (polygonDraft && polygonDraft.pane === pane && polygonDraft.points.length >= 3) {
       const first = polygonDraft.points[0];
       if (Math.hypot(point.x - first.x, point.y - first.y) <= polygonCloseRadius(pane)) {
@@ -1655,7 +1665,29 @@ export default function ViewerPage() {
       }
     }
     if (polygonDraft && polygonDraft.pane !== pane) return; // a polygon in progress on another pane -- ignore
-    setPolygonDraft({ pane, points: [...(polygonDraft?.points ?? []), point] });
+    setPolygonDraft({ pane, index: polygonDraft?.index ?? currentIndex(pane), points: [...(polygonDraft?.points ?? []), point] });
+  }
+
+  /** The open outline's own bar: Close shape (on its slice, 3+ points),
+   * Go to its slice, Drop. */
+  function closeOpenPolygon() {
+    if (!polygonDraft || polygonDraft.points.length < 3 || polygonDraft.index !== currentIndex(polygonDraft.pane)) return;
+    commitPolygon(polygonDraft.pane, polygonDraft.points);
+    setPolygonDraft(null);
+    setPolygonCursor(null);
+  }
+  const closeOpenPolygonRef = useRef(closeOpenPolygon);
+  closeOpenPolygonRef.current = closeOpenPolygon;
+  function dropOpenPolygon() {
+    setPolygonDraft(null);
+    setPolygonCursor(null);
+  }
+  function goToOpenPolygon() {
+    if (!polygonDraft) return;
+    const { pane, index } = polygonDraft;
+    if (pane === "axial") setAxialIndex(index);
+    else if (pane === "sagittal") setSagittalIndex(index);
+    else setCoronalIndex(index);
   }
 
   function commitPolygon(pane: PaneKey, points: { x: number; y: number }[]) {
@@ -1997,7 +2029,7 @@ export default function ViewerPage() {
    * conversion updateBrushCursor/showHuReadout already use, so this
    * overlay stays correctly placed under any zoom/pan. */
   function renderPolygonOverlay(pane: PaneKey) {
-    if (!polygonDraft || polygonDraft.pane !== pane) return null;
+    if (!polygonDraft || polygonDraft.pane !== pane || polygonDraft.index !== currentIndex(pane)) return null;
     // The overlay is zoomed with the image; the points and lines keep
     // one screen size at any zoom (they used to grow with it).
     const k = 1 / zoom[pane].scale;
@@ -2475,6 +2507,11 @@ export default function ViewerPage() {
   async function handleSave(status: "draft" | "submitted" = "draft") {
     const volume = maskVolumeRef.current;
     if (!volume || !seriesId || !studyId) return;
+    if (polygonDraft) {
+      // an open outline is not in the mask: saving now would silently leave it out (K4)
+      setError(`The outline on slice ${polygonDraft.index + 1} isn't closed yet -- close it or drop it, then save.`);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -3424,7 +3461,12 @@ export default function ViewerPage() {
           return;
         }
       }
-      // Enter: apply a pending auto-contour preview.
+      // Enter: close an open outline (on its own slice), or apply a pending auto-contour preview.
+      if (event.key === "Enter" && !typing && polygonDraft && polygonDraft.points.length >= 3) {
+        event.preventDefault();
+        closeOpenPolygonRef.current(); // this render's slice, not the one the listener was set up with
+        return;
+      }
       if (event.key === "Enter" && !typing && autoBox && autoHu) {
         event.preventDefault();
         // the latest render's version: its preview mask and active object (E-01)
@@ -3813,6 +3855,31 @@ export default function ViewerPage() {
       {mixedSizes && (
         <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="mixed-sizes">
           {mixedSizes}
+        </div>
+      )}
+      {polygonDraft && (
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 bg-sky-900/60 px-4 py-1.5 text-xs text-sky-100" data-testid="polygon-open">
+          <span>
+            Open outline on the {polygonDraft.pane} pane, slice {polygonDraft.index + 1} · {polygonDraft.points.length} point{polygonDraft.points.length === 1 ? "" : "s"} --
+            it isn't part of your annotation until it's closed.
+          </span>
+          {polygonDraft.index !== currentIndex(polygonDraft.pane) && (
+            <button type="button" onClick={goToOpenPolygon} className="rounded border border-sky-400/60 px-2 py-0.5 hover:bg-sky-800" data-testid="polygon-goto">
+              Go to slice {polygonDraft.index + 1}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={closeOpenPolygon}
+            disabled={polygonDraft.points.length < 3 || polygonDraft.index !== currentIndex(polygonDraft.pane)}
+            className="rounded bg-sky-600 px-2 py-0.5 font-medium text-white hover:bg-sky-500 disabled:opacity-40"
+            data-testid="polygon-close"
+          >
+            Close shape (Enter)
+          </button>
+          <button type="button" onClick={dropOpenPolygon} className="rounded border border-sky-400/60 px-2 py-0.5 hover:bg-sky-800" data-testid="polygon-drop">
+            Drop (Esc)
+          </button>
         </div>
       )}
       {surfaceFailed && (

@@ -366,6 +366,8 @@ export default function TutorialPage() {
   // outlive any single pointer event the way dragStartRef's own `pane`
   // does for auto/histogram's single drag.
   const polygonPaneRef = useRef<PaneKey>("axial");
+  // the slice the open outline was started on -- it belongs there, as in the viewer (K4)
+  const polygonIndexRef = useRef(0);
   const [polygonDraftVersion, setPolygonDraftVersion] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sagittalCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -579,7 +581,7 @@ export default function TutorialPage() {
    * canvas they grew with the zoom, and stretched on sagittal/coronal. */
   function renderPolygonOverlay(pane: PaneKey) {
     const pts = polygonPointsRef.current;
-    if (tool !== "polygon" || polygonPaneRef.current !== pane || pts.length === 0) return null;
+    if (tool !== "polygon" || polygonPaneRef.current !== pane || pts.length === 0 || currentPaneIndex(pane) !== polygonIndexRef.current) return null;
     const { width, height } = paneDims(pane);
     const sx = paneSize / width;
     const sy = paneSize / height;
@@ -907,15 +909,20 @@ export default function TutorialPage() {
     } else if (tool === "polygon") {
       if (!canDraw) return;
       const pts = polygonPointsRef.current;
-      // a polygon lives on one pane: clicks elsewhere are ignored, as in the viewer (G-02)
+      // a polygon lives on one pane and one slice: clicks elsewhere are ignored, as in the viewer (G-02, K4)
       if (pts.length > 0 && pane !== polygonPaneRef.current) return;
-      // 8 screen px, whatever the zoom (a fixed 8 voxels closed a small outline early)
+      if (pts.length > 0 && currentPaneIndex(pane) !== polygonIndexRef.current) return;
+      // 8 screen px whatever the zoom (24 on touch: a fingertip), as in the viewer
       const rect = e.currentTarget.getBoundingClientRect();
-      const closeRadius = rect.width > 0 ? 8 * (e.currentTarget.width / rect.width) : 8;
+      const px = coarse ? 24 : 8;
+      const closeRadius = rect.width > 0 ? px * (e.currentTarget.width / rect.width) : px;
       if (pts.length >= 3 && Math.hypot(x - pts[0].x, y - pts[0].y) < closeRadius) {
         closePolygon(pane);
       } else {
-        if (pts.length === 0) polygonPaneRef.current = pane;
+        if (pts.length === 0) {
+          polygonPaneRef.current = pane;
+          polygonIndexRef.current = currentPaneIndex(pane);
+        }
         pts.push({ x, y });
         setPolygonDraftVersion((v) => v + 1);
       }
@@ -1235,6 +1242,11 @@ export default function TutorialPage() {
     }
   };
 
+  const closeOpenPolygonRef = useRef(() => {});
+  closeOpenPolygonRef.current = () => {
+    if (currentPaneIndex(polygonPaneRef.current) === polygonIndexRef.current) closePolygon(polygonPaneRef.current);
+  };
+
   function closePolygon(pane: PaneKey) {
     const pts = polygonPointsRef.current;
     if (pts.length < 3 || !activeObjectId) {
@@ -1303,6 +1315,10 @@ export default function TutorialPage() {
       }
       if (e.key === "Enter" && autoPanel) {
         commitAuto();
+        return;
+      }
+      if (e.key === "Enter" && !typing && polygonPointsRef.current.length >= 3) {
+        closeOpenPolygonRef.current(); // on its own slice only, as the bar's button
         return;
       }
 
@@ -1802,6 +1818,48 @@ export default function TutorialPage() {
           {savedMessage && <span className="text-xs text-emerald-400">{savedMessage}</span>}
         </div>
       </header>
+      {tool === "polygon" && polygonPointsRef.current.length > 0 && (
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 bg-sky-900/60 px-4 py-1.5 text-xs text-sky-100" data-testid="polygon-open">
+          <span>
+            Open outline on the {polygonPaneRef.current} pane, slice {polygonIndexRef.current + 1} -- it isn&apos;t part of your practice annotation until it&apos;s closed.
+          </span>
+          {currentPaneIndex(polygonPaneRef.current) !== polygonIndexRef.current && (
+            <button
+              type="button"
+              onClick={() => {
+                const i = polygonIndexRef.current;
+                if (polygonPaneRef.current === "axial") setAxialIndex(i);
+                else if (polygonPaneRef.current === "sagittal") setSagittalIndex(i);
+                else setCoronalIndex(i);
+              }}
+              className="rounded border border-sky-400/60 px-2 py-0.5 hover:bg-sky-800"
+              data-testid="polygon-goto"
+            >
+              Go to slice {polygonIndexRef.current + 1}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => closePolygon(polygonPaneRef.current)}
+            disabled={polygonPointsRef.current.length < 3 || currentPaneIndex(polygonPaneRef.current) !== polygonIndexRef.current}
+            className="rounded bg-sky-600 px-2 py-0.5 font-medium text-white hover:bg-sky-500 disabled:opacity-40"
+            data-testid="polygon-close"
+          >
+            Close shape (Enter)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              polygonPointsRef.current = [];
+              setPolygonDraftVersion((v) => v + 1);
+            }}
+            className="rounded border border-sky-400/60 px-2 py-0.5 hover:bg-sky-800"
+            data-testid="polygon-drop"
+          >
+            Drop (Esc)
+          </button>
+        </div>
+      )}
 
       <div className="relative flex min-h-0 flex-1">
         {!reviewMode && (
