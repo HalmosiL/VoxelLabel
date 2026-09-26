@@ -1,7 +1,7 @@
 /** Text for an object's measurements (api ObjectStats) and the slices it
  * is painted on -- the review card's numbers and slice list (UX-rev-1-17,
  * UX-rev-2-06: a reviewer walked every slice and guessed the diameter). */
-import type { ObjectStats } from "../api/annotatorApi";
+import type { ObjectDistance, ObjectStats } from "../api/annotatorApi";
 
 /** Above this share of air (< -500 HU) a mask is flagged: painted over lung. */
 export const AIR_WARNING_SHARE = 0.25;
@@ -39,4 +39,11 @@ export function objectSlices(volume: Uint8Array | null, sliceSize: number, objec
     }
   }
   return out;
+}
+
+/** "touches the pleura · 8.0 mm from the nearest segmented bronchus" */
+export function distanceText(d: ObjectDistance, airwaysFound: boolean): string {
+  const pleura = d.touches_pleura || d.pleura_mm === 0 ? "touches the pleura" : d.pleura_mm === null ? "no lung surface found" : `${d.pleura_mm.toFixed(1)} mm from the pleura`;
+  const bronchus = !airwaysFound || d.bronchus_mm === null ? "no airway tree found" : d.bronchus_mm === 0 ? "on a segmented bronchus" : `${d.bronchus_mm.toFixed(1)} mm from the nearest segmented bronchus`;
+  return `${pleura} · ${bronchus}`;
 }

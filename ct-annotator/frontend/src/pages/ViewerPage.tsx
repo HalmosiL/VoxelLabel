@@ -11,6 +11,8 @@ import {
   fetchJobCases,
   fetchPlaneHU,
   fetchObjectStats,
+  fetchObjectDistances,
+  ObjectDistance,
   fetchSegmentationVolume,
   fetchSeriesSpacing,
   fetchPreviousRound,
@@ -3303,17 +3305,29 @@ export default function ViewerPage() {
   // -- review doesn't change the painting -- and the current object's slices.
   const [objectStats, setObjectStats] = useState<Record<string, ObjectStats> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  // ... and how far each is from the pleura and the nearest bronchus (seconds
+  // the first time: the airway tree is found on the way)
+  const [objectDistances, setObjectDistances] = useState<{ objects: Record<string, ObjectDistance>; airways_found: boolean } | null>(null);
+  const [distancesLoading, setDistancesLoading] = useState(false);
   useEffect(() => {
     setObjectStats(null);
     const volume = maskVolumeRef.current;
     if (!reviewMode || !maskReady || !seriesId || !volume) return;
     let cancelled = false;
     setStatsLoading(true);
-    gzipUint8Array(volume)
+    setObjectDistances(null);
+    const gzipped = gzipUint8Array(volume);
+    gzipped
       .then((gz) => fetchObjectStats(seriesId, gz))
       .then((r) => !cancelled && setObjectStats(r.objects))
       .catch(() => undefined) // the card just shows no numbers
       .finally(() => !cancelled && setStatsLoading(false));
+    setDistancesLoading(true);
+    gzipped
+      .then((gz) => fetchObjectDistances(seriesId, gz))
+      .then((r) => !cancelled && setObjectDistances(r))
+      .catch(() => undefined)
+      .finally(() => !cancelled && setDistancesLoading(false));
     return () => {
       cancelled = true;
     };
@@ -3470,6 +3484,9 @@ export default function ViewerPage() {
           <ObjectMeasurements
             stats={objectStats?.[String(obj.id)] ?? null}
             loading={statsLoading}
+            distance={objectDistances?.objects[String(obj.id)] ?? null}
+            distanceLoading={distancesLoading}
+            airwaysFound={objectDistances?.airways_found}
             slices={currentReviewSlices}
             currentSlice={axialIndex}
             onGoToSlice={setAxialIndex}

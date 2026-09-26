@@ -39,6 +39,11 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   const target = Number(await last.innerText());
   await last.click(); await page.waitForTimeout(500);
   check("a slice in the list is one click away", Number(await page.locator('[data-testid="slice-number-axial"]').innerText()) === target, target);
+  // how far it is from the pleura and the nearest bronchus (the fixture's tiny
+  // synthetic series may have no lung or trachea: then the card says so)
+  const gap = page.locator('[data-testid="object-distance-text"]');
+  const gapSaid = await gap.waitFor({ timeout: 60000 }).then(() => gap.innerText(), () => "");
+  check("... and says how far it is from the pleura and a bronchus", /(mm from the pleura|touches the pleura|no lung surface found) · (.+ mm from the nearest segmented bronchus|on a segmented bronchus|no airway tree found)/.test(gapSaid), gapSaid);
   await browser.close();
 
   const fails = results.filter((x) => !x.ok);

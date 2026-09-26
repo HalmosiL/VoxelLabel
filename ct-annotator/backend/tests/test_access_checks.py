@@ -56,7 +56,7 @@ def api(monkeypatch):
     # the shared caches already hold this series/instance, as after a member opened it
     monkeypatch.setitem(main._dataset_cache, INSTANCE, (main.time.monotonic(), object()))
     monkeypatch.setitem(main._volume_cache, SERIES, (main.time.monotonic(), np.zeros((2, 2, 2), dtype=np.float32)))
-    monkeypatch.setitem(main._lung_mask_cache, SERIES, (main.time.monotonic(), np.zeros((2, 2, 2), dtype=bool)))
+    monkeypatch.setitem(main._lung_mask_cache, SERIES, (main.time.monotonic(), main._pack(np.zeros((2, 2, 2), dtype=bool))))
     monkeypatch.setattr(main, "extract_metadata", lambda ds: {"rows": 2})
     holder = {"user": MEMBER}
     main.app.dependency_overrides[get_current_user] = lambda: holder["user"]
@@ -555,3 +555,29 @@ def test_the_airways_come_like_the_lung_mask(api, monkeypatch):
     api.as_user(OUTSIDER)
     assert api.get(f"/series/{SERIES}/airways").status_code == 403
     main._airway_cache.clear()
+
+
+def test_object_distances_use_the_series_lungs_and_airways(api, monkeypatch):
+    import base64
+    import gzip
+
+    main._lung_mask_cache.clear()
+    main._airway_cache.clear()
+    monkeypatch.setitem(main._volume_cache, SERIES, (main.time.monotonic(), np.zeros((2, 2, 2), dtype=np.int16)))
+    monkeypatch.setattr(main, "_segment_lungs", lambda vol: np.ones(vol.shape, dtype=np.uint8))
+    monkeypatch.setattr(main, "segment_airways", lambda vol, sp: (np.zeros(vol.shape, dtype=np.uint8), {"found": False}))
+
+    async def spacing(series_id, user):
+        return (1.0, 1.0, 1.0)
+
+    monkeypatch.setattr(main, "_series_spacing", spacing)
+    mask = np.zeros((2, 2, 2), dtype=np.uint8)
+    mask[1, 1, 1] = 3
+    api.as_user(MEMBER)
+    r = api.post(f"/series/{SERIES}/object-distances", json={"mask_gzip_base64": base64.b64encode(gzip.compress(mask.tobytes())).decode()})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["airways_found"] is False and got["objects"]["3"]["bronchus_mm"] is None and "pleura_mm" in got["objects"]["3"]
+    api.as_user(OUTSIDER)
+    assert api.post(f"/series/{SERIES}/object-distances", json={"mask_gzip_base64": base64.b64encode(gzip.compress(mask.tobytes())).decode()}).status_code == 403
+    main._lung_mask_cache.clear()

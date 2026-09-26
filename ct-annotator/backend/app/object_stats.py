@@ -8,7 +8,8 @@ nothing; z, y, x like the HU volume) so it measures what is on screen,
 saved or not. Pure numpy/scipy -- main.py feeds it the volume and spacing.
 """
 import numpy as np
-from scipy.spatial import ConvexHull, QhullError
+from scipy import ndimage
+from scipy.spatial import ConvexHull, QhullError, cKDTree
 
 # The share of an object's voxels this far below 0 HU is air -- a "solid"
 # nodule holding many of them was painted over lung.
@@ -112,4 +113,85 @@ def object_stats(mask: np.ndarray, hu: np.ndarray | None, spacing: tuple[float, 
             stats["hu_max"] = round(float(values.max()), 1)
             stats["below_minus_500"] = round(float((values < AIR_HU).mean()), 4)
         out[oid] = stats
+    return out
+
+
+def _fill_holes_by_slice(mask: np.ndarray) -> np.ndarray:
+    """What the lung encloses, slice by slice: vessels and nodules are holes
+    in a threshold lung mask, and must count as inside, not as its surface."""
+    out = np.empty(mask.shape, dtype=bool)
+    for z in range(mask.shape[0]):
+        out[z] = ndimage.binary_fill_holes(mask[z] > 0)
+    return out
+
+
+def _block_max(mask: np.ndarray, k: int) -> np.ndarray:
+    """In-plane k x k blocks of `mask`, each its largest value -- the same
+    ceil(n / k) grid as mask[:, ::k, ::k]."""
+    z, y, x = mask.shape
+    py, px = (-y) % k, (-x) % k
+    padded = np.pad(mask, ((0, 0), (0, py), (0, px)))
+    return padded.reshape(z, (y + py) // k, k, (x + px) // k, k).max(axis=(2, 4))
+
+
+def _nearest_mm(points: np.ndarray, at: np.ndarray, grid: tuple[float, float, float]) -> float | None:
+    """The shortest gap, in mm, from any voxel of `at` to any of `points`
+    (voxel indices on the same grid); None without points."""
+    if len(points) == 0:
+        return None
+    scale = np.asarray(grid)
+    gap, _ = cKDTree(points * scale).query(np.argwhere(at) * scale, k=1)
+    return float(gap.min())
+
+
+def _edge_outside(solid: np.ndarray) -> np.ndarray:
+    """The voxels just outside `solid` (face neighbours): the nearest of
+    them is exactly what a distance transform of `solid` measures to."""
+    return np.argwhere(ndimage.binary_dilation(solid) & ~solid)
+
+
+def object_distances(
+    mask: np.ndarray,
+    lung: np.ndarray,
+    airway: np.ndarray | None,
+    spacing: tuple[float, float, float],
+    shrink: int = 2,
+) -> dict[int, dict]:
+    """Per object id, the gaps that decide how a nodule is read: to the
+    pleura (the lung's surface -- 0 when the object reaches out of the
+    lung: juxtapleural) and to the nearest *segmented* bronchus (None
+    without an airway tree). Measured on a grid shrunk `shrink` times
+    in-plane -- about one voxel's accuracy, which the answer is rounded to.
+
+    Nearest-point queries against the surfaces' voxels, not distance maps
+    over the whole grid: those were two float volumes (plus scipy's index
+    arrays) next to the cached series, and got the backend killed."""
+    dz, dy, dx = spacing
+    sub = (slice(None), slice(None, None, shrink), slice(None, None, shrink))
+    grid = (dz, dy * shrink, dx * shrink)
+    inside = _fill_holes_by_slice(lung[sub])
+    surface = _edge_outside(inside)
+    tube = airway[sub] > 0 if airway is not None else None
+    bronchi = np.argwhere(tube) if tube is not None and tube.any() else None
+    # every object's voxels, kept even when smaller than the shrunk grid:
+    # each shrink x shrink block keeps its largest id
+    small = _block_max(mask, shrink) if shrink > 1 else mask
+    out: dict[int, dict] = {}
+    for oid in np.unique(small):
+        if oid == 0:
+            continue
+        at = small == oid
+        outside = bool((~inside[at]).any())
+        pleura = 0.0 if outside else _nearest_mm(surface, at, grid)
+        if bronchi is None:
+            bronchus = None
+        elif tube[at].any():
+            bronchus = 0.0
+        else:
+            bronchus = _nearest_mm(bronchi, at, grid)
+        out[int(oid)] = {
+            "pleura_mm": None if pleura is None else round(pleura, 1),
+            "touches_pleura": outside,
+            "bronchus_mm": None if bronchus is None else round(bronchus, 1),
+        }
     return out

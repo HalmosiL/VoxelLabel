@@ -482,6 +482,22 @@ export async function fetchPreviousRound(seriesId: string): Promise<{ versionId:
   return { versionId: r.version_id, gzipBytes: r.mask_gzip_base64 ? base64ToArrayBuffer(r.mask_gzip_base64) : null, objects: r.objects ?? [], labels: r.labels ?? [] };
 }
 
+/** How far each painted object is from the pleura and from the nearest
+ * segmented bronchus (backend's object_distances). */
+export interface ObjectDistance {
+  /** null when the series has no lung surface to measure to */
+  pleura_mm: number | null;
+  touches_pleura: boolean;
+  bronchus_mm: number | null;
+}
+
+export async function fetchObjectDistances(seriesId: string, gzipBytes: ArrayBuffer): Promise<{ objects: Record<string, ObjectDistance>; airways_found: boolean }> {
+  return apiFetch(API.annotator, `/series/${seriesId}/object-distances`, {
+    method: "POST",
+    body: JSON.stringify({ mask_gzip_base64: arrayBufferToBase64(gzipBytes) }),
+  });
+}
+
 /** The series' (slice, row, column) spacing in mm -- the ruler's scale. */
 export async function fetchSeriesSpacing(seriesId: string): Promise<[number, number, number] | null> {
   const r = await apiFetch<{ spacing_mm: [number, number, number] | null }>(API.annotator, `/series/${seriesId}/spacing`);

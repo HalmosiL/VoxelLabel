@@ -38,3 +38,55 @@ def test_the_slice_distance_comes_from_the_positions():
     assert series_spacing(a, b) == (2.5, 0.7, 0.7)
     assert series_spacing(SimpleNamespace(PixelSpacing=[0.8, 0.9], SliceThickness=1.25), None) == (1.25, 0.8, 0.9)
     assert series_spacing(SimpleNamespace(), None) is None
+
+
+def test_distances_to_the_pleura_and_the_nearest_bronchus():
+    from app.object_stats import object_distances
+
+    lung = np.zeros((20, 40, 40), dtype=np.uint8)
+    lung[:, 5:35, 5:35] = 1  # a block of lung, its surface 5 voxels in from the edge
+    lung[10, 20, 20] = 0  # a vessel: a hole in the lung mask, not its surface
+    airway = np.zeros_like(lung)
+    airway[:, 20, 10] = 1  # a bronchus running down at x = 10
+    mask = np.zeros_like(lung)
+    mask[10, 20, 20] = 1  # object 1 in the middle (on the vessel hole)
+    mask[10, 20, 4:7] = 2  # object 2 reaching out through the surface
+    d = object_distances(mask, lung, airway, (1.0, 1.0, 1.0), shrink=1)
+    one, two = d[1], d[2]
+    assert one["touches_pleura"] is False and 13 <= one["pleura_mm"] <= 16  # ~15 voxels to the nearest surface
+    assert 9 <= one["bronchus_mm"] <= 11  # 10 voxels from the bronchus
+    assert two["touches_pleura"] is True and two["pleura_mm"] == 0
+    none = object_distances(mask, lung, None, (1.0, 1.0, 1.0), shrink=1)
+    assert none[1]["bronchus_mm"] is None
+
+
+def test_a_one_voxel_object_survives_the_shrunk_grid():
+    from app.object_stats import object_distances
+
+    lung = np.ones((2, 3, 3), dtype=np.uint8)
+    mask = np.zeros_like(lung)
+    mask[1, 2, 2] = 7  # the last row and column, which a strided grid skips
+    assert 7 in object_distances(mask, lung, None, (1.0, 1.0, 1.0), shrink=2)
+
+
+def test_distances_stay_small_in_memory():
+    """Two full distance maps of a real series were enough, with the cached
+    volume, to get the backend killed: the gaps come from the surfaces'
+    points instead, a few times the mask's own bytes at most."""
+    import tracemalloc
+
+    from app.object_stats import object_distances
+
+    lung = np.zeros((60, 256, 256), dtype=np.uint8)
+    lung[:, 20:236, 20:120] = 1
+    lung[:, 20:236, 136:236] = 1
+    airway = np.zeros_like(lung)
+    airway[:, 128, 125:131] = 1
+    mask = np.zeros_like(lung)
+    mask[30, 100:104, 60:64] = 1
+    tracemalloc.start()
+    d = object_distances(mask, lung, airway, (2.5, 0.7, 0.7))
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert d[1]["touches_pleura"] is False
+    assert peak < 3 * mask.nbytes, peak

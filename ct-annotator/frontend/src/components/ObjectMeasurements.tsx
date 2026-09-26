@@ -1,17 +1,23 @@
-import type { ObjectStats } from "../api/annotatorApi";
-import { airWarning, measurementParts } from "../lib/objectMeasure";
+import type { ObjectDistance, ObjectStats } from "../api/annotatorApi";
+import { airWarning, distanceText, measurementParts } from "../lib/objectMeasure";
 
 /** Under the object on the review card: its measurements, a warning when
  * much of it is air, and the slices it is on -- each one click away. */
 export default function ObjectMeasurements({
   stats,
   loading,
+  distance,
+  distanceLoading,
+  airwaysFound,
   slices,
   currentSlice,
   onGoToSlice,
 }: {
   stats: ObjectStats | null;
   loading: boolean;
+  distance?: ObjectDistance | null;
+  distanceLoading?: boolean;
+  airwaysFound?: boolean;
   /** 0-based */
   slices: number[];
   currentSlice: number;
@@ -29,6 +35,13 @@ export default function ObjectMeasurements({
       ) : (
         <p className="text-gray-500">{loading ? "Measuring…" : "No measurements"}</p>
       )}
+      {distance ? (
+        <p className="mt-0.5 text-gray-300" data-testid="object-distance-text">
+          {distanceText(distance, airwaysFound ?? false)}
+        </p>
+      ) : distanceLoading ? (
+        <p className="mt-0.5 text-gray-500">Measuring to the pleura and the bronchi…</p>
+      ) : null}
       {warning && (
         <p className="mt-1 rounded border border-amber-700/60 bg-amber-950/40 px-1.5 py-1 text-amber-200" data-testid="object-air-warning">
           ⚠ {warning}

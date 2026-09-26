@@ -33,7 +33,7 @@ from app.config import (
     RENDER_CACHE_TTL_SECONDS,
 )
 from app.dicom_render import SLAB_MODES, extract_metadata, parse_dataset, render_plane, render_png, rescaled_pixels, slab_plane
-from app.object_stats import object_stats, series_spacing
+from app.object_stats import object_distances, object_stats, series_spacing
 from app.storage import (
     delete_mask_object,
     download_bytes,
@@ -82,8 +82,10 @@ _dataset_cache: dict[str, tuple[float, object]] = {}
 # insert prunes expired entries and keeps only the most recent few.
 _MAX_CACHED_VOLUMES = 3
 # Each holds its decoded pixels next to the file's bytes (~1 MB for a
-# 512x512 slice): 600 was more than half the container's memory.
-_MAX_CACHED_DATASETS = 300
+# 512x512 slice): 600 was more than half the container's memory. The MPR
+# panes and the 3D work from the cached volume; these only serve the axial
+# render of the slices being looked at.
+_MAX_CACHED_DATASETS = 120
 
 
 
@@ -565,6 +567,31 @@ def _segment_lungs(volume: np.ndarray) -> np.ndarray:
     return np.isin(labeled, kept_labels).astype(np.uint8)
 
 
+def _pack(mask: np.ndarray) -> tuple[tuple[int, ...], np.ndarray]:
+    """A 0/1 mask as bits: an eighth of its bytes in the cache."""
+    return mask.shape, np.packbits(mask.astype(bool, copy=False))
+
+
+def _unpack(packed: tuple[tuple[int, ...], np.ndarray]) -> np.ndarray:
+    shape, bits = packed
+    return np.unpackbits(bits, count=int(np.prod(shape))).reshape(shape)
+
+
+async def _lung_mask_for(series_id: str, user: CurrentUser) -> np.ndarray:
+    """The series' lung mask (see _segment_lungs), cached."""
+    await _require_series_access(series_id, user)
+    cached = _lung_mask_cache.get(series_id)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
+        return _unpack(cached[1])
+    volume = await _get_volume(series_id, user)
+    # seconds of scipy work: off the event loop, so other requests go on
+    mask = await asyncio.to_thread(_segment_lungs, volume)
+    _lung_mask_cache[series_id] = (now, _pack(mask))
+    _prune_cache(_lung_mask_cache, _MAX_CACHED_VOLUMES)
+    return mask
+
+
 @app.get("/series/{series_id}/lung-mask")
 async def get_lung_mask(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
     """A boolean lung mask for the whole series (see _segment_lungs),
@@ -572,18 +599,7 @@ async def get_lung_mask(series_id: str, user: CurrentUser = Depends(get_current_
     payload -- the viewer's 3D pane runs the same client-side
     marching-cubes it already uses for painted objects against this,
     so no mesh-extraction work happens server-side."""
-    await _require_series_access(series_id, user)
-    cached = _lung_mask_cache.get(series_id)
-    now = time.monotonic()
-    if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
-        mask = cached[1]
-    else:
-        volume = await _get_volume(series_id, user)
-        # seconds of scipy work: off the event loop, so other requests go on
-        mask = await asyncio.to_thread(_segment_lungs, volume)
-        _lung_mask_cache[series_id] = (now, mask)
-        _prune_cache(_lung_mask_cache, _MAX_CACHED_VOLUMES)
-
+    mask = await _lung_mask_for(series_id, user)
     gzip_bytes = gzip.compress(mask.tobytes())
     return {
         "mask_gzip_base64": base64.b64encode(gzip_bytes).decode(),
@@ -596,22 +612,28 @@ async def get_lung_mask(series_id: str, user: CurrentUser = Depends(get_current_
 _airway_cache: dict[str, tuple[float, tuple[np.ndarray, dict]]] = {}
 
 
+async def _airways_for(series_id: str, user: CurrentUser) -> tuple[np.ndarray, dict]:
+    """The series' airway tree (app/airways.py) and how it was found, cached."""
+    await _require_series_access(series_id, user)
+    cached = _airway_cache.get(series_id)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
+        packed, info = cached[1]
+        return _unpack(packed), info
+    volume = await _get_volume(series_id, user)
+    spacing = await _series_spacing(series_id, user) or (1.0, 1.0, 1.0)
+    mask, info = await asyncio.to_thread(segment_airways, volume, spacing)
+    _airway_cache[series_id] = (now, (_pack(mask), info))
+    _prune_cache(_airway_cache, _MAX_CACHED_VOLUMES)
+    return mask, info
+
+
 @app.get("/series/{series_id}/airways")
 async def get_airways(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
     """The bronchial tree, segmented from the CT (app/airways.py): a mask
     like the lung mask's, and how it was found (the threshold it stopped
     at, its volume). `found` is false when no trachea could be told apart."""
-    await _require_series_access(series_id, user)
-    cached = _airway_cache.get(series_id)
-    now = time.monotonic()
-    if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
-        mask, info = cached[1]
-    else:
-        volume = await _get_volume(series_id, user)
-        spacing = await _series_spacing(series_id, user) or (1.0, 1.0, 1.0)
-        mask, info = await asyncio.to_thread(segment_airways, volume, spacing)
-        _airway_cache[series_id] = (now, (mask, info))
-        _prune_cache(_airway_cache, _MAX_CACHED_VOLUMES)
+    mask, info = await _airways_for(series_id, user)
     return {
         "mask_gzip_base64": base64.b64encode(await asyncio.to_thread(gzip.compress, mask.tobytes())).decode(),
         "num_slices": mask.shape[0],
@@ -619,6 +641,30 @@ async def get_airways(series_id: str, user: CurrentUser = Depends(get_current_us
         "columns": mask.shape[2],
         **info,
     }
+
+
+@app.post("/series/{series_id}/object-distances")
+async def get_object_distances(series_id: str, body: ObjectStatsBody, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Per painted object: how far it is from the pleura (0 = it reaches
+    out of the lung) and from the nearest segmented bronchus -- see
+    object_stats.object_distances. The mask is the viewer's own, as for
+    object-stats; the lung and airway masks are the series' (cached, the
+    airways take a few seconds the first time)."""
+    if len(body.mask_gzip_base64) > _MAX_MASK_BASE64_CHARS:
+        raise HTTPException(status_code=413, detail="That mask is far larger than any series could need")
+    volume = await _get_volume(series_id, user)
+    try:
+        raw = gzip.decompress(base64.b64decode(body.mask_gzip_base64, validate=True))
+    except (ValueError, OSError, EOFError):
+        raise HTTPException(status_code=422, detail="mask_gzip_base64 is not a gzipped mask") from None
+    if len(raw) != volume.size:
+        raise HTTPException(status_code=422, detail=f"The mask has {len(raw)} voxels, the series {volume.size}")
+    mask = np.frombuffer(raw, dtype=np.uint8).reshape(volume.shape)
+    lung = await _lung_mask_for(series_id, user)
+    airway, info = await _airways_for(series_id, user)
+    spacing = await _series_spacing(series_id, user) or (1.0, 1.0, 1.0)
+    distances = await asyncio.to_thread(object_distances, mask, lung, airway if info.get("found") else None, spacing)
+    return {"objects": {str(k): v for k, v in distances.items()}, "airways_found": bool(info.get("found"))}
 
 
 # AnnotationType rows are essentially static (added by an admin one-off,
