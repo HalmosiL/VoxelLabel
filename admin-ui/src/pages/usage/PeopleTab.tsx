@@ -69,8 +69,8 @@ function PeopleCard({ summary, onOpen }: { summary: UsageSummary; onOpen: (user_
               { header: "Mouse px per page", value: (u) => u.mouse_px_per_page },
               { header: "Cases worked", value: (u) => u.cases_worked },
               { header: "Hands-on time per case (ms)", value: (u) => u.active_per_case_ms },
-              { header: "Annotated", value: (u) => u.annotated },
-              { header: "Reviewed", value: (u) => u.reviewed },
+              { header: "Submissions", value: (u) => u.annotated },
+              { header: "Reviews", value: (u) => u.reviewed },
               { header: "Errors", value: (u) => u.errors },
               { header: "Last seen", value: (u) => u.last_seen_at },
             ]}
@@ -98,8 +98,11 @@ function PeopleCard({ summary, onOpen }: { summary: UsageSummary; onOpen: (user_
                 <th className="text-right" title="Median active time in the viewer per case, across all sittings, idle stretches left out. Lower is better -- compare a person with their own earlier weeks, not with each other.">
                   Hands-on / case
                 </th>
-                <th className="text-right" title="Mark as annotated / Submit review clicks in the viewer">
-                  Annotated · Reviewed
+                <th
+                  className="text-right"
+                  title="Hand-ins (Mark as Annotated) and review decisions in this period, counted from the annotations themselves -- the same numbers as a study's Analytics › People (Submissions, Reviews)"
+                >
+                  Submissions · Reviews
                 </th>
                 <th className="text-right" title="Share of moves that went straight back to the screen before -- carrying something in their head the UI should show side by side. Lower is better.">
                   Back &amp; forth

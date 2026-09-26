@@ -183,7 +183,7 @@ def render_markdown(
     parts.append("## People\n")
     parts.append(
         _table(
-            ["Person", "Sessions", "Total time", "Avg stay", "Back & forth", "Annotated", "Reviewed", "Errors"],
+            ["Person", "Sessions", "Total time", "Avg stay", "Back & forth", "Submissions", "Reviews", "Errors"],
             [
                 [u.get("name") or u.get("username") or u["user_id"], u["sessions"], _duration(u["total_ms"]), _duration(u["avg_dwell_ms"]), f"{round(u['back_and_forth'] * 100)}%", u["annotated"], u["reviewed"], u["errors"]]
                 for u in usage.get("users", [])[:10]
