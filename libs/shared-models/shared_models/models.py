@@ -146,6 +146,12 @@ class Study(Base):
     # pointer-to-object-storage pattern as Instance.object_storage_key.
     cover_image_key: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # In the trash: set when an admin deletes the study from the UI. A
+    # trashed study is hidden from every list and answers 404 to every
+    # study-scoped call (shared_auth.require_study_role) until it is
+    # restored or deleted for good -- a deletion can be undone (UX K2).
+    deleted_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True))
+    deleted_by: Mapped[str | None] = mapped_column(String(255))
 
     memberships: Mapped[list["StudyMembership"]] = relationship(back_populates="study")
     cases: Mapped[list["Case"]] = relationship(back_populates="study")

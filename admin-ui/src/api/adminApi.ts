@@ -116,6 +116,33 @@ export function updateStudy(
  * has cases, unless `force` -- which cascades the exact same delete
  * each case's own "Delete case" action does (imaging data, clinical
  * documents, everything) across all of them, then the study itself. */
+/** A study in the trash: hidden everywhere, its data kept, until it is
+ * restored or deleted for good (deleteStudy). */
+export interface TrashedStudy {
+  id: string;
+  name: string;
+  description: string | null;
+  case_count: number;
+  member_count: number;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  deleted_by_name: string | null;
+}
+
+export function listTrashedStudies(): Promise<TrashedStudy[]> {
+  return apiFetch(base, "/admin/studies/trash");
+}
+
+/** "Delete" on the Studies page: into the trash, nothing removed. */
+export function trashStudy(studyId: string): Promise<{ id: string; deleted_at: string }> {
+  return apiFetch(base, `/admin/studies/${studyId}/trash`, { method: "POST" });
+}
+
+export function restoreStudy(studyId: string): Promise<{ id: string; name: string }> {
+  return apiFetch(base, `/admin/studies/${studyId}/restore`, { method: "POST" });
+}
+
+/** Removes a study and everything in it for good -- the Trash's "Delete forever". */
 export function deleteStudy(studyId: string, force = false): Promise<void> {
   return apiFetch(base, `/admin/studies/${studyId}${force ? "?force=true" : ""}`, { method: "DELETE" });
 }

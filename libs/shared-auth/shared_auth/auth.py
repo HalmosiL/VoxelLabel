@@ -7,12 +7,13 @@ local password/session store. Authorization is two-tiered:
 - everyone else is checked against the `study_memberships` table for a
   role scoped to the specific study being accessed
 
-This module queries `study_memberships` with raw SQL rather than the
+This module queries `study_memberships` (and `studies.deleted_at`) with raw SQL rather than the
 `shared_models` ORM models, so it has no hard dependency on that package --
 the two libraries stay independently versionable and testable, per the
 project's modularity requirement.
 """
 import os
+import uuid
 from dataclasses import dataclass
 
 import jwt
@@ -71,6 +72,19 @@ def get_current_user(
     return CurrentUser(subject=claims["sub"], email=claims.get("email"), realm_roles=realm_roles)
 
 
+STUDY_IN_TRASH = "This study is in the trash -- a platform admin can restore it from Studies > Trash."
+
+
+def _refuse_trashed_study(db: Session, study_id) -> None:
+    try:
+        sid = str(uuid.UUID(str(study_id)))
+    except ValueError:
+        return  # not a study id at all: the route's own lookup says so
+    row = db.execute(text("SELECT deleted_at FROM studies WHERE id = :sid"), {"sid": sid}).first()
+    if row is not None and row[0] is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=STUDY_IN_TRASH)
+
+
 def require_study_role(db: Session, study_id: str, user: CurrentUser, allowed_roles: list[str]) -> None:
     """Raise 403 unless `user` is a global admin or holds one of
     `allowed_roles` on `study_id`.
@@ -85,7 +99,11 @@ def require_study_role(db: Session, study_id: str, user: CurrentUser, allowed_ro
         ):
             require_study_role(db, study_id, user, allowed_roles=["viewer", "annotator", "admin"])
             ...
-    """
+
+    A study in the trash (studies.deleted_at set) answers 404 to everyone,
+    a global admin included: it is closed until restored, and the trash's
+    own endpoints don't go through here."""
+    _refuse_trashed_study(db, study_id)
     if "admin" in user.realm_roles:
         return
 

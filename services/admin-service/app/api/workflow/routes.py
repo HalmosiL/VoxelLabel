@@ -489,6 +489,8 @@ def list_all_jobs(
     result = []
     for card in cards:
         study = studies_by_id.get(card.study_id)
+        if study is not None and study.deleted_at is not None:
+            continue  # in the trash
         is_review = card.type == WorkflowCardType.REVIEW
         case_ids = card.output_case_ids or []
         progress = _annotation_progress(
@@ -542,6 +544,8 @@ def list_my_jobs(
     result = []
     for card in my_cards:
         study = studies_by_id.get(card.study_id)
+        if study is not None and study.deleted_at is not None:
+            continue  # in the trash: its jobs wait with it
         result.append(
             {
                 "study_id": str(card.study_id),

@@ -8,6 +8,7 @@ A `Study` here is the platform's top-level, admin-created RBAC container
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -128,14 +129,18 @@ def list_studies(
     Studies page, the workflow board and ct-annotator's picker all start
     from this list, so a member must be able to see their own studies."""
     if _is_global_admin(user):
-        studies = db.query(Study).order_by(Study.name).all()
+        studies = db.query(Study).filter(Study.deleted_at.is_(None)).order_by(Study.name).all()
         counts = _study_counts(db, [s.id for s in studies])
         return [_serialize_study(s, "admin", counts) for s in studies]
     memberships = db.query(StudyMembership).filter_by(user_id=user.subject).all()
     roles_by_study: dict[str, list[str]] = {}
     for m in memberships:
         roles_by_study.setdefault(str(m.study_id), []).append(m.role.value)
-    studies = db.query(Study).filter(Study.id.in_(list(roles_by_study))).order_by(Study.name).all() if roles_by_study else []
+    studies = (
+        db.query(Study).filter(Study.id.in_(list(roles_by_study)), Study.deleted_at.is_(None)).order_by(Study.name).all()
+        if roles_by_study
+        else []
+    )
     counts = _study_counts(db, [s.id for s in studies])
     return [_serialize_study(s, _highest_role(roles_by_study[str(s.id)]), counts) for s in studies]
 
@@ -153,6 +158,74 @@ def _study_counts(db: Session, study_ids: list) -> dict:
         .all()
     )
     return {"cases": cases, "members": members}
+
+
+@router.get("/trash")
+def list_trashed_studies(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """The studies in the trash, most recently deleted first, with what
+    they still hold -- the Studies page's Trash view. Platform admin only."""
+    _require_global_admin(user)
+    studies = db.query(Study).filter(Study.deleted_at.isnot(None)).order_by(Study.deleted_at.desc()).all()
+    counts = _study_counts(db, [s.id for s in studies])
+    directory = _user_directory() if studies else {}
+    return [
+        {
+            "id": str(s.id),
+            "name": s.name,
+            "description": s.description,
+            "case_count": counts["cases"].get(s.id, 0),
+            "member_count": counts["members"].get(s.id, 0),
+            "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None,
+            "deleted_by": s.deleted_by,
+            "deleted_by_name": display_name(directory[s.deleted_by]) if s.deleted_by in directory else s.deleted_by,
+        }
+        for s in studies
+    ]
+
+
+@router.post("/{study_id}/trash")
+def trash_study(
+    study_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """What "Delete" on the Studies page does: the study goes to the trash
+    with everything in it. Nothing is removed, and restore brings it back
+    as it was; `DELETE /admin/studies/{id}` then removes it for good."""
+    _require_global_admin(user)
+    study = db.get(Study, study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    if study.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="This study is already in the trash")
+    study.deleted_at = datetime.now(timezone.utc)
+    study.deleted_by = user.subject
+    audit.record(db, user, "study.trash", "study", study.id, {"name": study.name})
+    db.commit()
+    return {"id": str(study.id), "deleted_at": study.deleted_at.isoformat()}
+
+
+@router.post("/{study_id}/restore")
+def restore_study(
+    study_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Takes a study out of the trash, exactly as it was."""
+    _require_global_admin(user)
+    study = db.get(Study, study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    if study.deleted_at is None:
+        raise HTTPException(status_code=409, detail="This study isn't in the trash")
+    study.deleted_at = None
+    study.deleted_by = None
+    audit.record(db, user, "study.restore", "study", study.id, {"name": study.name})
+    db.commit()
+    return {"id": str(study.id), "name": study.name}
 
 
 @router.get("/{study_id}")
@@ -177,6 +250,12 @@ def create_study(
 ) -> dict:
     _require_global_admin(user)
     name = required_text(name, "The study name")
+    taken = db.query(Study).filter(Study.name == name).first()
+    if taken is not None and taken.deleted_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f'A study in the trash is called "{name}" -- restore it, or delete it for good, to use the name again.',
+        )
     study = Study(name=name, description=description)
     db.add(study)
     db.flush()

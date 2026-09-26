@@ -6,7 +6,11 @@ import {
   deleteStudy,
   duplicateStudy,
   listStudies,
+  listTrashedStudies,
+  restoreStudy,
   Study,
+  trashStudy,
+  TrashedStudy,
   updateStudy,
   uploadStudyCoverImage,
 } from "../api/adminApi";
@@ -23,7 +27,9 @@ type ModalState =
   | { mode: "create" }
   | { mode: "edit"; study: Study }
   | { mode: "duplicate"; study: Study }
-  | { mode: "delete"; study: Study }
+  | { mode: "trash"; study: Study }
+  | { mode: "trash-view" }
+  | { mode: "purge"; study: TrashedStudy }
   | null;
 
 export default function StudiesPage() {
@@ -33,6 +39,10 @@ export default function StudiesPage() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
 
+  const [trashed, setTrashed] = useState<TrashedStudy[]>([]);
+  // the study just put in the trash, for the "Undo" beside the notice
+  const [justTrashed, setJustTrashed] = useState<Study | null>(null);
+
   function refresh() {
     listStudies()
       .then((list) => {
@@ -40,21 +50,50 @@ export default function StudiesPage() {
         setLoaded(true);
       })
       .catch((err) => setError(describeApiError(err)));
+    if (isAdmin) listTrashedStudies().then(setTrashed).catch(() => setTrashed([]));
   }
 
-  useEffect(refresh, []);
+  useEffect(refresh, [isAdmin]);
   useRegisterGuide("studies", STUDIES_STEPS, loaded, false);
 
   const [deleting, setDeleting] = useState(false);
 
-  /** Deletes the study with everything in it -- only from the delete
-   * dialog, after its name was typed (K2: two browser pop-ups were the
-   * only guard, and one misplaced click next to Duplicate lost a study). */
-  async function handleDelete(study: Study) {
+  /** "Delete" puts the study in the trash, with an Undo right there; it
+   * only goes for good from the Trash, after its name was typed (K2: two
+   * browser pop-ups were the only guard, and one misplaced click next to
+   * Duplicate lost a study with no way back). */
+  async function handleTrash(study: Study) {
+    setDeleting(true);
+    try {
+      await trashStudy(study.id);
+      trackAction("study.trash");
+      setModal(null);
+      setJustTrashed(study);
+      refresh();
+    } catch (err) {
+      setError(describeApiError(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleRestore(studyId: string) {
+    try {
+      await restoreStudy(studyId);
+      trackAction("study.restore");
+      setJustTrashed(null);
+      refresh();
+    } catch (err) {
+      setError(describeApiError(err));
+    }
+  }
+
+  async function handlePurge(study: TrashedStudy) {
     setDeleting(true);
     try {
       await deleteStudy(study.id, true);
-      setModal(null);
+      trackAction("study.delete_forever");
+      setModal({ mode: "trash-view" });
       refresh();
     } catch (err) {
       setError(describeApiError(err));
@@ -86,12 +125,31 @@ export default function StudiesPage() {
           {!isAdmin && <p className="page-subtitle">The studies you are a member of, with your role in each.</p>}
         </div>
         {isAdmin && (
-          <button type="button" className="btn-primary" onClick={() => setModal({ mode: "create" })} data-testid="new-study-top">
-            <PlusIcon className="h-4 w-4" /> New study
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn-secondary" onClick={() => setModal({ mode: "trash-view" })} data-testid="trash-open">
+              <TrashIcon className="h-4 w-4" /> Trash{trashed.length > 0 ? ` (${trashed.length})` : ""}
+            </button>
+            <button type="button" className="btn-primary" onClick={() => setModal({ mode: "create" })} data-testid="new-study-top">
+              <PlusIcon className="h-4 w-4" /> New study
+            </button>
+          </div>
         )}
       </div>
       {error && <p className="alert-error">{error}</p>}
+      {justTrashed && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-700 shadow-sm" data-testid="trash-notice">
+          <TrashIcon className="h-4 w-4 text-gray-400" />
+          <span>
+            &ldquo;{justTrashed.name}&rdquo; is in the trash. Its cases and annotations are kept until you delete it for good.
+          </span>
+          <button type="button" className="btn-secondary btn-sm ml-auto" onClick={() => handleRestore(justTrashed.id)} data-testid="trash-undo">
+            Undo
+          </button>
+          <button type="button" className="text-gray-400 hover:text-gray-600" onClick={() => setJustTrashed(null)} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
 
       {loaded && studies.length === 0 && !isAdmin && (
         <EmptyState message="You're not a member of any study yet -- ask a study admin to add you." />
@@ -112,15 +170,31 @@ export default function StudiesPage() {
             showRole={!isAdmin}
             onImageUploaded={refresh}
             onEdit={() => setModal({ mode: "edit", study: s })}
-            onDelete={() => setModal({ mode: "delete", study: s })}
+            onDelete={() => setModal({ mode: "trash", study: s })}
             onDuplicate={() => setModal({ mode: "duplicate", study: s })}
           />
         ))}
         {isAdmin && <NewStudyTile onClick={() => setModal({ mode: "create" })} />}
       </div>
 
-      {modal && modal.mode === "delete" && (
-        <DeleteStudyModal study={modal.study} deleting={deleting} onClose={() => setModal(null)} onConfirm={() => handleDelete(modal.study)} />
+      {modal && modal.mode === "trash" && (
+        <TrashStudyModal study={modal.study} deleting={deleting} onClose={() => setModal(null)} onConfirm={() => handleTrash(modal.study)} />
+      )}
+      {modal && modal.mode === "trash-view" && (
+        <TrashModal
+          trashed={trashed}
+          onClose={() => setModal(null)}
+          onRestore={(id) => handleRestore(id).then(() => setModal(null))}
+          onPurge={(study) => setModal({ mode: "purge", study })}
+        />
+      )}
+      {modal && modal.mode === "purge" && (
+        <DeleteStudyModal
+          study={modal.study}
+          deleting={deleting}
+          onClose={() => setModal({ mode: "trash-view" })}
+          onConfirm={() => handlePurge(modal.study)}
+        />
       )}
 
       {modal && (modal.mode === "create" || modal.mode === "edit") && (
@@ -214,15 +288,82 @@ function StudyFormModal({
   );
 }
 
-/** What goes with the study, and its name typed to confirm -- a delete
- * can't happen from a stray click any more (K2). */
+/** "Delete" on a study card: into the trash, said plainly -- nothing is
+ * removed yet, so a click is enough. */
+function TrashStudyModal({ study, deleting, onClose, onConfirm }: { study: Study; deleting: boolean; onClose: () => void; onConfirm: () => void }) {
+  const cases = study.case_count ?? 0;
+  return (
+    <Modal title={`Move "${study.name}" to the trash?`} onClose={onClose}>
+      <div className="flex flex-col gap-4" data-testid="trash-study-modal">
+        <p className="text-sm text-gray-600">
+          The study{cases > 0 ? ` and its ${cases} case${cases === 1 ? "" : "s"}` : ""} disappear{cases > 0 ? "" : "s"} for everyone -- its jobs too -- but
+          nothing is removed: restore it from <b>Trash</b> whenever you need it. Only deleting it there removes it for good.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn-danger" disabled={deleting} onClick={onConfirm} data-testid="trash-confirm">
+            {deleting ? "Moving…" : "Move to trash"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** The studies in the trash, newest first: restore, or delete for good. */
+function TrashModal({
+  trashed,
+  onClose,
+  onRestore,
+  onPurge,
+}: {
+  trashed: TrashedStudy[];
+  onClose: () => void;
+  onRestore: (id: string) => void;
+  onPurge: (study: TrashedStudy) => void;
+}) {
+  return (
+    <Modal title="Trash" onClose={onClose}>
+      <div className="flex flex-col gap-3" data-testid="trash-modal">
+        {trashed.length === 0 ? (
+          <EmptyState message="The trash is empty. A study you delete waits here until you restore it or delete it for good." />
+        ) : (
+          <ul className="flex flex-col divide-y divide-gray-100">
+            {trashed.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-3 py-2.5" data-testid="trash-row">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-gray-900">{t.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {t.case_count} case{t.case_count === 1 ? "" : "s"} · deleted {t.deleted_at ? new Date(t.deleted_at).toLocaleString() : ""}
+                    {t.deleted_by_name ? ` by ${t.deleted_by_name}` : ""}
+                  </p>
+                </div>
+                <button type="button" className="btn-secondary btn-sm" onClick={() => onRestore(t.id)} data-testid="trash-restore">
+                  Restore
+                </button>
+                <button type="button" className="btn-sm text-xs font-medium text-red-600 hover:text-red-700" onClick={() => onPurge(t)} data-testid="trash-purge">
+                  Delete forever
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** Deleting for good, from the Trash: what goes with the study, and its
+ * name typed to confirm (K2). */
 function DeleteStudyModal({
   study,
   deleting,
   onClose,
   onConfirm,
 }: {
-  study: Study;
+  study: { name: string; case_count?: number | null };
   deleting: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -231,7 +372,7 @@ function DeleteStudyModal({
   const cases = study.case_count ?? 0;
   const matches = typed.trim() === study.name.trim();
   return (
-    <Modal title={`Delete "${study.name}"?`} onClose={onClose}>
+    <Modal title={`Delete "${study.name}" for good?`} onClose={onClose}>
       <div className="flex flex-col gap-4" data-testid="delete-study-modal">
         <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
           {cases > 0 ? (
