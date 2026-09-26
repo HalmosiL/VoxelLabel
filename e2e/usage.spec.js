@@ -12,8 +12,18 @@ async function token(u, p) {
   const r = await fetch(`${KC}/realms/ct-platform/protocol/openid-connect/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "password", client_id: "ct-platform", username: u, password: p }) });
   return (await r.json()).access_token;
 }
+// Tokens live a few minutes; under the full suite this spec outlasts them.
+// A 401 on a token this spec got from `token()` is answered with a fresh one.
+const issued = new Map(); // token -> [username, password]
+async function freshToken(user, pass) {
+  const t = await token(user, pass);
+  issued.set(t, [user, pass]);
+  return t;
+}
 async function api(t, url, init = {}) {
-  const r = await fetch(url, { ...init, headers: { Authorization: `Bearer ${t}`, "content-type": "application/json", ...(init.headers || {}) } });
+  const send = (tok) => fetch(url, { ...init, headers: { Authorization: `Bearer ${tok}`, "content-type": "application/json", ...(init.headers || {}) } });
+  let r = await send(t);
+  if (r.status === 401 && issued.has(t)) r = await send(await freshToken(...issued.get(t)));
   return { status: r.status, body: await r.json().catch(() => null) };
 }
 async function login(page, user, pass, url) {
@@ -29,8 +39,8 @@ async function login(page, user, pass, url) {
 const seenGuides = () => { try { for (const k of ["workbench","job","case","annotate","review","studies","study","patients","annotation-types","deidentification","users","notifications","system","board","usage"]) localStorage.setItem(`vl.guide.${k}.seen`, "1"); } catch {} };
 
 (async () => {
-  const admin = await token("platform-admin", "platform-admin");
-  const annot = await token("dr-test", "Test1234!");
+  const admin = await freshToken("platform-admin", "platform-admin");
+  const annot = await freshToken("dr-test", "Test1234!");
   // Start from "everything on" so the run is repeatable.
   await api(admin, `${ADMIN}/admin/usage/settings`, { method: "PUT", body: JSON.stringify({ enabled: true, track_mouse: true, track_clicks: true, track_keys: true, track_screen_images: true }) });
   await api(admin, `${ADMIN}/admin/usage/settings/users/${F.ANNOTATOR.subject}`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
