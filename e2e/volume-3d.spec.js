@@ -74,7 +74,9 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   const whole = await shot();
   await page.locator('[data-testid="volume-crop"] summary').click();
   await page.locator('[data-testid="volume-crop-0-lo"]').fill("0.5"); await page.waitForTimeout(1200);
-  check("the crop box cuts the volume", !(await shot()).equals(whole) && /Crop box · on/.test(await page.locator('[data-testid="volume-crop"]').innerText()));
+  const cropText = await page.locator('[data-testid="volume-crop"]').innerText();
+  const cropShot = await shot();
+  check("the crop box cuts the volume", !cropShot.equals(whole) && /Crop box · on/i.test(cropText), { differs: !cropShot.equals(whole), cropText: cropText.slice(0, 80) });
   await page.locator('[data-testid="volume-crop-reset"]').click(); await page.waitForTimeout(1200);
   check("... and Whole volume gives it back", !/· on/.test(await page.locator('[data-testid="volume-crop"]').innerText()));
   // the camera to the selected object (the annotator's first, selected on open)
