@@ -224,6 +224,16 @@ export async function fetchAirways(seriesId: string): Promise<{ data: Uint8Array
   return { data, rows: r.rows, columns: r.columns, numSlices: r.num_slices, found: r.found, thresholdHu: r.threshold_hu, volumeMl: r.volume_ml };
 }
 
+/** The lung's vessels the backend segments from the CT (app/vessels.py). */
+export async function fetchVessels(seriesId: string): Promise<{ data: Uint8Array; rows: number; columns: number; numSlices: number; found: boolean; thresholdHu: number; volumeMl: number }> {
+  const r = await apiFetch<{ mask_gzip_base64: string; num_slices: number; rows: number; columns: number; found: boolean; threshold_hu: number; volume_ml: number }>(
+    API.annotator,
+    `/series/${seriesId}/vessels`
+  );
+  const data = await gunzipToUint8Array(base64ToArrayBuffer(r.mask_gzip_base64));
+  return { data, rows: r.rows, columns: r.columns, numSlices: r.num_slices, found: r.found, thresholdHu: r.threshold_hu, volumeMl: r.volume_ml };
+}
+
 export interface SurfaceConfig {
   tools: string[];
   panes: string[];

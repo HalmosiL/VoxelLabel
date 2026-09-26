@@ -166,7 +166,8 @@ export interface PickScene {
   mode: "volume" | "mip";
   mask: Uint8Array | null;
   lung: Uint8Array | null;
-  airway: Uint8Array | null;
+  /** soft fields drawn as solid surfaces (the airway tree, the vessels) */
+  surfaces: Uint8Array[];
   nearCut: number;
   clipLo: Vec3;
   clipHi: Vec3;
@@ -212,7 +213,7 @@ export function pickAlongRay(o: Vec3, d: Vec3, s: PickScene): { point: Vec3; obj
     const p: Vec3 = [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
     const i = idx(p);
     if (s.mask && s.mask[i]) return { point: p, objectId: s.mask[i] };
-    if (s.airway && s.airway[i] >= 128) return { point: p, objectId: null };
+    if (s.surfaces.some((f) => f[i] >= 128)) return { point: p, objectId: null };
     let a = Math.min(1, Math.max(0, (s.data[i] / 255 - lo) / (hi - lo)));
     if (s.lung && s.lung[i] < 128) a = 0;
     if (s.mode === "mip") {

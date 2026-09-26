@@ -86,7 +86,7 @@ describe("picking in 3D", () => {
   const at = (i: number, j: number, k: number) => (k * 4 + j) * 4 + i;
   for (let j = 0; j < 4; j++) for (let k = 0; k < 4; k++) data[at(2, j, k)] = 255;
   const scene = (extra: Partial<PickScene> = {}): PickScene => ({
-    dims, data, window: [0, 1], opacity: 1, mode: "volume", mask: null, lung: null, airway: null, nearCut: 0, clipLo: [0, 0, 0], clipHi: [1, 1, 1], ...extra,
+    dims, data, window: [0, 1], opacity: 1, mode: "volume", mask: null, lung: null, surfaces: [], nearCut: 0, clipLo: [0, 0, 0], clipHi: [1, 1, 1], ...extra,
   });
 
   it("finds where a ray enters and leaves the box", () => {
@@ -105,6 +105,14 @@ describe("picking in 3D", () => {
     const mask = new Uint8Array(64);
     mask[at(1, 1, 1)] = 5;
     expect(pickAlongRay([-0.5, 0.3, 0.3], [1, 0, 0], scene({ mask }))?.objectId).toBe(5);
+  });
+
+  it("a drawn tree (airways, vessels) in the way is picked as a point, not an object", () => {
+    const vessel = new Uint8Array(64);
+    vessel[at(1, 1, 1)] = 255;
+    const hit = pickAlongRay([-0.5, 0.3, 0.3], [1, 0, 0], scene({ surfaces: [new Uint8Array(64), vessel] }));
+    expect(hit?.objectId).toBeNull();
+    expect(hit!.point[0]).toBeLessThan(0.5); // in front of the bright block
   });
 
   it("a clipped-away part can't be picked", () => {

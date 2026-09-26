@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { fetchAirways, fetchLungMask, fetchVolume3D } from "../api/annotatorApi";
+import { fetchAirways, fetchLungMask, fetchVessels, fetchVolume3D } from "../api/annotatorApi";
 import { errorText } from "../lib/errorText";
 import { enterFullscreen, exitFullscreen, fullscreenElement, onFullscreenChange } from "../lib/fullscreen";
 import { fillLungHoles, FlyKeys, flyStep, labelPalette, objectBounds, pickAlongRay, shrinkMask, softMask, Vec3, VolumeInfo, windowToUnit } from "../lib/volumeRender";
@@ -30,6 +30,8 @@ const PRESETS: { name: string; center: number; width: number }[] = [
  * (the same density) would hide it all. */
 const VESSELS = { center: -350, width: 900 };
 const AIRWAY_COLOR = "#a78bfa";
+// apart from the annotation's label colours and the planes'
+const VESSEL_COLOR = "#f472b6";
 // the 2D panes' own colours (ViewerPage's PLANE_COLORS)
 const PLANE_COLOR = { sagittal: "#f59e0b", coronal: "#22c55e", axial: "#38bdf8" };
 
@@ -55,6 +57,10 @@ uniform sampler3D uAirway;
 uniform bool uShowAirway;
 uniform vec3 uAirwayColor;
 uniform float uAirwayOpacity;
+uniform sampler3D uVessel;
+uniform bool uShowVessel;
+uniform vec3 uVesselColor;
+uniform float uVesselOpacity;
 uniform vec3 uPick;
 uniform bool uShowPick;
 uniform vec3 uAspect;
@@ -90,6 +96,20 @@ float sampleVolume(vec3 p) {
 
 float windowed(float v) {
   return clamp((v - uWindow.x) / (uWindow.y - uWindow.x), 0.0, 1.0);
+}
+
+// a segmented tree (airways, vessels): a smooth, shaded surface where its
+// soft field crosses the middle
+vec4 treeAt(sampler3D field, vec3 p, vec3 dir, vec3 color, float opacity) {
+  if (texture(field, p).r <= 0.4) return vec4(0.0);
+  vec3 g = vec3(
+    texture(field, p + vec3(uTexel.x, 0, 0)).r - texture(field, p - vec3(uTexel.x, 0, 0)).r,
+    texture(field, p + vec3(0, uTexel.y, 0)).r - texture(field, p - vec3(0, uTexel.y, 0)).r,
+    texture(field, p + vec3(0, 0, uTexel.z)).r - texture(field, p - vec3(0, 0, uTexel.z)).r);
+  float gl = length(g);
+  vec3 c = color;
+  if (gl > 1e-4) c *= 0.3 + 0.7 * abs(dot(g / gl, dir));
+  return vec4(c, opacity);
 }
 
 vec2 hitBox(vec3 o, vec3 d) {
@@ -144,25 +164,13 @@ void main() {
       float id = texture(uMask, p).r * 255.0;
       if (id > 0.5) lc = texture(uPalette, vec2((floor(id + 0.5) + 0.5) / 256.0, 0.5));
     }
-    // the bronchial tree: a smooth, shaded surface where its soft field crosses the middle
-    vec4 aw = vec4(0.0);
-    if (uShowAirway) {
-      float f = texture(uAirway, p).r;
-      if (f > 0.4) {
-        vec3 g = vec3(
-          texture(uAirway, p + vec3(uTexel.x, 0, 0)).r - texture(uAirway, p - vec3(uTexel.x, 0, 0)).r,
-          texture(uAirway, p + vec3(0, uTexel.y, 0)).r - texture(uAirway, p - vec3(0, uTexel.y, 0)).r,
-          texture(uAirway, p + vec3(0, 0, uTexel.z)).r - texture(uAirway, p - vec3(0, 0, uTexel.z)).r);
-        float gl = length(g);
-        vec3 c = uAirwayColor;
-        if (gl > 1e-4) c *= 0.3 + 0.7 * abs(dot(g / gl, dir));
-        aw = vec4(c, uAirwayOpacity);
-      }
-    }
+    vec4 aw = uShowAirway ? treeAt(uAirway, p, dir, uAirwayColor, uAirwayOpacity) : vec4(0.0);
+    vec4 vs = uShowVessel ? treeAt(uVessel, p, dir, uVesselColor, uVesselOpacity) : vec4(0.0);
     if (uMode == 1) {
       best = max(best, a);
       if (lc.a > 0.0 && maskHit.a == 0.0) maskHit = vec4(lc.rgb, 1.0);
       if (aw.a > 0.0 && maskHit.a == 0.0) maskHit = vec4(aw.rgb, 1.0);
+      if (vs.a > 0.0 && maskHit.a == 0.0) maskHit = vec4(vs.rgb, 1.0);
       continue;
     }
     vec3 col = vec3(a);
@@ -174,6 +182,10 @@ void main() {
         windowed(texture(uVolume, p + vec3(0, 0, uTexel.z)).r) - windowed(texture(uVolume, p - vec3(0, 0, uTexel.z)).r));
       float gl = length(g);
       if (gl > 1e-4) col *= 0.35 + 0.65 * abs(dot(g / gl, dir));
+    }
+    if (vs.a > 0.0) {
+      col = vs.rgb;
+      alpha = max(alpha, vs.a);
     }
     if (aw.a > 0.0) {
       col = aw.rgb;
@@ -191,13 +203,25 @@ void main() {
   }
   if (uMode == 1) {
     vec3 c = vec3(best);
-    if (maskHit.a > 0.0 && (uShowMask || uShowAirway)) c = mix(c, maskHit.rgb, uMaskOpacity);
+    if (maskHit.a > 0.0 && (uShowMask || uShowAirway || uShowVessel)) c = mix(c, maskHit.rgb, uMaskOpacity);
     fragColor = vec4(c, 1.0);
   } else {
     fragColor = vec4(acc.rgb, 1.0);
   }
 }
 `;
+
+/** A 0..255 field (a soft mask) as a linearly filtered 3D texture. */
+function fieldTexture(field: Uint8Array, x: number, y: number, z: number): THREE.Data3DTexture {
+  const tex = new THREE.Data3DTexture(field as Uint8Array<ArrayBuffer>, x, y, z);
+  tex.format = THREE.RedFormat;
+  tex.type = THREE.UnsignedByteType;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.unpackAlignment = 1;
+  tex.needsUpdate = true;
+  return tex;
+}
 
 interface World {
   renderer: THREE.WebGLRenderer;
@@ -293,6 +317,10 @@ export default function VolumeView({
   const [airwayState, setAirwayState] = useState<"none" | "loading" | "ready" | "notfound" | "error">("none");
   const [airwayInfo, setAirwayInfo] = useState<{ thresholdHu: number | null; volumeMl: number } | null>(null);
   const [airwayOpacity, setAirwayOpacity] = useState(0.9);
+  const [showVessels, setShowVessels] = useState(false);
+  const [vesselState, setVesselState] = useState<"none" | "loading" | "ready" | "notfound" | "error">("none");
+  const [vesselInfo, setVesselInfo] = useState<{ thresholdHu: number; volumeMl: number } | null>(null);
+  const [vesselOpacity, setVesselOpacity] = useState(0.8);
   // painting changes the mask in place: "Update annotation" (or a new or
   // deleted object) sends it to the GPU again
   const [maskTick, setMaskTick] = useState(0);
@@ -302,7 +330,7 @@ export default function VolumeView({
   const world = useRef<World | null>(null);
   const hoveredRef = useRef(false);
   // CPU copies of what the GPU draws, for picking (lib/volumeRender pickAlongRay)
-  const cpu = useRef<{ data: Uint8Array | null; mask: Uint8Array | null; lung: Uint8Array | null; airway: Uint8Array | null }>({ data: null, mask: null, lung: null, airway: null });
+  const cpu = useRef<{ data: Uint8Array | null; mask: Uint8Array | null; lung: Uint8Array | null; airway: Uint8Array | null; vessel: Uint8Array | null }>({ data: null, mask: null, lung: null, airway: null, vessel: null });
   const [picked, setPicked] = useState<{ z: number; objectId: number | null } | null>(null);
   const [follow, setFollow] = useState(false);
   const [focused, setFocused] = useState<number | null>(null);
@@ -312,7 +340,7 @@ export default function VolumeView({
   const [clipLo, setClipLo] = useState<Vec3>([0, 0, 0]);
   const [clipHi, setClipHi] = useState<Vec3>([1, 1, 1]);
   const cropped = clipLo.some((v) => v > 0) || clipHi.some((v) => v < 1);
-  const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0, clipLo: [0, 0, 0] as Vec3, clipHi: [1, 1, 1] as Vec3 });
+  const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, showVessels: false, nearCut: 0, clipLo: [0, 0, 0] as Vec3, clipHi: [1, 1, 1] as Vec3 });
   const speedRef = useRef(speed);
   speedRef.current = speed;
   const navRef = useRef(nav);
@@ -459,7 +487,7 @@ export default function VolumeView({
       mode: st.mode,
       mask: st.showMask ? cpu.current.mask : null,
       lung: st.lungOnly ? cpu.current.lung : null,
-      airway: st.showAirways ? cpu.current.airway : null,
+      surfaces: [st.showAirways && cpu.current.airway, st.showVessels && cpu.current.vessel].filter((f): f is Uint8Array => !!f),
       nearCut: st.nearCut,
       clipLo: st.clipLo,
       clipHi: st.clipHi,
@@ -567,13 +595,7 @@ export default function VolumeView({
         if (cancelled || !w) return;
         const [x, y, z] = info.dims;
         cpu.current.data = data;
-        const tex = new THREE.Data3DTexture(data as Uint8Array<ArrayBuffer>, x, y, z);
-        tex.format = THREE.RedFormat;
-        tex.type = THREE.UnsignedByteType;
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        tex.unpackAlignment = 1;
-        tex.needsUpdate = true;
+        const tex = fieldTexture(data, x, y, z);
         const emptyMask = new THREE.Data3DTexture(new Uint8Array(1), 1, 1, 1);
         emptyMask.format = THREE.RedFormat;
         emptyMask.needsUpdate = true;
@@ -592,6 +614,10 @@ export default function VolumeView({
             uShowAirway: { value: false },
             uAirwayColor: { value: new THREE.Color(AIRWAY_COLOR) },
             uAirwayOpacity: { value: 0.9 },
+            uVessel: { value: emptyMask },
+            uShowVessel: { value: false },
+            uVesselColor: { value: new THREE.Color(VESSEL_COLOR) },
+            uVesselOpacity: { value: 0.8 },
             uPick: { value: new THREE.Vector3() },
             uShowPick: { value: false },
             uAspect: { value: new THREE.Vector3(1, 1, 1) },
@@ -709,14 +735,7 @@ export default function VolumeView({
         if (shrunk.length !== x * y * z) throw new Error("size");
         const small = softMask(fillLungHoles(shrunk, x, y, z), x, y, z);
         cpu.current.lung = small;
-        const tex = new THREE.Data3DTexture(small, x, y, z);
-        tex.format = THREE.RedFormat;
-        tex.type = THREE.UnsignedByteType;
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        tex.unpackAlignment = 1;
-        tex.needsUpdate = true;
-        w.material.uniforms.uLung.value = tex;
+        w.material.uniforms.uLung.value = fieldTexture(small, x, y, z);
         w.dirty = true;
         setLungState("ready");
       })
@@ -740,20 +759,38 @@ export default function VolumeView({
         if (shrunk.length !== x * y * z) throw new Error("size");
         const soft = softMask(shrunk, x, y, z);
         cpu.current.airway = soft;
-        const tex = new THREE.Data3DTexture(soft, x, y, z);
-        tex.format = THREE.RedFormat;
-        tex.type = THREE.UnsignedByteType;
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        tex.unpackAlignment = 1;
-        tex.needsUpdate = true;
-        w.material.uniforms.uAirway.value = tex;
+        w.material.uniforms.uAirway.value = fieldTexture(soft, x, y, z);
         w.dirty = true;
         setAirwayInfo({ thresholdHu: a.thresholdHu, volumeMl: a.volumeMl });
         setAirwayState("ready");
       })
       .catch(() => setAirwayState("error"));
   }, [showAirways, airwayState, seriesId, info]);
+
+  // ── the lung's vessels, segmented by the backend (app/vessels.py) ─────────
+  useEffect(() => {
+    if (!showVessels || vesselState !== "none" || !seriesId || !info) return;
+    setVesselState("loading");
+    fetchVessels(seriesId)
+      .then((v) => {
+        const w = world.current;
+        if (!w?.material) return;
+        if (!v.found) {
+          setVesselState("notfound");
+          return;
+        }
+        const [x, y, z] = info.dims;
+        const shrunk = shrinkMask(v.data, v.rows, v.columns, v.numSlices, info.factor);
+        if (shrunk.length !== x * y * z) throw new Error("size");
+        const soft = softMask(shrunk, x, y, z);
+        cpu.current.vessel = soft;
+        w.material.uniforms.uVessel.value = fieldTexture(soft, x, y, z);
+        w.dirty = true;
+        setVesselInfo({ thresholdHu: v.thresholdHu, volumeMl: v.volumeMl });
+        setVesselState("ready");
+      })
+      .catch(() => setVesselState("error"));
+  }, [showVessels, vesselState, seriesId, info]);
 
   // ── the knobs, straight into the shader ─────────────────────────────────
   useEffect(() => {
@@ -773,10 +810,12 @@ export default function VolumeView({
     (u.uClipLo.value as THREE.Vector3).set(...clipLo);
     (u.uClipHi.value as THREE.Vector3).set(...clipHi);
     u.uShowAirway.value = showAirways && airwayState === "ready";
-    settingsRef.current = { center, width, opacity, mode, showMask, lungOnly: lungOnly && lungState === "ready", showAirways: showAirways && airwayState === "ready", nearCut, clipLo, clipHi };
+    u.uShowVessel.value = showVessels && vesselState === "ready";
+    settingsRef.current = { center, width, opacity, mode, showMask, lungOnly: lungOnly && lungState === "ready", showAirways: showAirways && airwayState === "ready", showVessels: showVessels && vesselState === "ready", nearCut, clipLo, clipHi };
     u.uAirwayOpacity.value = airwayOpacity;
+    u.uVesselOpacity.value = vesselOpacity;
     if (world.current) world.current.dirty = true;
-  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut, showAirways, airwayState, airwayOpacity, clipLo, clipHi]);
+  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut, showAirways, airwayState, airwayOpacity, showVessels, vesselState, vesselOpacity, clipLo, clipHi]);
 
   // ── flying: pointer lock + mouse look, WASD / Space / Shift ─────────────
   useEffect(() => {
@@ -1058,6 +1097,19 @@ export default function VolumeView({
                 )}
               </label>
               {showAirways && airwayState === "ready" && slider("Airway opacity", airwayOpacity, 0.1, 1, 0.05, setAirwayOpacity, "volume-airway-opacity", `${Math.round(airwayOpacity * 100)}%`)}
+              <label className="flex flex-wrap items-center gap-x-2" title="The lung's vessels, found from the CT: what is denser than -400 HU inside the lungs, minus the pleura's edge and small specks. Nodules are dense too -- the annotation is drawn over them in its own colour">
+                <input type="checkbox" checked={showVessels} onChange={(e) => setShowVessels(e.target.checked)} data-testid="volume-vessels" />
+                <span style={{ color: VESSEL_COLOR }}>Vessels</span>
+                {showVessels && vesselState === "loading" && <span className="text-gray-500">segmenting…</span>}
+                {showVessels && vesselState === "notfound" && <span className="text-amber-300">none found in the lungs</span>}
+                {showVessels && vesselState === "error" && <span className="text-red-400">failed</span>}
+                {showVessels && vesselState === "ready" && vesselInfo && (
+                  <span className="text-gray-500" data-testid="volume-vessels-info">
+                    {vesselInfo.volumeMl} mL · above {vesselInfo.thresholdHu} HU
+                  </span>
+                )}
+              </label>
+              {showVessels && vesselState === "ready" && slider("Vessel opacity", vesselOpacity, 0.1, 1, 0.05, setVesselOpacity, "volume-vessel-opacity", `${Math.round(vesselOpacity * 100)}%`)}
               {slider("Center (HU)", center, -1000, 1500, 10, setCenter, "volume-center")}
               {slider("Width (HU)", width, 50, 4000, 10, setWidth, "volume-width")}
               {mode === "volume" && slider("Opacity", opacity, 0.01, 1, 0.01, setOpacity, "volume-opacity", `${Math.round(opacity * 100)}%`)}

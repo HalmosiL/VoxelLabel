@@ -44,6 +44,7 @@ from app.storage import (
     upload_mask,
     upload_mask_volume,
 )
+from app.vessels import segment_vessels
 from app.volume_3d import HU_OFFSET, HU_STEP, downsample_for_3d
 
 app = FastAPI(title="CT Annotator Viewer -- thin backend")
@@ -634,6 +635,36 @@ async def get_airways(series_id: str, user: CurrentUser = Depends(get_current_us
     like the lung mask's, and how it was found (the threshold it stopped
     at, its volume). `found` is false when no trachea could be told apart."""
     mask, info = await _airways_for(series_id, user)
+    return {
+        "mask_gzip_base64": base64.b64encode(await asyncio.to_thread(gzip.compress, mask.tobytes())).decode(),
+        "num_slices": mask.shape[0],
+        "rows": mask.shape[1],
+        "columns": mask.shape[2],
+        **info,
+    }
+
+
+_vessel_cache: dict[str, tuple[float, tuple[tuple, dict]]] = {}
+
+
+@app.get("/series/{series_id}/vessels")
+async def get_vessels(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """The lung's vessels (app/vessels.py): a mask like the airways', cached
+    the same way, and how much was found."""
+    cached = _vessel_cache.get(series_id)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < RENDER_CACHE_TTL_SECONDS:
+        await _require_series_access(series_id, user)
+        packed, info = cached[1]
+        mask = _unpack(packed)
+    else:
+        lung = await _lung_mask_for(series_id, user)
+        volume = await _get_volume(series_id, user)
+        spacing = await _series_spacing(series_id, user) or (1.0, 1.0, 1.0)
+        mask, info = await asyncio.to_thread(segment_vessels, volume, lung, spacing)
+        del lung
+        _vessel_cache[series_id] = (now, (_pack(mask), info))
+        _prune_cache(_vessel_cache, _MAX_CACHED_VOLUMES)
     return {
         "mask_gzip_base64": base64.b64encode(await asyncio.to_thread(gzip.compress, mask.tobytes())).decode(),
         "num_slices": mask.shape[0],

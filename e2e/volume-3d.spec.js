@@ -2,7 +2,8 @@
 // annotation inside it, opacity / smoothing / window / MIP live, a camera
 // that flies like a game character (W A S D, Space, Shift) and "Only inside
 // the lungs" (with a smooth edge) for vessels and nodules, and the bronchial
-// tree segmented from the CT. WebGL here is software (SwiftShader).
+// tree and the lung's vessels segmented from the CT. WebGL here is software
+// (SwiftShader).
 const { chromium } = require("playwright");
 const { F, token } = require("./helpers");
 const ADMIN = "http://localhost:8004", VIEWER = "http://localhost:5174";
@@ -61,6 +62,11 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.waitForFunction(() => /mL · to -?\d+ HU|no trachea found|failed/.test(document.querySelector('[data-testid="volume-panel"]')?.innerText || ""), null, { timeout: 60000 }).catch(() => {});
   const airways = await panel.innerText();
   check("Airways segments the tree (or says there is no trachea)", /mL · to -?\d+ HU|no trachea found/.test(airways) && !/failed/.test(airways), airways.slice(0, 300));
+  // the lung's vessels, in their own colour: how much, or that there are none
+  await page.locator('[data-testid="volume-vessels"]').check();
+  await page.waitForFunction(() => /mL · above -?\d+ HU|none found in the lungs|failed/.test(document.querySelector('[data-testid="volume-panel"]')?.innerText || ""), null, { timeout: 60000 }).catch(() => {});
+  const vessels = await panel.innerText();
+  check("Vessels segments them (or says there are none)", /mL · above -?\d+ HU|none found in the lungs/.test(vessels) && !/failed/.test(vessels), vessels.slice(0, 300));
   await page.locator('[data-testid="volume-mode-mip"]').click(); await page.waitForTimeout(1500);
   check("MIP is one click", (await page.locator('[data-testid="volume-mode-mip"]').getAttribute("aria-pressed")) === "true");
   check("full screen is there", (await page.locator('[data-testid="volume-fullscreen"]').count()) === 1);

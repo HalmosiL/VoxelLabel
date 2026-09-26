@@ -581,3 +581,27 @@ def test_object_distances_use_the_series_lungs_and_airways(api, monkeypatch):
     api.as_user(OUTSIDER)
     assert api.post(f"/series/{SERIES}/object-distances", json={"mask_gzip_base64": base64.b64encode(gzip.compress(mask.tobytes())).decode()}).status_code == 403
     main._lung_mask_cache.clear()
+
+
+def test_the_vessels_come_like_the_airways(api, monkeypatch):
+    import base64
+    import gzip
+
+    main._lung_mask_cache.clear()
+    main._vessel_cache.clear()
+    monkeypatch.setitem(main._volume_cache, SERIES, (main.time.monotonic(), np.zeros((2, 2, 2), dtype=np.int16)))
+    monkeypatch.setattr(main, "_segment_lungs", lambda vol: np.ones(vol.shape, dtype=np.uint8))
+    monkeypatch.setattr(main, "segment_vessels", lambda vol, lung, sp: (lung.copy(), {"found": True, "threshold_hu": -400, "volume_ml": 0.5}))
+
+    async def spacing(series_id, user):
+        return (1.0, 1.0, 1.0)
+
+    monkeypatch.setattr(main, "_series_spacing", spacing)
+    api.as_user(MEMBER)
+    r = api.get(f"/series/{SERIES}/vessels").json()
+    assert r["found"] is True and r["volume_ml"] == 0.5 and (r["num_slices"], r["rows"], r["columns"]) == (2, 2, 2)
+    assert gzip.decompress(base64.b64decode(r["mask_gzip_base64"])) == b"\1" * 8
+    api.as_user(OUTSIDER)
+    assert api.get(f"/series/{SERIES}/vessels").status_code == 403
+    main._lung_mask_cache.clear()
+    main._vessel_cache.clear()
