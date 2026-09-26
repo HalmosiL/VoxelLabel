@@ -280,7 +280,7 @@ export default function UsagePage() {
               <option value="">Everyone</option>
               {choosable.map((p) => (
                 <option key={p.user_id} value={p.user_id}>
-                  {p.username}
+                  {p.name || p.username}
                 </option>
               ))}
             </select>
@@ -309,7 +309,7 @@ export default function UsagePage() {
       </div>
       <p className="text-sm text-gray-500" data-testid="usage-range-label">
         {"from" in range ? `Showing ${formatWhen(range.from)} – ${range.to ? formatWhen(range.to) : "now"}` : `Showing the last ${range.days} days`}
-        {chosen ? ` · only ${chosen.username}` : " · everyone"}
+        {chosen ? ` · only ${chosen.name || chosen.username}` : " · everyone"}
         {studyFilter && ` · study ${studies.find((st) => st.id === studyFilter)?.name ?? ""}`}
         {summary && (
           <span data-testid="usage-basis">
@@ -369,7 +369,7 @@ export default function UsagePage() {
           range={range}
           userFilter={userFilter}
           studyFilter={studyFilter}
-          personName={chosen?.username ?? null}
+          personName={chosen ? chosen.name || chosen.username : null}
           onGoTo={setTab}
           onError={setError}
         />
@@ -385,7 +385,7 @@ export default function UsagePage() {
           heatMode={heatMode}
           onHeatMode={setHeatMode}
         />}
-      {overview && summary && tab === "friction" && <FrictionTab summary={summary} pipelineHealth={overview.pipeline} personName={chosen?.username ?? null} />}
+      {overview && summary && tab === "friction" && <FrictionTab summary={summary} pipelineHealth={overview.pipeline} personName={chosen ? chosen.name || chosen.username : null} />}
       {summary && tab === "cases" && <CasesTab summary={summary} />}
       {overview && summary && tab === "people" && (
         <PeopleTab

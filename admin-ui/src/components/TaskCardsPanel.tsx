@@ -139,7 +139,7 @@ export default function TaskCardsPanel({
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
                         {assignedUserId ? (
-                          <Avatar id={assignedUserId} />
+                          <Avatar id={assignedUserId} name={users.find((u) => u.id === assignedUserId)?.username} />
                         ) : (
                           <span title="Nobody is assigned to this job">
                             <QuestionMarkCircleIcon className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />

@@ -153,7 +153,7 @@ def test_summary_sessions_and_heatmap(client):
 
     heat = client.get("/admin/usage/heatmap", params={"route": "/my-jobs"}).json()
     assert heat["points"] == [{"x": 0.5, "y": 0.5, "target": "job-row", "user_id": ANNOTATOR_SUBJECT, "dead": False, "mode": "other", "placed": "screen"}]
-    assert heat["users"] == [{"user_id": ANNOTATOR_SUBJECT, "username": "dr-test", "clicks": 1}]
+    assert heat["users"] == [{"user_id": ANNOTATOR_SUBJECT, "username": "dr-test", "name": "Dr-Test User", "clicks": 1}]
     assert client.get("/admin/usage/heatmap", params={"route": "/nothing"}).json()["points"] == []
 
 
@@ -201,7 +201,7 @@ def test_findings_and_report_are_admin_only_and_derive_from_the_same_data(client
     assert report.status_code == 200 and report.headers["content-type"].startswith("text/markdown")
     md = report.text
     assert md.startswith("# Usage report") and "## Findings" in md and tools["title"] in md
-    assert "| Active people | 1 |" in md and "| dr-test | 1 |" in md
+    assert "| Active people | 1 |" in md and "| Dr-Test User | 1 |" in md
 
 
 def test_raw_event_export_streams_csv_without_mouse_by_default(client):
@@ -338,7 +338,7 @@ def test_the_case_table_joins_viewer_work_with_what_made_the_case_hard(client, d
     summary = client.get("/admin/usage/summary").json()
     [row] = summary["cases"]
     assert (row["job_type"], row["slices"], row["objects"], row["active_ms"], row["per_object_ms"], row["rating"], row["sent_back"]) == ("annotation", 3, 2, 60000, 30000, 4.0, 1)
-    assert row["people"] == ["dr-test"] and row["first_input_ms"] == 3000
+    assert row["people"] == ["Dr-Test User"] and row["first_input_ms"] == 3000
     assert summary["effort"]["annotation"]["cases"] == 1 and set(summary["effort_by_device"]) == {"touch"}
     assert summary["ratings"]["count"] == 1 and summary["performance"][0]["endpoint"] == "/data/series/#/volume"
     assert [r["version"] for r in summary["releases"]] == ["0.1.0+test"]

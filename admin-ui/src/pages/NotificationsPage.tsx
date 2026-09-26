@@ -316,7 +316,7 @@ function PreferencesCard({
             )}
             {(prefs ?? []).map((p) => (
               <tr key={p.user_id}>
-                <td className="font-medium text-gray-800">{p.username ?? p.user_id.slice(0, 8)}</td>
+                <td className="font-medium text-gray-800">{p.name || p.username || p.user_id.slice(0, 8)}</td>
                 <td className="text-sm text-gray-500">{p.email ?? <span className="text-amber-700">no address -- emails will be skipped</span>}</td>
                 {columns.map((c) => (
                   <td key={c.key}>

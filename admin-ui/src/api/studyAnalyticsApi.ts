@@ -84,7 +84,8 @@ export interface StudyLabelRow {
 
 export interface StudyPersonRow {
   user_id: string;
-  username: string;
+  // the real name (Users page), else the username
+  name: string;
   annotated_cases: number;
   submissions: number;
   first_pass_rate: number | null;

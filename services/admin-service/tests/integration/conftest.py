@@ -146,10 +146,10 @@ def db():
 @pytest.fixture
 def keycloak(monkeypatch):
     fake = FakeKeycloak()
+    import app.api.account
     import app.api.audit  # noqa: E401
     import app.api.registration
     import app.api.studies
-    import app.api.account
     import app.api.users
     import app.notifications.api
     import app.notifications.events

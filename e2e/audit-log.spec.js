@@ -30,7 +30,7 @@ async function token(u, p) {
   check("audit log has all five actions for that study", ["study.create", "study.update", "member.add", "member.remove", "study.delete"].every((a) => actions.includes(a)), actions);
   const rename = log.entries.find((e) => e.action === "study.update");
   check("rename diff records from/to", rename && rename.diff?.name?.to === `audit-e2e-${stamp}-renamed`, rename?.diff);
-  check("actor resolved to a username", log.entries.every((e) => e.actor === "platform-admin"), log.entries.map((e) => e.actor));
+  check("actor resolved to the person's name", log.entries.every((e) => e.actor === "Platform Admin"), log.entries.map((e) => e.actor));
 
   const dr = await token("dr-test", "Test1234!");
   const forbidden = await fetch(`${ADMIN}/admin/audit-log`, { headers: { Authorization: `Bearer ${dr}` } });
@@ -59,7 +59,7 @@ async function token(u, p) {
   // A real entry row (the action badge), not the "Loading…" placeholder row.
   await page.waitForSelector('[data-testid="audit-log"] tbody tr .badge-blue', { timeout: 15000 });
   const text = await page.locator('[data-testid="audit-log"]').innerText();
-  check("System page: Audit log card lists the study.delete line", /study\.delete/.test(text) && /platform-admin/.test(text));
+  check("System page: Audit log card lists the study.delete line", /study\.delete/.test(text) && /Platform Admin/.test(text));
   await page.locator('[data-guide="tutorial-button"] button').click();
   const dialog = page.locator('[role="dialog"]');
   let titles = [];

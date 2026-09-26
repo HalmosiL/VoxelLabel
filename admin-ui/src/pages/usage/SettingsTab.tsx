@@ -398,7 +398,7 @@ function WhoCountsCard({
                 return (
                   <tr key={p.user_id} data-testid={`usage-person-${p.username}`}>
                     <td>
-                      <span className="font-medium text-gray-800">{p.username}</span>
+                      <span className="font-medium text-gray-800">{p.name || p.username}</span>
                       {p.is_admin && <span className="badge badge-gray ml-2">admin</span>}
                       {p.email && <div className="text-xs text-gray-400">{p.email}</div>}
                     </td>
@@ -415,7 +415,7 @@ function WhoCountsCard({
                           checked={p.counted}
                           disabled={byAdminRule}
                           onChange={(e) => onSwitch(p.user_id, { counted: e.target.checked })}
-                          aria-label={`Count ${p.username}`}
+                          aria-label={`Count ${p.name || p.username}`}
                           data-testid={`usage-count-${p.username}`}
                         />
                         {byAdminRule ? "no -- admin account" : p.counted ? "yes" : "no -- test account"}

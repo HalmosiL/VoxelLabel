@@ -56,7 +56,7 @@ const seen = () => { try { for (const k of ["studies", "study", "study-analytics
   check("the labels tab renders (a table or its empty state)", (await page.locator('[data-testid="analytics-labels"]').count()) === 1);
   await page.locator('[data-testid="analytics-tab-people"]').click();
   const people = await page.locator('[data-testid="analytics-person-row"]').allInnerTexts();
-  check("the people tab lists the annotator and the reviewer", people.some((t) => t.includes("dr-test")) && people.some((t) => t.includes("dr-review")), people);
+  check("the people tab lists the annotator and the reviewer by name", people.some((t) => t.includes("Anna Annotator")) && people.some((t) => t.includes("Rita Reviewer")), people);
   const peopleCsv = await downloaded("analytics-export-people");
   check("people CSV has both sides of the work", /Cases annotated,.*Reviews,/.test(peopleCsv.split(/\r?\n/)[0]));
   check("no page errors", errors.length === 0, errors);

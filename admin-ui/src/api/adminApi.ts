@@ -23,6 +23,8 @@ export interface StudyMember {
   // failed) -- the members list is readable by every member, so names
   // no longer depend on the admin-only user directory.
   username?: string | null;
+  // First and last name set on the Users page, else the username.
+  name?: string | null;
   email?: string | null;
 }
 
@@ -49,6 +51,8 @@ export interface KeycloakUser {
   is_admin: boolean;
   first_name?: string | null;
   last_name?: string | null;
+  // First and last name, else the username (server-side, see keycloak_admin.display_name).
+  name?: string | null;
   enabled?: boolean;
   email_verified?: boolean;
   required_actions?: string[];
@@ -158,9 +162,10 @@ export function getMe(): Promise<Me> {
   return apiFetch(base, "/admin/me");
 }
 
-/** A member's display name: username, else email, else a shortened id. */
-export function memberLabel(member: { username?: string | null; email?: string | null; user_id: string }): string {
-  return member.username ?? member.email ?? `${member.user_id.slice(0, 8)}…`;
+/** How a person is shown: their real name (set on the Users page), else
+ * username, else email, else a shortened id. */
+export function memberLabel(member: { name?: string | null; username?: string | null; email?: string | null; user_id: string }): string {
+  return member.name || member.username || member.email || `${member.user_id.slice(0, 8)}…`;
 }
 
 /** Revokes one specific role from a member -- their other roles in this
@@ -471,6 +476,8 @@ export type UsageSettingsPatch = Partial<Omit<UsageSettings, "disabled_user_ids"
 export interface UsagePerson {
   user_id: string;
   username: string;
+  // the real name (Users page), else the username
+  name?: string | null;
   email: string | null;
   is_admin: boolean;
   /** Recording is on for them (master switch on, not switched off). */
@@ -593,6 +600,8 @@ export interface UsageFrictionRow {
 export interface UsageUser {
   user_id: string;
   username: string;
+  // the real name (Users page), else the username
+  name?: string | null;
   email: string | null;
   sessions: number;
   total_ms: number;
@@ -737,6 +746,8 @@ export interface UsageSession {
   session_id: string;
   user_id: string;
   username: string;
+  // the real name (Users page), else the username
+  name?: string | null;
   app: "admin-ui" | "viewer";
   started_at: string;
   ended_at: string;
@@ -765,6 +776,8 @@ export interface UsageSessionDetail {
   session_id: string;
   user_id: string;
   username: string;
+  // the real name (Users page), else the username
+  name?: string | null;
   app: "admin-ui" | "viewer";
   events: UsageEventRow[];
   /** Screen snapshots taken during the sitting, oldest first. */
@@ -828,7 +841,7 @@ export interface UsageHeatmap {
   /** The screen's most recent snapshot (in the chosen kind of job) -- preferred over the layout. */
   snapshot: UsageSnapshotMeta | null;
   /** Who clicked, most clicks first -- the legend's order and colour key. */
-  users: { user_id: string; username: string; clicks: number }[];
+  users: { user_id: string; username: string; name?: string | null; clicks: number }[];
 }
 
 export function getUsageSettings(): Promise<UsageSettings> {
@@ -1020,6 +1033,8 @@ export interface PipelineHealthSummary {
 export interface LearningCurvePoint {
   actor_id: string;
   username: string | null;
+  // the real name (Users page), else the username
+  name?: string | null;
   card_type: "annotation" | "review";
   week: number;
   median_ms: number;
@@ -1259,6 +1274,8 @@ export interface NotificationLogEntry {
 export interface NotificationPreference {
   user_id: string;
   username?: string | null;
+  // the real name (Users page), else the username
+  name?: string | null;
   email?: string | null;
   email_enabled: boolean;
   notify_new_job: boolean;

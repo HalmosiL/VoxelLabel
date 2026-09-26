@@ -123,7 +123,7 @@ def test_labels_people_weekly_and_headline():
     labels = {x["label"]: x for x in stats.label_table(h)}
     assert (labels["Mass"]["objects_first"], labels["Mass"]["objects"], labels["Mass"]["cases"]) == (2, 3, 2)
     assert (labels["Mass"]["reviewed"], labels["Mass"]["rejected"], labels["Mass"]["reasons"]) == (3, 1, [{"reason": "boundary", "count": 1}])
-    people = {p["username"]: p for p in stats.people_table(h, [], EFFORT, ONE_REVIEW, NAMES)}
+    people = {p["name"]: p for p in stats.people_table(h, [], EFFORT, ONE_REVIEW, NAMES)}
     assert (people["dr-test"]["annotated_cases"], people["dr-test"]["submissions"], people["dr-test"]["first_pass_rate"], people["dr-test"]["sent_back"]) == (4, 6, round(1 / 3, 3), 3)
     assert (people["dr-review"]["reviews"], people["dr-review"]["approved"], people["dr-review"]["rejected"]) == (5, 2, 3)
     assert stats.weekly_throughput(h) == [{"week": "2026-08-31", "submitted": 6, "approved": 2, "rejected": 3}]
@@ -175,7 +175,7 @@ def test_a_second_review_step_is_a_step_of_its_own():
     m = stats.card_metrics(TWO_REVIEWS, stage, [], [], h, list(rows.values()))
     assert (m["rev"]["approved"], m["rev"]["rejected"], m["rev"]["first_pass_rate"]) == (3, 0, 1.0)
     assert (m["senior"]["approved"], m["senior"]["rejected"], m["senior"]["open"], m["senior"]["first_pass_rate"]) == (1, 1, 1, 0.5)
-    people = {p["username"]: p for p in stats.people_table(h, [], [], TWO_REVIEWS, NAMES)}
+    people = {p["name"]: p for p in stats.people_table(h, [], [], TWO_REVIEWS, NAMES)}
     assert people["dr-senior"]["reviews"] == 2 and people["dr-senior"]["rejected"] == 1
 
 

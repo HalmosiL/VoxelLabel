@@ -50,7 +50,7 @@ export default function JobsPage() {
   function assigneeLabel(userId: string | null): string {
     if (!userId) return "Unassigned";
     const u = usersById.get(userId);
-    return u ? (u.username ?? u.email ?? `${userId.slice(0, 8)}…`) : `${userId.slice(0, 8)}…`;
+    return u ? (u.name || u.username || u.email || `${userId.slice(0, 8)}…`) : `${userId.slice(0, 8)}…`;
   }
 
   const needle = search.trim().toLowerCase();
@@ -182,7 +182,7 @@ export default function JobsPage() {
                     <td>
                       {job.assigned_user_id ? (
                         <span className="flex items-center gap-1.5">
-                          <Avatar id={job.assigned_user_id} />
+                          <Avatar id={job.assigned_user_id} name={assigneeLabel(job.assigned_user_id)} />
                           <span className="text-gray-700">{assigneeLabel(job.assigned_user_id)}</span>
                         </span>
                       ) : (

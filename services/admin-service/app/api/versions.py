@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api import audit
 from app.api.studies import _user_directory
+from app.keycloak_admin import display_name
 from app.versioning import diff_summary, record_version, restore_version, snapshot_study
 
 router = APIRouter(prefix="/admin/studies/{study_id}/versions", tags=["admin:versions"])
@@ -47,7 +48,7 @@ def _serialize(version: StudyVersion, directory: dict) -> dict:
         "kind": version.kind,
         "label": version.label,
         "created_by": version.created_by,
-        "created_by_name": author.get("username") or author.get("email"),
+        "created_by_name": (display_name(author) if author else None) or author.get("email"),
         "created_at": version.created_at.isoformat() if version.created_at else None,
         "summary": version.summary,
     }

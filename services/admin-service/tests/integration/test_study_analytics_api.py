@@ -26,12 +26,12 @@ def test_study_analytics_joins_the_workflow_the_annotations_and_the_viewer_work(
     assert body["headline"]["cases"] == 2 and body["headline"]["states"]["done"] == 1 and body["headline"]["states"]["not_started"] == 1
     assert body["headline"]["first_pass_rate"] == 1.0 and body["headline"]["hands_on_total_ms"] == 60_000
     done = next(r for r in body["cases"] if r["state"] == "done")
-    assert done["labels"] == {"Nodule": 2} and done["annotators"] == ["dr-test"] and done["reviewers"] == ["dr-review"]
+    assert done["labels"] == {"Nodule": 2} and done["annotators"] == ["Dr-Test User"] and done["reviewers"] == ["Dr-Review User"]
     assert done["annotate_ms"] == 60_000 and done["done_at"] is not None and done["slices"] == 0
     assert [(p["step"], p["kind"]) for p in done["path"]] == [("Annotate", "submitted"), ("Review", "approved")]
-    assert body["cards"][ann["id"]]["entered"] == 2 and body["cards"][ann["id"]]["assignee"] == "dr-test"
+    assert body["cards"][ann["id"]]["entered"] == 2 and body["cards"][ann["id"]]["assignee"] == "Dr-Test User"
     assert body["labels"][0]["label"] == "Nodule" and body["labels"][0]["objects"] == 2 and body["headline"]["steps"] == 2
-    assert {p["username"] for p in body["people"]} >= {"dr-test", "dr-review"}
+    assert {p["name"] for p in body["people"]} >= {"Dr-Test User", "Dr-Review User"}
     assert body["weekly"] and body["weekly"][-1]["approved"] == 1
 
     # a data manager of the study may read it; an annotator on it may not

@@ -24,7 +24,7 @@ export default function WorkbenchLayout() {
 
 function WorkbenchShell() {
   const username = (keycloak.tokenParsed?.preferred_username as string) ?? "user";
-  const fullName = (keycloak.tokenParsed?.name as string) ?? username;
+  const fullName = (keycloak.tokenParsed?.name as string) || username;
   const guide = useGuideControls();
   const [qrOpen, setQrOpen] = useState(false);
 
@@ -81,7 +81,7 @@ function WorkbenchShell() {
               <QrIcon className="h-4 w-4" />
             </button>
             {qrOpen && <ShareQrModal onClose={() => setQrOpen(false)} />}
-            <Avatar id={username} />
+            <Avatar id={username} name={fullName} />
             <span className="hidden max-w-[12rem] truncate text-sm text-gray-700 sm:inline" title={username}>
               {fullName}
             </span>

@@ -284,7 +284,7 @@ def _learning_findings(learning_curve: list[dict] | None) -> list[dict]:
         if rows[-1]["week"] + 1 < LEARNING_MIN_WEEKS:
             continue
         first, last = rows[0], rows[-1]
-        name = last.get("username") or actor_id
+        name = last.get("name") or last.get("username") or actor_id
         if last["median_ms"] >= first["median_ms"] and first["median_ms"] > 0:
             out.append(
                 _finding(

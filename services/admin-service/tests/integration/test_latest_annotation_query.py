@@ -3,9 +3,8 @@ SQLAlchemy 2.1 deprecates (about 200 warnings per test run). Same result
 through postgresql.distinct_on, and no deprecation warning."""
 import warnings
 
-from sqlalchemy.exc import SADeprecationWarning
-
 from app.api.workflow.status import _latest_annotation_by_target
+from sqlalchemy.exc import SADeprecationWarning
 
 from .conftest import ANNOTATOR_SUBJECT, make_annotation, make_case, make_series, make_study
 

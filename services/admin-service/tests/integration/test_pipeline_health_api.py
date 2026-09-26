@@ -107,10 +107,10 @@ def test_bottlenecks_flag_a_stalled_case_once_it_crosses_the_fallback_threshold(
     summary = client.get("/admin/pipeline-health/summary", params={"card_id": ann["id"]}).json()
     row = next(r for r in summary["bottlenecks"] if r["case_id"] == cases[0]["id"])
     assert row["kind"] == "queue" and row["flagged"] is True and row["baseline_ms"] is None
-    assert row["assignee"] == "dr-test"
+    assert row["assignee"] == "Dr-Test User"
 
     load = next(r for r in summary["assignee_load"] if r["assignee_id"] == ANNOTATOR_SUBJECT)
-    assert load["open_count"] == 1 and load["assignee"] == "dr-test"
+    assert load["open_count"] == 1 and load["assignee"] == "Dr-Test User"
 
 
 def test_learning_curve_uses_the_persons_own_first_annotation_as_tenure_start(client, db):
@@ -130,7 +130,7 @@ def test_learning_curve_uses_the_persons_own_first_annotation_as_tenure_start(cl
     client.as_admin()
     rows = client.get("/admin/pipeline-health/learning-curve").json()
     annot_rows = [r for r in rows if r["actor_id"] == ANNOTATOR_SUBJECT and r["card_type"] == "annotation"]
-    assert annot_rows and annot_rows[0]["week"] == 0 and annot_rows[0]["username"] == "dr-test"
+    assert annot_rows and annot_rows[0]["week"] == 0 and annot_rows[0]["username"] == "dr-test" and annot_rows[0]["name"] == "Dr-Test User"
     review_rows = [r for r in rows if r["actor_id"] == REVIEWER_SUBJECT and r["card_type"] == "review"]
     assert review_rows and review_rows[0]["username"] == "dr-review"
 

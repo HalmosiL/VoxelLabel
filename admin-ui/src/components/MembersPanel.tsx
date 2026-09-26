@@ -117,10 +117,12 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
               <tr key={`${m.user_id}:${m.role}`}>
                 <td>
                   <div className="flex items-center gap-2.5">
-                    <Avatar id={m.user_id} />
+                    <Avatar id={m.user_id} name={memberLabel(m)} />
                     <div className="flex min-w-0 flex-col">
                       <span className="truncate text-sm text-gray-700">{memberLabel(m)}</span>
-                      {m.email && m.username && <span className="truncate text-xs text-gray-400">{m.email}</span>}
+                      {(m.username || m.email) && (
+                        <span className="truncate text-xs text-gray-400">{[m.name && m.username ? `@${m.username}` : null, m.email].filter(Boolean).join(" · ")}</span>
+                      )}
                     </div>
                   </div>
                 </td>
@@ -166,8 +168,8 @@ export default function MembersPanel({ studyId, canAdminister }: { studyId: stri
                 </option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.username ?? u.id}
-                    {u.email ? ` (${u.email})` : ""}
+                    {u.name || u.username || u.id}
+                    {u.name && u.username && u.name !== u.username ? ` (@${u.username})` : u.email ? ` (${u.email})` : ""}
                     {rolesByUser.has(u.id) ? ` -- already: ${[...(rolesByUser.get(u.id) ?? [])].map(roleLabel).join(", ")}` : ""}
                   </option>
                 ))}

@@ -60,6 +60,8 @@ export default function Layout() {
 
 function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; membershipCount: number; viewAs: string }) {
   const username = (keycloak.tokenParsed?.preferred_username as string) ?? "user";
+  // the name set on the Users page (the token's "name" claim), not the username
+  const fullName = (keycloak.tokenParsed?.name as string) || username;
   const guide = useGuideControls();
   const groups = isAdmin ? navGroups : memberNavGroups;
   const simulatedLabel = viewAs === "admin" ? null : VIEW_AS_OPTIONS.find((o) => o.value === viewAs)?.label;
@@ -193,9 +195,11 @@ function AdminLayout({ isAdmin, membershipCount, viewAs }: { isAdmin: boolean; m
         </div>
         {qrOpen && <ShareQrModal onClose={() => setQrOpen(false)} />}
         <div className="flex items-center gap-2.5 border-t border-gray-200/70 p-4" data-guide="account">
-          <Avatar id={username} />
+          <Avatar id={username} name={fullName} />
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="truncate text-sm font-medium text-gray-700">{username}</span>
+            <span className="truncate text-sm font-medium text-gray-700" title={username}>
+              {fullName}
+            </span>
             <span className="truncate text-[11px] text-gray-400">{roleChip}</span>
           </span>
           <button

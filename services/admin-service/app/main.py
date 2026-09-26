@@ -13,6 +13,7 @@ from shared_auth.db_errors import install_db_error_handlers
 from shared_auth.readiness import database_check, install_readiness
 from shared_auth.storage_errors import install_storage_error_handlers
 
+from app.api.account import public_router as account_public_router
 from app.api.annotation_types import router as annotation_types_router
 from app.api.audit import router as audit_router
 from app.api.backups import router as backups_router
@@ -22,7 +23,6 @@ from app.api.deidentification import router as deidentification_router
 from app.api.imaging import router as imaging_router
 from app.api.objects import router as objects_router
 from app.api.pipeline_templates import router as pipeline_templates_router
-from app.api.account import public_router as account_public_router
 from app.api.registration import public_router as registration_public_router
 from app.api.registration import router as registration_router
 from app.api.studies import router as studies_router

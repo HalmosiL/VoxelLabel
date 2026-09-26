@@ -21,7 +21,7 @@ export default function PeopleTab({
 }: {
   summary: UsageSummary;
   learningCurve: LearningCurvePoint[] | null;
-  sessionsFor: { user_id: string; username: string } | null;
+  sessionsFor: { user_id: string; username: string; name?: string | null } | null;
   sessions: UsageSession[] | null;
   session: UsageSessionDetail | null;
   onOpenUser: (user_id: string, username: string, replayLatest?: boolean) => void;
@@ -55,7 +55,7 @@ function PeopleCard({ summary, onOpen }: { summary: UsageSummary; onOpen: (user_
             filename={exportFilename("people", summary.since, summary.until, "csv")}
             rows={summary.users}
             columns={[
-              { header: "Person", value: (u) => u.username },
+              { header: "Person", value: (u) => u.name || u.username },
               { header: "Email", value: (u) => u.email },
               { header: "User id", value: (u) => u.user_id },
               { header: "Sessions", value: (u) => u.sessions },
@@ -116,7 +116,7 @@ function PeopleCard({ summary, onOpen }: { summary: UsageSummary; onOpen: (user_
                   <td>
                     <div className="flex items-center gap-2">
                       <button type="button" className="font-medium text-blue-700 hover:underline" onClick={() => onOpen(u.user_id, u.username)} data-testid={`usage-open-${u.username}`}>
-                        {u.username}
+                        {u.name || u.username}
                       </button>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => onOpen(u.user_id, u.username, true)} title="Replay their newest session" data-testid={`usage-replay-${u.username}`}>
                         ▶ Replay
@@ -153,7 +153,7 @@ function SessionsCard({
   onOpen,
   onClose,
 }: {
-  who: { user_id: string; username: string };
+  who: { user_id: string; username: string; name?: string | null };
   sessions: UsageSession[] | null;
   selected: string | null;
   since: string;
@@ -164,7 +164,7 @@ function SessionsCard({
   return (
     <div className="card" data-testid="usage-sessions">
       <CardHeader
-        title={`Sessions · ${who.username}`}
+        title={`Sessions · ${who.name || who.username}`}
         actions={
           <>
             <DownloadCsvButton
@@ -359,7 +359,7 @@ function ReplayCard({ session }: { session: UsageSessionDetail }) {
   return (
     <div ref={cardRef} className="card scroll-mt-4" data-testid="usage-timeline">
       <CardHeader
-        title={`Replay · ${session.username} · ${session.app}`}
+        title={`Replay · ${session.name || session.username} · ${session.app}`}
         hint={`${clock(timeline.duration)} long, ${timeline.pages.length} pages, ${timeline.clicks.length} clicks. Blue: the pointer. Red rings: clicks. Behind them the screen as it was -- its images as grey blocks, or the case images themselves where they were recorded.`}
         actions={
           <DownloadCsvButton
@@ -540,7 +540,7 @@ function LearningCurveCard({ rows, since, until, tutorialDone }: { rows: Learnin
     const grouped = new Map<string, { actor_id: string; username: string; card_type: string; points: LearningCurvePoint[] }>();
     for (const row of rows) {
       const key = `${row.actor_id}:${row.card_type}`;
-      const entry = grouped.get(key) ?? { actor_id: row.actor_id, username: row.username ?? row.actor_id, card_type: row.card_type, points: [] };
+      const entry = grouped.get(key) ?? { actor_id: row.actor_id, username: row.name || row.username || row.actor_id, card_type: row.card_type, points: [] };
       entry.points.push(row);
       grouped.set(key, entry);
     }

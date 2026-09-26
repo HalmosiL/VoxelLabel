@@ -34,7 +34,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.api.workflow.status import _effective_status
-from app.keycloak_admin import list_realm_users
+from app.keycloak_admin import display_name, list_realm_users
 
 from . import stats
 
@@ -61,7 +61,7 @@ def _ms(delta: timedelta) -> int:
 
 def _usernames() -> dict[str, dict]:
     try:
-        return {u["id"]: {"username": u.get("username") or u["id"], "email": u.get("email")} for u in list_realm_users()}
+        return {u["id"]: {"username": u.get("username") or u["id"], "name": display_name(u), "email": u.get("email")} for u in list_realm_users()}
     except Exception:  # noqa: BLE001 -- names are a nicety, the figures are the point
         return {}
 
@@ -331,11 +331,11 @@ def build_summary(db: Session, window_since: datetime, window_until: datetime, c
         bottleneck_rows = [row for row in bottleneck_rows if row["assignee_id"] == person_id]
     bottleneck_rows = bottleneck_rows[:50]
     for row in bottleneck_rows:
-        row["assignee"] = names.get(row["assignee_id"], {}).get("username", row["assignee_id"])
+        row["assignee"] = names.get(row["assignee_id"], {}).get("name", row["assignee_id"])
 
     load_rows = [row for row in stats.assignee_load(all_legs) if not person_id or row["assignee_id"] == person_id]
     for row in load_rows:
-        row["assignee"] = names.get(row["assignee_id"], {}).get("username", row["assignee_id"])
+        row["assignee"] = names.get(row["assignee_id"], {}).get("name", row["assignee_id"])
         row["oldest_since"] = row["oldest_since"].isoformat()
 
     return {
@@ -379,6 +379,7 @@ def build_learning_curve(
     names = _usernames()
     for row in rows:
         row["username"] = names.get(row["actor_id"], {}).get("username", row["actor_id"])
+        row["name"] = names.get(row["actor_id"], {}).get("name", row["username"])
     return rows
 
 

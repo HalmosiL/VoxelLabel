@@ -359,7 +359,7 @@ function HeatmapCard({
   const keyOf = (userId: string) => (colorOf.has(userId) ? userId : OTHERS);
   const single = users.length <= 1;
   const points = (heatmap?.points ?? []).filter((p) => !hidden.has(keyOf(p.user_id)));
-  const nameOf = new Map(users.map((u) => [u.user_id, u.username]));
+  const nameOf = new Map(users.map((u) => [u.user_id, u.name || u.username]));
   const modes = heatmap?.modes ?? { annotation: 0, review: 0, other: 0 };
   const inJobs = modes.annotation + modes.review > 0;
   const layout = heatmap?.layout ?? null;
@@ -439,7 +439,7 @@ function HeatmapCard({
           </div>
           {!single && (
             <ul className="mb-2 flex flex-wrap gap-x-3 gap-y-1" data-testid="usage-heatmap-legend">
-              {[...named.map((u) => ({ key: u.user_id, label: u.username, clicks: u.clicks, color: colorOf.get(u.user_id) as string })), ...(others.length ? [{ key: OTHERS, label: `Others (${others.length})`, clicks: others.reduce((n, u) => n + u.clicks, 0), color: OTHERS_COLOR }] : [])].map((item) => (
+              {[...named.map((u) => ({ key: u.user_id, label: u.name || u.username, clicks: u.clicks, color: colorOf.get(u.user_id) as string })), ...(others.length ? [{ key: OTHERS, label: `Others (${others.length})`, clicks: others.reduce((n, u) => n + u.clicks, 0), color: OTHERS_COLOR }] : [])].map((item) => (
                 <li key={item.key}>
                   <button type="button" onClick={() => toggle(item.key)} className={`flex items-center gap-1.5 text-xs ${hidden.has(item.key) ? "text-gray-400 line-through" : "text-gray-700"}`} aria-pressed={!hidden.has(item.key)} data-testid="usage-heatmap-legend-item">
                     <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: item.color, opacity: hidden.has(item.key) ? 0.3 : 1 }} />
@@ -477,7 +477,7 @@ function HeatmapCard({
             </p>
           )}
           <p className="hint mt-2">
-            {heatmap.points.length} clicks{mode ? ` in ${MODE_LABEL[mode].toLowerCase()}s` : ""} in this period{single && users[0] ? `, all by ${users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.
+            {heatmap.points.length} clicks{mode ? ` in ${MODE_LABEL[mode].toLowerCase()}s` : ""} in this period{single && users[0] ? `, all by ${users[0].name || users[0].username}` : ""}, {heatmap.points.filter((p) => p.dead).length} of them got no response.
             {!layout && !snapshot && " No picture of this screen yet -- it appears once someone opens it with the current version."}
             {(snapshot ?? layout) && (
               <span data-testid="usage-heatmap-layout-note">

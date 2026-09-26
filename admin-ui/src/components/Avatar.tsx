@@ -6,13 +6,23 @@ function colorFor(value: string): string {
   return PALETTE[hash % PALETTE.length];
 }
 
-/** A colored initials chip for an identifier (Keycloak subject, etc.) that
- * has no display name of its own -- gives raw UUIDs some visual distinction
- * instead of a wall of monospace text. */
-export default function Avatar({ id }: { id: string }) {
+/** "Anna Kovács" -> "AK", "dr-test" -> "DT", "réka" -> "RÉ"; a bare id
+ * gives its first two characters. */
+export function initialsOf(value: string): string {
+  const words = value.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return (words[0] ?? value).slice(0, 2).toUpperCase();
+}
+
+/** A colored initials chip for a person. `id` keeps the color stable;
+ * `name` (the display name, see memberLabel) gives the initials and the
+ * hover text -- without it the chip falls back to the id itself (UX: every
+ * avatar read "UX" or two hex digits). */
+export default function Avatar({ id, name }: { id: string; name?: string | null }) {
+  const shown = name?.trim() || id;
   return (
-    <span className="avatar" style={{ backgroundColor: colorFor(id) }} title={id}>
-      {id.slice(0, 2).toUpperCase()}
+    <span className="avatar" style={{ backgroundColor: colorFor(id) }} title={shown}>
+      {initialsOf(shown)}
     </span>
   );
 }

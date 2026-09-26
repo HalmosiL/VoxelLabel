@@ -136,7 +136,7 @@ def test_audit_log_is_admin_only_and_filters(client):
     client.as_admin()
     assert client.get("/admin/audit-log", params={"entity_id": "not-a-uuid"}).status_code == 422
     entries = client.get("/admin/audit-log", params={"entity_type": "study", "entity_id": sid}).json()["entries"]
-    assert len(entries) == 1 and entries[0]["action"] == "study.create" and entries[0]["actor"] == "platform-admin"
+    assert len(entries) == 1 and entries[0]["action"] == "study.create" and entries[0]["actor"] == "Platform-Admin User"
 
 
 def test_the_temporary_password_is_mailed_but_never_stored_in_the_delivery_log(client, db, keycloak, outbox):

@@ -389,7 +389,7 @@ def people_table(histories: dict[str, dict], legs: list[dict], effort: list[dict
         out.append(
             {
                 "user_id": uid,
-                "username": names.get(uid, uid),
+                "name": names.get(uid, uid),
                 "annotated_cases": len(me["cases"]),
                 "submissions": me["submissions"],
                 "first_pass_rate": round(me["clean"] / me["judged"], 3) if me["judged"] else None,
@@ -407,7 +407,7 @@ def people_table(histories: dict[str, dict], legs: list[dict], effort: list[dict
                 "open_now": me["open"],
             }
         )
-    out.sort(key=lambda r: r["username"].lower())
+    out.sort(key=lambda r: r["name"].lower())
     return out
 
 

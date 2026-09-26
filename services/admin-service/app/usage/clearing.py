@@ -126,7 +126,7 @@ def status_of(clear: UsageClear, remaining: dict | None) -> str:
 
 def serialize(clear: UsageClear, remaining: dict | None, names: dict[str, dict]) -> dict:
     def who(subject: str | None) -> str | None:
-        return (names.get(subject) or {}).get("username", subject) if subject else None
+        return (names.get(subject) or {}).get("name") or (names.get(subject) or {}).get("username", subject) if subject else None
 
     def when(value) -> str | None:
         return value.isoformat() if value else None

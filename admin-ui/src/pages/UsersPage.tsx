@@ -177,7 +177,7 @@ export default function UsersPage() {
                 <tr key={u.id} className={enabled ? "" : "opacity-60"}>
                   <td>
                     <div className="flex items-center gap-2.5">
-                      <Avatar id={u.id} />
+                      <Avatar id={u.id} name={u.name || [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username} />
                       <div className="flex min-w-0 flex-col">
                         <span className="truncate text-sm font-medium text-gray-800">
                           {[u.first_name, u.last_name].filter(Boolean).join(" ") || u.username}

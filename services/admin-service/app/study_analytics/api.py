@@ -32,7 +32,7 @@ from shared_models.models import (
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from app.keycloak_admin import list_realm_users
+from app.keycloak_admin import display_name, list_realm_users
 from app.pipeline_health.api import load_legs
 from app.usage import stats as usage_stats
 
@@ -48,7 +48,7 @@ _EFFORT_EVENTS = ("page_view", "page_leave", "idle", "click", "key", "action")
 
 def _names() -> dict[str, str]:
     try:
-        return {u["id"]: u.get("username") or u["id"] for u in list_realm_users()}
+        return {u["id"]: display_name(u) for u in list_realm_users()}
     except Exception:  # noqa: BLE001 -- names are a nicety, the figures are the point
         return {}
 

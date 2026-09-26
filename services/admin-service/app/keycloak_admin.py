@@ -62,6 +62,14 @@ def list_realm_users() -> list[dict]:
     return [_serialize_user(u, u["id"] in admin_ids) for u in response.json()]
 
 
+def display_name(user: dict) -> str:
+    """How a person is shown everywhere: the first and last name set on the
+    Users page, else the username, else the id. Takes the serialized shape
+    (see _serialize_user)."""
+    full = " ".join(part.strip() for part in (user.get("first_name") or "", user.get("last_name") or "") if part and part.strip())
+    return full or user.get("username") or user.get("id") or ""
+
+
 def _serialize_user(u: dict, is_admin: bool) -> dict:
     created = u.get("createdTimestamp")
     return {
@@ -75,6 +83,7 @@ def _serialize_user(u: dict, is_admin: bool) -> dict:
         "required_actions": u.get("requiredActions") or [],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created / 1000)) if created else None,
         "is_admin": is_admin,
+        "name": display_name({"id": u["id"], "username": u.get("username"), "first_name": u.get("firstName"), "last_name": u.get("lastName")}),
     }
 
 

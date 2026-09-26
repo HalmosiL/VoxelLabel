@@ -22,7 +22,7 @@ from shared_models.database import get_db
 from shared_models.models import AuditLog
 from sqlalchemy.orm import Session
 
-from app.keycloak_admin import list_realm_users
+from app.keycloak_admin import display_name, list_realm_users
 
 router = APIRouter(prefix="/admin", tags=["admin:audit"])
 
@@ -72,7 +72,7 @@ def list_audit_log(
             raise HTTPException(status_code=422, detail="entity_id must be a UUID") from None
     rows = query.order_by(AuditLog.created_at.desc()).limit(limit).all()
     try:
-        actors = {u["id"]: (u.get("username") or u["id"]) for u in list_realm_users()}
+        actors = {u["id"]: display_name(u) for u in list_realm_users()}
     except Exception:  # noqa: BLE001 -- names are a nicety, the log itself is the point
         actors = {}
     return {

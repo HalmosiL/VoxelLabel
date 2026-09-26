@@ -34,7 +34,7 @@ def test_update_is_audited_with_from_to(client):
     log = client.get("/admin/audit-log", params={"entity_id": sid}).json()["entries"]
     update = next(e for e in log if e["action"] == "study.update")
     assert update["diff"]["name"] == {"from": "Old name", "to": "New name"}
-    assert update["actor"] == "platform-admin"
+    assert update["actor"] == "Platform-Admin User"
 
 
 def test_add_member_is_additive_and_idempotent(client):

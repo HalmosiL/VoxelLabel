@@ -21,7 +21,7 @@ function AnnotationNode({ data, selected }: NodeProps<CardNode>) {
       <div className="mt-2 flex items-center justify-between gap-2">
         {assignedUserId ? (
           <div className="flex items-center gap-1.5">
-            <Avatar id={assignedUserId} />
+            <Avatar id={assignedUserId} name={assigneeLabel} />
             <span className="truncate text-xs text-gray-600">{assigneeLabel}</span>
           </div>
         ) : (

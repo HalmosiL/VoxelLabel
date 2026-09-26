@@ -4,10 +4,10 @@ events it ships), and what only a global admin sees (the switches and
 every read the Usage page draws from). `user_id` on a stored event is
 always the caller's token subject -- the body never says who."""
 import csv
+import functools
 import io
 import json
 import re
-import functools
 import threading
 import uuid
 from collections import Counter, defaultdict
@@ -38,7 +38,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import record as audit
-from app.keycloak_admin import list_realm_users
+from app.keycloak_admin import display_name, list_realm_users
 from app.pipeline_health.api import build_learning_curve
 from app.pipeline_health.api import build_summary as build_pipeline_summary
 
@@ -279,7 +279,7 @@ def _people() -> dict[str, dict]:
     """Every realm account: username, email, whether it holds the global
     admin role. Fetched once per request and passed down."""
     try:
-        return {u["id"]: {"username": u.get("username") or u["id"], "email": u.get("email"), "is_admin": bool(u.get("is_admin"))} for u in list_realm_users()}
+        return {u["id"]: {"username": u.get("username") or u["id"], "name": display_name(u), "email": u.get("email"), "is_admin": bool(u.get("is_admin"))} for u in list_realm_users()}
     except Exception:  # noqa: BLE001 -- names are a nicety, the figures are the point
         return {}
 
@@ -680,7 +680,7 @@ def _case_table(db: Session, entries: list[dict], rating_rows: list[dict], card_
                 "case_title": titles.get(e["case_id"]),
                 "job_id": e["job_id"],
                 "job_type": card_types.get(e["job_id"]),
-                "people": [people.get(uid, {}).get("username", uid) for uid in e["user_ids"]],
+                "people": [people.get(uid, {}).get("name", uid) for uid in e["user_ids"]],
                 "sittings": e["sittings"],
                 "active_ms": e["active_ms"],
                 "slices": slices.get(e["case_id"]),
@@ -785,7 +785,7 @@ def build_usage_summary(db: Session, window_since: datetime, window_until: datet
     done = _work_done(db, window_since, window_until, [row["user_id"] for row in summary["users"]], study_id)
     summary["reject_reasons"] = _reject_reasons(db, window_since, window_until, user_id, not_counted, study_id)
     for row in summary["users"]:
-        row.update({k: v for k, v in people.get(row["user_id"], {"username": row["user_id"], "email": None}).items() if k in ("username", "email")})
+        row.update({k: v for k, v in people.get(row["user_id"], {"username": row["user_id"], "name": row["user_id"], "email": None}).items() if k in ("username", "name", "email")})
         row["last_seen_at"] = _iso(row["last_seen_at"])
         row["annotated"], row["reviewed"] = done.get(row["user_id"], (0, 0))
     summary["since"] = window_since.isoformat()
@@ -896,6 +896,7 @@ def read_people(db: Session = Depends(get_db), user: CurrentUser = Depends(get_c
             {
                 "user_id": uid,
                 "username": p["username"],
+                "name": p.get("name") or p["username"],
                 "email": p.get("email"),
                 "is_admin": p.get("is_admin", False),
                 "recorded": bool(settings.enabled) and uid not in disabled,
@@ -1065,6 +1066,7 @@ def list_sessions(
     rows = stats.sessions(events)[:limit]
     for s in rows:
         s["username"] = names.get(s["user_id"], {}).get("username", s["user_id"])
+        s["name"] = names.get(s["user_id"], {}).get("name", s["username"])
         s["started_at"] = _iso(s["started_at"])
         s["ended_at"] = _iso(s["ended_at"])
     return rows
@@ -1090,6 +1092,7 @@ def read_session(session_id: str, db: Session = Depends(get_db), user: CurrentUs
         "session_id": session_id,
         "user_id": rows[0].user_id,
         "username": names.get(rows[0].user_id, {}).get("username", rows[0].user_id),
+        "name": names.get(rows[0].user_id, {}).get("name", rows[0].user_id),
         "app": rows[0].app,
         "events": events,
         "snapshots": [snapshots.meta(snap) for snap in snaps],
@@ -1176,7 +1179,7 @@ def read_heatmap(
     # Who clicked, most clicks first -- the heatmap's legend and colour key.
     clicks_by_user = Counter(p["user_id"] for p in points)
     users = [
-        {"user_id": user_id, "username": names.get(user_id, {}).get("username", user_id), "clicks": n}
+        {"user_id": user_id, "username": names.get(user_id, {}).get("username", user_id), "name": names.get(user_id, {}).get("name", user_id), "clicks": n}
         for user_id, n in sorted(clicks_by_user.items(), key=lambda kv: (-kv[1], kv[0]))
     ]
     return {

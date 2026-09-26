@@ -487,7 +487,7 @@ export function PeopleSection({ data, studyName }: { data: StudyAnalytics; study
             filename={csvName(studyName, "people")}
             rows={rows}
             columns={[
-              { header: "Person", value: (r) => r.username },
+              { header: "Person", value: (r) => r.name },
               { header: "Cases annotated", value: (r) => r.annotated_cases },
               { header: "Submissions", value: (r) => r.submissions },
               { header: "Through every review first time", value: (r) => r.first_pass_rate },
@@ -554,7 +554,7 @@ export function PeopleSection({ data, studyName }: { data: StudyAnalytics; study
             <tbody>
               {rows.map((r) => (
                 <tr key={r.user_id} data-testid="analytics-person-row">
-                  <td className="font-medium text-gray-800">{r.username}</td>
+                  <td className="font-medium text-gray-800">{r.name}</td>
                   <td className="text-right tabular-nums">{r.annotated_cases}</td>
                   <td className={`text-right tabular-nums ${r.first_pass_rate !== null && r.first_pass_rate < 0.7 ? "text-red-700" : ""}`}>{pct(r.first_pass_rate)}</td>
                   <td className="text-right tabular-nums">{r.sent_back}</td>

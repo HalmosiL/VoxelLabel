@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api import audit
 from app.api.input_checks import required_text, safe_filename
 from app.duplication import duplicate_study
-from app.keycloak_admin import list_realm_users
+from app.keycloak_admin import display_name, list_realm_users
 from app.storage import delete_object, delete_prefix, study_cover_image_link, upload_study_cover_image
 from app.versioning import autosave
 
@@ -113,6 +113,7 @@ def _serialize_member(membership: StudyMembership, directory: dict) -> dict:
         "user_id": membership.user_id,
         "role": membership.role.value,
         "username": user.get("username"),
+        "name": display_name(user) if user else None,
         "email": user.get("email"),
     }
 

@@ -185,7 +185,7 @@ def render_markdown(
         _table(
             ["Person", "Sessions", "Total time", "Avg stay", "Back & forth", "Annotated", "Reviewed", "Errors"],
             [
-                [u.get("username") or u["user_id"], u["sessions"], _duration(u["total_ms"]), _duration(u["avg_dwell_ms"]), f"{round(u['back_and_forth'] * 100)}%", u["annotated"], u["reviewed"], u["errors"]]
+                [u.get("name") or u.get("username") or u["user_id"], u["sessions"], _duration(u["total_ms"]), _duration(u["avg_dwell_ms"]), f"{round(u['back_and_forth'] * 100)}%", u["annotated"], u["reviewed"], u["errors"]]
                 for u in usage.get("users", [])[:10]
             ],
         )
@@ -195,7 +195,7 @@ def render_markdown(
         parts.append("## Learning curve\n")
         by_person: dict = {}
         for row in learning_curve:
-            by_person.setdefault((row.get("username") or row["actor_id"], row["card_type"]), []).append(row)
+            by_person.setdefault((row.get("name") or row.get("username") or row["actor_id"], row["card_type"]), []).append(row)
         rows = []
         for (name, card_type), points in sorted(by_person.items()):
             points.sort(key=lambda r: r["week"])

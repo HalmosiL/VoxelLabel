@@ -10,7 +10,7 @@ from shared_models.models import NotificationLog, NotificationPreference
 from sqlalchemy.orm import Session
 
 from app.api import audit
-from app.keycloak_admin import list_realm_users
+from app.keycloak_admin import display_name, list_realm_users
 
 from .events import get_settings
 from .mailer import send_email
@@ -204,7 +204,7 @@ def list_preferences(db: Session = Depends(get_db), user: CurrentUser = Depends(
     prefs = {p.user_id: p for p in db.query(NotificationPreference).all()}
     users = list_realm_users()
     return [
-        {**_serialize_pref(u["id"], prefs.get(u["id"])), "username": u.get("username"), "email": u.get("email")}
+        {**_serialize_pref(u["id"], prefs.get(u["id"])), "username": u.get("username"), "name": display_name(u), "email": u.get("email")}
         for u in sorted(users, key=lambda u: (u.get("username") or ""))
     ]
 
