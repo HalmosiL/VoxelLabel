@@ -7,6 +7,8 @@ import SliceControl from "../components/SliceControl";
 import SliceNumber from "../components/SliceNumber";
 import Viewer3D from "../components/Viewer3D";
 import Tip from "../components/Tip";
+import KeyboardHelp from "../components/KeyboardHelp";
+import { isHelpKey } from "../lib/keymap";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import { ADMIN_UI_URL } from "../config";
@@ -197,6 +199,9 @@ export default function TutorialPage() {
   // Tablet: see ViewerPage.tsx's same trio -- touch gestures + bigger
   // targets, and the side panel as a drawer below ~1100px.
   const coarse = useCoarsePointer();
+  // "?": every key and gesture, as in the real viewer (lib/keymap.ts)
+  const [keysOpen, setKeysOpen] = useState(false);
+  const closeKeys = useMemo(() => () => setKeysOpen(false), []);
   const compact = useCompactLayout();
   const [panelOpen, setPanelOpen] = useState(false);
   // The tour needs the side panel open on a compact layout (its stops
@@ -1302,6 +1307,11 @@ export default function TutorialPage() {
     function onKey(e: KeyboardEvent) {
       const active = document.activeElement;
       const typing = active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      if (isHelpKey(e) && !typing) {
+        e.preventDefault();
+        setKeysOpen(true);
+        return;
+      }
 
       if (e.key === "Escape") {
         if (autoPanel) cancelAuto();
@@ -2153,8 +2163,8 @@ export default function TutorialPage() {
                   ? "Review · look, decide, comment -- nothing here draws · Pinch=Zoom · Long-press=HU value · Two-finger tap=Jump all planes"
                   : `${TOOL_HELP[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Double-tap=Reset · Two-finger tap=Jump all planes`
                 : reviewMode
-                  ? "Review · look, decide, comment -- nothing here draws · Scroll=Slice · Ctrl+Scroll=Zoom · Right/middle-drag=Window · Alt+click=HU value"
-                  : `${TOOL_HELP[tool]} · Scroll=Slice · Ctrl+Scroll=Zoom · ${tool === "cursor" ? "Right" : "Middle"}-drag=Window · Ctrl+click=Jump all planes · Alt+click=HU value`}
+                  ? "Review · look, decide, comment -- nothing here draws · Scroll=Slice · Ctrl+Scroll=Zoom · Right/middle-drag=Window · Alt+click=HU value · ?=All keys"
+                  : `${TOOL_HELP[tool]} · Scroll=Slice · Ctrl+Scroll=Zoom · ${tool === "cursor" ? "Right" : "Middle"}-drag=Window · Ctrl+click=Jump all planes · Alt+click=HU value · ?=All keys`}
             </span>
             <span className="flex-shrink-0 whitespace-nowrap">{activeLabel && activeObject ? `Active: ${activeLabel.name} ${activeObject.instanceNumber}` : ""}</span>
           </div>
@@ -2490,6 +2500,7 @@ export default function TutorialPage() {
       {openDoc && <DocumentPanel doc={openDoc} onClose={() => setOpenDoc(null)} compact={compact} coarse={coarse} />}
 
       <GuideTour key={`${phase}-${runId}`} steps={guideSteps} open={guideOpen} onClose={() => setGuideOpen(false)} />
+      {keysOpen && <KeyboardHelp mode={phase === "review" ? "review" : "annotate"} touch={coarse} onClose={closeKeys} />}
     </div>
   );
 }

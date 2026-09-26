@@ -63,6 +63,8 @@ import { initialWindow, rememberedWindowPreset, rememberWindowPreset, WINDOW_PRE
 import { handInSummary, HandInSummary } from "../lib/handInSummary";
 import { offerUndo, onUndone } from "../lib/undoStore";
 import HandInDialog from "../components/HandInDialog";
+import KeyboardHelp from "../components/KeyboardHelp";
+import { isHelpKey } from "../lib/keymap";
 import ReviewSubmitDialog from "../components/ReviewSubmitDialog";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
@@ -3512,11 +3514,19 @@ export default function ViewerPage() {
   // ── Keyboard: arrow keys navigate the last-hovered pane ──────────────────
 
   const hoveredPaneRef = useRef<PaneKey>("axial");
+  // "?": every key and gesture (lib/keymap.ts)
+  const [keysOpen, setKeysOpen] = useState(false);
+  const closeKeys = useMemo(() => () => setKeysOpen(false), []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const active = document.activeElement;
       const typing = active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      if (isHelpKey(event) && !typing) {
+        event.preventDefault();
+        setKeysOpen(true);
+        return;
+      }
 
       // Ctrl+Z / Cmd+Z: undo. Ctrl+Shift+Z (or Ctrl+Y): redo. Only
       // meaningful in Annotate mode; skipped while a form field is
@@ -3878,6 +3888,9 @@ export default function ViewerPage() {
               </button>
             </Tip>
           )}
+          <IconButton title="Keys and gestures" description="Every shortcut and mouse or touch gesture of this screen." shortcut="?" onClick={() => setKeysOpen(true)} testId="keyboard-help-open">
+            <KeyboardIcon />
+          </IconButton>
           <Tip title="Tutorial" description="Replay the guided tour of this screen -- what each part does and how a case is worked.">
             <span className="flex">
               <button
@@ -4491,7 +4504,7 @@ export default function ViewerPage() {
               ? "View · Pinch=Zoom · Two-finger drag=Pan · Arrows/slider=Slice · Long-press=HU value · Double-tap=Reset · Two-finger tap=Jump all planes"
               : `${TOOL_TOUCH_HINT[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Two-finger tap=Jump all planes`
             : tab === "view"
-            ? "View · Scroll=Slice · Ctrl/Cmd+Scroll=Zoom · Right/middle-drag=Window · Drag=Pan (zoomed) · Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset"
+            ? "View · Scroll=Slice · Ctrl/Cmd+Scroll=Zoom · Right/middle-drag=Window · Drag=Pan (zoomed) · Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset · ?=All keys"
             : tool === "fill"
               ? "Fill · Click inside a closed outline on any pane · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
               : tool === "polygon"
@@ -4500,12 +4513,13 @@ export default function ViewerPage() {
                   ? "Auto · Drag a box around a structure · Adjust the HU range · Enter=Apply · Esc=Cancel · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
                   : tool === "histogram"
                     ? "Histogram · Drag a box to see its HU distribution · Esc=Close · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
-                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw${eraseAllowed ? " · Right-click drag=Erase" : ""} · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes`}
+                    : `${tool === "erase" ? "Eraser" : "Paint"} · Drag=Draw${eraseAllowed ? " · Right-click drag=Erase" : ""} · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes · ?=All keys`}
         </span>
         <span className="flex-shrink-0 whitespace-nowrap">{activeObjectName ? `Active: ${activeObjectName}` : tab === "annotate" ? "No object selected" : ""}</span>
       </div>
 
       <GuideTour steps={reviewMode ? REVIEW_STEPS : ANNOTATE_STEPS} open={guide.open} onClose={guide.close} />
+      {keysOpen && <KeyboardHelp mode={reviewMode ? "review" : "annotate"} touch={coarse} onClose={closeKeys} />}
       {handInDraft && (
         <HandInDialog
           summary={handInDraft}
@@ -4949,6 +4963,7 @@ function IconButton({
   title,
   description,
   shortcut,
+  testId,
   children,
 }: {
   onClick: () => void;
@@ -4956,6 +4971,7 @@ function IconButton({
   title: string;
   description?: string;
   shortcut?: string;
+  testId?: string;
   children: ReactNode;
 }) {
   return (
@@ -4965,6 +4981,7 @@ function IconButton({
           onClick={onClick}
           disabled={disabled}
           aria-label={title}
+          data-testid={testId}
           className="flex h-7 w-7 items-center justify-center rounded border border-[#444] bg-[#2a2a3e] text-gray-300 transition-colors hover:bg-[#333] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {children}
@@ -5205,6 +5222,15 @@ function RedoIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M17 7 21 11l-4 4" strokeLinejoin="round" />
       <path d="M21 11H10a6 6 0 0 0 0 12h2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function KeyboardIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" />
     </svg>
   );
 }
