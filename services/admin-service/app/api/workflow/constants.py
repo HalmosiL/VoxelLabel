@@ -91,4 +91,6 @@ _UNRESTRICTED_SURFACE_CONFIG = {
     # options, min, max}] -- the per-object form an annotator fills next
     # to the instance's comment, and the reviewer sees on the review card.
     "labels": [],
+    # the image's own window when a case opens (K8: a Surface can name a preset)
+    "default_window": None,
 }

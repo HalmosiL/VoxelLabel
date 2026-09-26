@@ -58,6 +58,7 @@ import { growRegion, HU_MAX, HU_MIN, suggestRange } from "../lib/autoContour";
 import { polygonMask, scanlineFill } from "../lib/scanlineFill";
 import { returnUrlForCase, safeReturnUrl } from "../lib/returnUrl";
 import { errorText } from "../lib/errorText";
+import { initialWindow, rememberedWindowPreset, rememberWindowPreset, WINDOW_PRESETS } from "../lib/windowPreset";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -136,12 +137,6 @@ const PRESET_HELP: Record<string, string> = {
   Brain: "Narrow window for subtle grey/white-matter contrast.",
 };
 
-const WINDOW_PRESETS: { label: string; center: number; width: number }[] = [
-  { label: "Soft tissue", center: 40, width: 400 },
-  { label: "Lung", center: -600, width: 1500 },
-  { label: "Bone", center: 300, width: 1500 },
-  { label: "Brain", center: 40, width: 80 },
-];
 
 interface ZoomState {
   scale: number;
@@ -719,6 +714,22 @@ export default function ViewerPage() {
   const debouncedSlab = useThrottledValue(slab, SLIDER_THROTTLE_MS);
 
   const [metadata, setMetadata] = useState<InstanceMetadata | null>(null);
+  // The window a case opens in, once per series: the job Surface's preset,
+  // else this person's last choice in this job, else the image's own (K8).
+  const windowInitForRef = useRef<string | null>(null);
+
+  // Once per series, as soon as the first slice's metadata (and, for a job,
+  // its Surface settings) are in: pick the window the case opens in (K8).
+  useEffect(() => {
+    if (!seriesId || !metadata || windowInitForRef.current === seriesId) return;
+    if (jobId && !surfaceConfig && !surfaceFailed) return; // wait for the job's settings
+    windowInitForRef.current = seriesId;
+    const dicom = metadata.window_center != null && metadata.window_width != null ? { center: metadata.window_center, width: metadata.window_width } : null;
+    const chosen = initialWindow({ surfacePreset: surfaceConfig?.default_window, rememberedPreset: rememberedWindowPreset(jobId ?? null), dicom });
+    setWindowCenter(chosen.center);
+    setWindowWidth(chosen.width);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesId, metadata, surfaceConfig, surfaceFailed, jobId]);
   const [annotations, setAnnotations] = useState<AnnotationSummary[]>([]);
   const [annotationTypes, setAnnotationTypes] = useState<AnnotationType[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1033,8 +1044,6 @@ export default function ViewerPage() {
             return prev;
           });
         }
-        setWindowCenter((prev) => (prev === DEFAULT_WINDOW_CENTER ? meta.window_center ?? prev : prev));
-        setWindowWidth((prev) => (prev === DEFAULT_WINDOW_WIDTH ? meta.window_width ?? prev : prev));
         setSagittalIndex((prev) => prev ?? Math.floor((meta.columns ?? 1) / 2));
         setCoronalIndex((prev) => prev ?? Math.floor((meta.rows ?? 1) / 2));
       })
@@ -4196,6 +4205,7 @@ export default function ViewerPage() {
                       trackAction(`window.${preset.label.toLowerCase().replace(/\s+/g, "-")}`);
                       setWindowCenter(preset.center);
                       setWindowWidth(preset.width);
+                      rememberWindowPreset(jobId ?? null, preset.label);
                     }}
                     className={`rounded border px-2 py-1 text-[11px] transition-colors ${
                       windowCenter === preset.center && windowWidth === preset.width

@@ -344,21 +344,37 @@ def delete_workflow_card(
     autosave(db, card.study_id, user.subject)
 
 
-def _upstream_annotation_labels(db: Session, review_card: WorkflowCard) -> list[dict]:
-    """The pre-defined labels (with their per-object forms) of the
-    Annotation job a Review card reads its cases from: follow the
-    review's "input" edge to its source -- the Annotation card itself,
-    or the Dataset that card materialized ("<job> (annotated)") -- and
-    read that Annotation card's own Surface. Empty when the chain isn't
-    there (a review fed by a hand-picked dataset, no surface, ...)."""
+# The window presets a Surface can open cases in -- the viewer's own names
+# (ct-annotator WINDOW_PRESETS). Anything else is not passed on (K8).
+WINDOW_PRESET_NAMES = {"Lung", "Soft tissue", "Bone", "Brain"}
+
+
+def _window_preset(config: dict) -> str | None:
+    value = config.get("default_window")
+    return value if value in WINDOW_PRESET_NAMES else None
+
+
+def _upstream_annotation_surface(db: Session, review_card: WorkflowCard) -> WorkflowCard | None:
+    """The Surface of the Annotation job a Review card reads its cases
+    from: follow the review's "input" edge to its source -- the Annotation
+    card itself, or the Dataset that card materialized ("<job>
+    (annotated)") -- and take that Annotation card's own Surface. None
+    when the chain isn't there (a review fed by a hand-picked dataset, no
+    surface, ...)."""
     edge = db.query(WorkflowEdge).filter_by(target_card_id=review_card.id, target_handle="input").first()
     source = db.get(WorkflowCard, edge.source_card_id) if edge else None
     if source is not None and source.type == WorkflowCardType.DATASET and source.materialized_source_card_id:
         source = db.get(WorkflowCard, source.materialized_source_card_id)
     if source is None or source.type != WorkflowCardType.ANNOTATION:
-        return []
+        return None
     surface_edge = db.query(WorkflowEdge).filter_by(target_card_id=source.id, target_handle="surface_config").first()
-    surface = db.get(WorkflowCard, surface_edge.source_card_id) if surface_edge else None
+    return db.get(WorkflowCard, surface_edge.source_card_id) if surface_edge else None
+
+
+def _upstream_annotation_labels(db: Session, review_card: WorkflowCard) -> list[dict]:
+    """The pre-defined labels (with their per-object forms) of that
+    Annotation job's Surface; empty when there is none."""
+    surface = _upstream_annotation_surface(db, review_card)
     return list(surface.config.get("labels", [])) if surface is not None else []
 
 
@@ -423,6 +439,7 @@ def get_surface_config(
             "panes": surface.config.get("panes", _UNRESTRICTED_SURFACE_CONFIG["panes"]),
             "show_3d": surface.config.get("show_3d", True),
             "labels": surface.config.get("labels", []),
+            "default_window": _window_preset(surface.config),
         }
 
     if is_review:
@@ -433,6 +450,11 @@ def get_surface_config(
         # the Annotation job this review reads its cases from.
         if not config["labels"]:
             config["labels"] = _upstream_annotation_labels(db, card)
+        # ...and the window the annotators worked in, unless the Review
+        # Surface sets its own: a GGN is invisible in soft tissue (K8)
+        if not config.get("default_window"):
+            upstream = _upstream_annotation_surface(db, card)
+            config["default_window"] = _window_preset(upstream.config) if upstream is not None else None
 
     return {**config, "card_type": card.type.value, "status": compute_job_status(db, card)}
 

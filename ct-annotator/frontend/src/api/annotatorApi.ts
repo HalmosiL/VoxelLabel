@@ -207,6 +207,9 @@ export interface SurfaceConfig {
   // For a Review job the labels come from the upstream Annotation
   // job's surface, so the reviewer sees the same form.
   labels: { name: string; color: string; fields?: ObjectField[] }[];
+  // The window preset cases open in ("Lung", ...), or null for the image's
+  // own -- set on the job's Surface; a Review job inherits it (K8).
+  default_window?: string | null;
   // The underlying job's own card type ("annotation" or "review") --
   // lets the viewer tell a Review job apart from an Annotation one and
   // switch to the simplified, view-and-decide-only review surface.

@@ -929,6 +929,7 @@ function AnnotationSurfaceFields({
         />
         3D view
       </label>
+      <OpeningWindowField card={card} onPatch={onPatch} />
       <div className="flex flex-col gap-1.5 border-t border-gray-100 pt-3">
         <span className="label">Pre-defined labels</span>
         <p className="hint">
@@ -1001,6 +1002,42 @@ function AnnotationSurfaceFields({
 // here, since they'd be dead UI; only which MPR panes are visible. The
 // per-object forms the reviewer sees belong to the Annotation Surface's
 // labels (see AnnotationSurfaceFields), not here.
+/** The window a case opens in on this surface's jobs (K8): in soft tissue,
+ * a ground-glass lung nodule is invisible. The names are the viewer's own
+ * presets. */
+const OPENING_WINDOWS = ["Lung", "Soft tissue", "Bone", "Brain"];
+
+function OpeningWindowField({
+  card,
+  onPatch,
+  inherits,
+}: {
+  card: WorkflowCard;
+  onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+  inherits?: boolean;
+}) {
+  const value = (card.config.default_window as string | null | undefined) ?? "";
+  return (
+    <label className="field">
+      <span className="label">Window when a case opens</span>
+      <select
+        className="input"
+        value={value}
+        onChange={(e) => onPatch(card.id, { config: { ...card.config, default_window: e.target.value || null } })}
+        data-testid="surface-default-window"
+      >
+        <option value="">{inherits ? "Same as the annotation job (else the image's own)" : "The image's own window"}</option>
+        {OPENING_WINDOWS.map((w) => (
+          <option key={w} value={w}>
+            {w}
+          </option>
+        ))}
+      </select>
+      <span className="hint">Everyone on the job starts in this window and can change it; for lung nodules choose Lung.</span>
+    </label>
+  );
+}
+
 function ReviewSurfaceFields({
   card,
   onPatch,
@@ -1021,7 +1058,7 @@ function ReviewSurfaceFields({
     <div className="flex flex-col gap-3">
       <p className="hint">
         Connect this to a Review card's top handle to mandatorily restrict which MPR panes are available while
-        reviewing that job -- the review surface has no tools or 3D at all, so there's nothing else to configure.
+        reviewing that job, and the window cases open in -- the review surface has no tools or 3D at all.
         The reviewer sees each label's form (set on the Annotation surface) on the review card.
       </p>
       <div className="flex flex-col gap-1.5">
@@ -1033,6 +1070,7 @@ function ReviewSurfaceFields({
           </label>
         ))}
       </div>
+      <OpeningWindowField card={card} onPatch={onPatch} inherits />
     </div>
   );
 }
