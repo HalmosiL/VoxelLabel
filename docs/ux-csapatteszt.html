@@ -122,6 +122,12 @@ figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; max-width: 7
 .lane .phase h3 { margin-top: 6px; }
 .phase .pbody { font-size: 14px; color: var(--ink-2); }
 .phase .pbody ul { padding-left: 18px; margin: 4px 0 10px; }
+:root { --ok: #067647; --ok-bg: #e7f6ee; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #6ce9a6; --ok-bg: #11301f; } }
+:root[data-theme="dark"] { --ok: #6ce9a6; --ok-bg: #11301f; }
+.sev.ok { color: var(--ok); background: var(--ok-bg); }
+td.c { font: 400 12.5px/1.4 "IBM Plex Mono", monospace; color: var(--muted); }
+td.it { font-weight: 600; color: var(--ink); min-width: 12em; }
 </style>
 <div class="wrap">
 <header class="top">
@@ -148,6 +154,7 @@ figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; max-width: 7
   <li><a href="#design">Új design-elemek (vázlatok)</a></li>
   <li><a href="#roadmap">Változtatási célok</a></li>
   <li><a href="#method">Módszer, adatok, maradék</a></li>
+  <li><a href="#fixes">Javítási kör (2026-09-26)</a></li>
 </ol></nav>
 
 <h2 id="verdict">1. Összkép</h2>
@@ -393,5 +400,61 @@ figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; max-width: 7
     </ul>
     A Lane A két esete a 2. elutasítás után Bencénél van.</li>
 </ul>
-<footer>VoxelLabel · UX csapatteszt · 2026-09-25 · részletes persona-jelentések: <code>.qa-review/ux/&lt;persona&gt;/report*.md</code></footer>
+
+<h2 id="fixes">10. Javítási kör (2026-09-26)</h2>
+<p>A 8. fejezet „Most” és „Következő” oszlopának minden tétele elkészült: tételenként egy commit, előbb egy elbukó regressziós teszttel, utána élő ellenőrzéssel a helyi stacken. A „Később” oszlop nem volt a kör része.</p>
+<h3>Kritikus hibák</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Tétel</th><th>Állapot</th><th>Mi változott</th><th>Commit</th></tr></thead>
+<tbody>
+<tr><td class="id">K1</td><td><span class="sev ok">kész</span></td><td>A tracker csak gyorsbillentyűt rögzít, betűt soha; a már rögzített betűket egy migráció kitörölte (198 esemény).</td><td class="c">fd6dfa9</td></tr>
+<tr><td class="id">K2</td><td><span class="sev ok">kész</span></td><td>Törlés az alkalmazás saját ablakában, a tanulmány nevének begépelésével; több táblakártya törlése is rákérdez. A lomtár a „Most” táblában.</td><td class="c">7aa93ba</td></tr>
+<tr><td class="id">K3</td><td><span class="sev ok">kész</span></td><td>Ideiglenes jelszóval a belépő oldal jelszóválasztást kér, nem hibát.</td><td class="c">1dd6fab</td></tr>
+<tr><td class="id">K4</td><td><span class="sev ok">kész</span></td><td>A nyitott körvonal a saját szeletéhez tartozik, sáv jelzi, Enter lezárja; mentés nem hagyhatja ki szó nélkül.</td><td class="c">42c8abb</td></tr>
+<tr><td class="id">K5</td><td><span class="sev ok">kész</span></td><td>A mentett sablon a sávjait egyszer hozza létre és a munkákat rájuk köti; hiba esetén visszagörget.</td><td class="c">1926faf</td></tr>
+<tr><td class="id">K6</td><td><span class="sev ok">kész</span></td><td>Ráfordított idő, személyenkénti munka és elutasítási okok az adatbázisból, egyezően minden oldalon.</td><td class="c">24f3e59</td></tr>
+<tr><td class="id">K7</td><td><span class="sev ok">kész</span></td><td>Nincs hamis „unsaved changes” a leadás után; hibák mondatban, nem „Failed to fetch”.</td><td class="c">7536b93</td></tr>
+<tr><td class="id">K8</td><td><span class="sev ok">kész</span></td><td>A Surface megadja, milyen ablakkal nyílnak az esetek (pl. Lung); a bírálat örökli.</td><td class="c">7cd76ef</td></tr>
+</tbody></table></div>
+<h3>Most · gyors nyereségek</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Tétel</th><th>Állapot</th><th>Mi változott</th><th>Commit</th></tr></thead>
+<tbody>
+<tr><td class="it">Eset neve a fejlécben</td><td><span class="sev ok">kész</span></td><td>„Viewer · 0709”, a számláló a valódi helyet mutatja a munkában.</td><td class="c">ed87d8f</td></tr>
+<tr><td class="it">Leadási és beküldési összefoglaló visszavonással</td><td><span class="sev ok">kész</span></td><td>Leadás előtt objektumok, szeletek, figyelmeztetések; bírálat előtt a döntés és minden elutasítás; utána 10 s-os Undo (szerveroldali /undo).</td><td class="c">2ea065e, d95262b</td></tr>
+<tr><td class="it">Bírálói döntések automatikus mentése</td><td><span class="sev ok">kész</span></td><td>Nincs Save gomb bírálatban; 1,5 s után ment, újratöltés után megmarad.</td><td class="c">5d7ea1c</td></tr>
+<tr><td class="it">Kötelező indok</td><td><span class="sev ok">kész</span></td><td>Reject az objektumon marad, indok és megjegyzés nélkül nem küldhető be.</td><td class="c">13939ac</td></tr>
+<tr><td class="it">„Visszaküldve” jelzés</td><td><span class="sev ok">kész</span></td><td>My Jobs: „Sent back: N”; a viewer tetején sáv a visszaküldött objektumokkal.</td><td class="c">42e3007</td></tr>
+<tr><td class="it">„New study” felülre</td><td><span class="sev ok">kész</span></td><td>Kész a K2-vel együtt.</td><td class="c">7aa93ba</td></tr>
+<tr><td class="it">Valódi nevek</td><td><span class="sev ok">kész</span></td><td>A Users oldalon megadott név mindenhol (tagok, tábla, munkák, analitika, audit, avatár-monogram).</td><td class="c">0a933a3</td></tr>
+<tr><td class="it">Lomtár</td><td><span class="sev ok">kész</span></td><td>A törölt tanulmány lomtárba kerül (Undo, Restore), végleg csak a lomtárból, névbegépeléssel törölhető; lomtárban minden szolgáltatás 404-et ad.</td><td class="c">f0f3aa6</td></tr>
+</tbody></table></div>
+<h3>Következő · a bírálat eszközei</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Tétel</th><th>Állapot</th><th>Mi változott</th><th>Commit</th></tr></thead>
+<tbody>
+<tr><td class="it">Objektumonkénti mérések és szeletlista</td><td><span class="sev ok">kész</span></td><td>Bírálati kártya: szeletek, térfogat (mL), hossztengely (mm), HU; figyelmeztet, ha nagy része tüdősűrűségű; a szeletek kattinthatók. Valós esetben: 0709 1. gócja 24,6 mm (a lelet 8 mm-t írt).</td><td class="c">6b5c301</td></tr>
+<tr><td class="it">Mérőeszköz</td><td><span class="sev ok">kész</span></td><td>M: vonalzó mm-ben, a sorozat saját pixel- és szelettávolságával; a maszkot nem érinti.</td><td class="c">e3ff55b</td></tr>
+<tr><td class="it">Kontúr-mód és betekintés</td><td><span class="sev ok">kész</span></td><td>O: kitöltött / körvonal; Szóköz lenyomva: maszk nélkül; bírálatban objektumonkénti szem (nem mentődik).</td><td class="c">c6c4477</td></tr>
+<tr><td class="it">Bírálati nagyítás</td><td><span class="sev ok">kész</span></td><td>Ugráskor legfeljebb 4×, az objektum középen marad Maximize után is; dupla kattintás bírálatban is visszaállít.</td><td class="c">61bbe92</td></tr>
+<tr><td class="it">2. kör: különbség-nézet és szál</td><td><span class="sev ok">kész</span></td><td>Objektumonként „változatlan / új / +N −M voxel” az előző kör óta, törölt objektumok listája, G: az előző kör körvonala; az annotátor válaszolhat az elutasításra, a bíráló a „Last round” alatt látja.</td><td class="c">6a9cb8d, 2f00652</td></tr>
+<tr><td class="it">Esetszintű form („nincs lelet”)</td><td><span class="sev ok">kész</span></td><td>A Surface esetkérdéseket kaphat; a viewer az objektumok fölött kérdezi, a leadás figyelmeztet, a bíráló látja és javíthatja.</td><td class="c">d1f1925</td></tr>
+<tr><td class="it">Billentyűtérkép</td><td><span class="sev ok">kész</span></td><td>?: minden billentyű és gesztus csoportosítva, tableten az érintéses megfelelővel.</td><td class="c">39a34b4</td></tr>
+<tr><td class="it">Tablet-elrendezés</td><td><span class="sev ok">kész</span></td><td>Tableten egy nagy panel, egy koppintással váltható; fekvő tableten az oldalpanel mellé kerül, nem takar.</td><td class="c">43c539f</td></tr>
+<tr><td class="it">Megjegyzett nézetállapot</td><td><span class="sev ok">kész</span></td><td>Elrendezés és esetenkénti szeletpozíció; első megnyitáskor az első objektum; a tábla is ott nyílik, ahol hagyták.</td><td class="c">65caf80, 7fd373d</td></tr>
+<tr><td class="it">Érthető munka-állapotok a táblán</td><td><span class="sev ok">kész</span></td><td>„Elavult” csak akkor, ha tényleg más esetek jönnének; „Update the case list” a futtatás gomb; Split jelzi, hogy futtatni kell.</td><td class="c">caf4467</td></tr>
+<tr><td class="it">Automatikus elrendezés a generált kártyáknak</td><td><span class="sev ok">kész</span></td><td>A Split/Review által létrehozott kártya nem kerül más kártyára.</td><td class="c">491509c</td></tr>
+<tr><td class="it">Egy igazságforrás az analitikában</td><td><span class="sev ok">kész</span></td><td>A számok egyeznek (K6), és ugyanaz a név mindenhol: Submissions / Reviews; teszt tartja össze.</td><td class="c">ed72735</td></tr>
+<tr><td class="it">A Usage a saját tanulmányokkal nyit</td><td><span class="sev ok">kész</span></td><td>„My studies (N)”: amelyiknek tagja vagy amit létrehozott; a választás megmarad.</td><td class="c">0a03bd3</td></tr>
+</tbody></table></div>
+<h3>Nyitva maradt</h3>
+<ul>
+  <li>A „Később” oszlop tételei (PI-oldal, kettős olvasás, 3D auto-contour, light-box triázs, helyhez kötött megjegyzések, eszközre érzékeny Usage-jelek, a CONSORT kövesse a táblát, zip-es export).</li>
+  <li>Egy kattintásos „Tidy up” a teljes táblára: a generált kártyák már nem fedik egymást, de a meglévő tábla átrendezése nincs.</li>
+  <li>Kereshető, szerepre szűrő felhasználóválasztó (a nevek már látszanak, a lista kereső nélküli).</li>
+</ul>
+<div class="rule-box">
+  <p><b>Telepítéskor:</b> három új migráció (<code>c2d4e6f8a0b2</code>, <code>d4e6f8a0b2c4</code>, <code>e5f7a9b1c3d5</code>); a <code>register_annotation_type.py</code> újrafuttatása (a <code>segmentation_volume</code> séma 6-os verzióra bővül: esetkérdések, annotátori válasz); minden szolgáltatás újraépítése, mert a <code>shared-auth</code> is változott (lomtár).</p>
+</div>
+<footer>VoxelLabel · UX csapatteszt · 2026-09-25 · javítási kör 2026-09-26 · részletes persona-jelentések: <code>.qa-review/ux/&lt;persona&gt;/report*.md</code></footer>
 </div>
