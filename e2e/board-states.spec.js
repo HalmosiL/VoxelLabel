@@ -2,7 +2,8 @@
 // card's Run button said "Refresh from upstream", and a Review fed straight
 // from its Annotation (with "(rejected)" fed back) read "stale" right after
 // every Run. Uses the UX pilot study's Lane A (Annotation -> Review A,
-// rejected branch back into the Annotation).
+// rejected branch back into the Annotation). And the board opens where it
+// was left instead of re-fitting (UX-ux-admin-14).
 const { chromium } = require("playwright");
 const { login, seenGuides, token } = require("./helpers");
 const ADMIN = "http://localhost:8004", UI = "http://localhost:5173";
@@ -34,6 +35,15 @@ const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra }
   await page.waitForTimeout(800);
   const panel = await page.locator("aside").last().innerText();
   check("the job's Run button says what it does", /Update the case list/.test(panel) && !/Refresh from upstream/.test(panel), panel.slice(0, 400));
+  // the board opens where it was left, not re-fitted (UX-ux-admin-14)
+  const transform = () => page.locator(".react-flow__viewport").evaluate((el) => el.style.transform);
+  await page.locator(".react-flow__pane").hover({ position: { x: 400, y: 300 } });
+  await page.mouse.wheel(0, 400); await page.waitForTimeout(300);
+  await page.mouse.wheel(300, 0); await page.waitForTimeout(800);
+  const left = await transform();
+  await page.reload();
+  await page.waitForSelector(".react-flow__node", { timeout: 30000 }); await page.waitForTimeout(1500);
+  check("the board opens where it was left", (await transform()) === left, { left, now: await transform() });
   await browser.close();
 
   const fails = results.filter((x) => !x.ok);

@@ -87,6 +87,7 @@ import {
 } from "../components/workflow/boardGraph";
 import LlmChatModal from "../components/workflow/LlmChatModal";
 import { configChanges } from "../components/workflow/configChanges";
+import { rememberedViewport, rememberViewport } from "../components/workflow/boardViewport";
 import { trackAction } from "../usage/tracker";
 
 const NODE_TYPES = {
@@ -186,6 +187,8 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
   const clipboardRef = useRef<{ nodes: CardNode[]; edges: Edge[] } | null>(null);
 
   const { screenToFlowPosition, fitView } = useReactFlow();
+  // where this board was left (boardViewport.ts); a first visit fits it all
+  const [savedViewport] = useState(() => rememberedViewport(studyId));
   const history = useWorkflowHistory(studyId);
   // Materialization connector lines are derived, not user-authored -- they
   // must never enter undo/redo history or the backend-sync logic that
@@ -954,7 +957,9 @@ function WorkflowBoardInner({ studyId }: { studyId: string }) {
             panOnDrag={[0, 1]}
             selectionKeyCode="Control"
             panOnScroll
-            fitView
+            fitView={savedViewport === null}
+            defaultViewport={savedViewport ?? undefined}
+            onMoveEnd={(_, viewport) => rememberViewport(studyId, viewport)}
             // React Flow's default minZoom (0.5) is too tight for a real
             // board: fitView (on load, and the ⛶ control) clamps to it, so
             // a board wider than ~2x the pane opens with cards cut off at
