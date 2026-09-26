@@ -44,6 +44,18 @@ export const useCoarsePointer = (): boolean => useMediaQuery("(pointer: coarse)"
  * drawer opened from the header instead. */
 export const useCompactLayout = (): boolean => useMediaQuery("(max-width: 1100px)");
 
+/** Too narrow for the side panel beside even one pane (a phone, a
+ * portrait tablet): below this the panel covers the panes as a drawer;
+ * above it, on a landscape tablet, it pushes the pane aside instead of
+ * covering it (UX-annot-2-04). */
+export const NARROW_QUERY = "(max-width: 899px)";
+export const useNarrowLayout = (): boolean => useMediaQuery(NARROW_QUERY);
+
+/** True now, without a hook -- for a state's first value. */
+export function compactNow(): boolean {
+  return typeof window !== "undefined" && "matchMedia" in window && window.matchMedia("(max-width: 1100px)").matches;
+}
+
 type Pt = { x: number; y: number };
 
 /** What one pointermove of a two-finger gesture amounts to: the scale

@@ -309,10 +309,26 @@ async function tabletContext(browser, landscape) {
     await login(page, F.ANNOTATOR.username, F.ANNOTATOR.password, `${VIEWER}/viewer/series/${series}?studyId=${job.study_id}&caseId=${kase.id}&jobId=${F.ANNOT_CARD}`);
     // A cold volume build for a real series can take a couple of minutes
     // right after the backend was (re)started.
-    await page.waitForFunction(() => document.querySelectorAll("canvas").length >= 3, null, { timeout: 240000 }); await page.waitForTimeout(3000);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid$="-image"]').length >= 1, null, { timeout: 240000 }); await page.waitForTimeout(3000);
     if ((await page.locator('[role="dialog"]').count()) > 0) { await page.keyboard.press("Escape"); await page.waitForTimeout(300); }
     check("viewer landscape: no sideways scrolling", await noSidewaysScroll(page));
     check("viewer landscape: Panel button, panel closed", (await page.locator('[data-testid="panel-toggle"]').count()) === 1 && (await page.locator('[data-testid="side-panel"]').count()) === 0);
+    // one big pane, not three ~275 px ones (UX-annot-2-03); the others one tap away
+    const tapIt = async (loc) => { const c = await center(loc); await page.touchscreen.tap(c.x, c.y); await page.waitForTimeout(500); };
+    const images = page.locator('[data-testid$="-image"]');
+    const bigW = (await images.first().boundingBox())?.width ?? 0;
+    check("viewer landscape: opens on one big pane", (await images.count()) === 1 && bigW > 450, { n: await images.count(), bigW });
+    if ((await page.locator('[data-testid="pane-switch-coronal"]').count()) > 0) {
+      await tapIt(page.locator('[data-testid="pane-switch-coronal"]'));
+      check("viewer landscape: a tap switches the big pane", (await page.locator('[data-testid="pane-coronal-image"]').count()) === 1 && (await images.count()) === 1);
+      await tapIt(page.locator('[data-testid="pane-switch-axial"]'));
+    } else check("viewer landscape: a tap switches the big pane", false, "no switcher");
+    // the side panel pushes the pane aside instead of covering it (UX-annot-2-04)
+    await tapIt(page.locator('[data-testid="panel-toggle"]'));
+    const panelBox = await page.locator('[data-testid="side-panel"]').boundingBox();
+    const paneBox = await page.locator('[data-testid="pane-axial-image"]').boundingBox();
+    check("viewer landscape: the side panel doesn't cover the pane", panelBox && paneBox && panelBox.x >= paneBox.x + paneBox.width - 1, { panelBox, paneBox });
+    await tapIt(page.locator('[data-testid="panel-toggle"]'));
     const t = new Touch(page); await t.init();
     const axialColumn = page.locator('[data-guide="panes"] > div', { has: page.locator("span", { hasText: /^Axial$/ }) });
     const a = await center(axialColumn.locator("canvas").first());

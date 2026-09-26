@@ -41,7 +41,7 @@ import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement,
 import { nextUndecidedIndex } from "../lib/reviewNav";
 import { handInObjects, isNewThisRound, previousReviewText, REJECT_REASONS, rejectReasonLabel, reviewCommentText, sentBackItems } from "../lib/reviewRound";
 import { reviewBlockedMessage, ReviewState, reviewStateOf } from "../lib/reviewState";
-import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
+import { compactNow, TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout, useNarrowLayout } from "../lib/touch";
 import {
   CaseDocument,
   getDocumentFile,
@@ -567,13 +567,19 @@ export default function ViewerPage() {
   // visiblePaneKeys below) so exactly one pane renders, full width --
   // toggling it back off returns to whatever paneVisible already had,
   // no separate "remembered state" bookkeeping needed.
-  const [maximizedPane, setMaximizedPane] = useState<VisiblePaneKey | null>(() => rememberedLayout()?.maximized ?? null);
+  // A tablet opens on one big pane -- three in a row were ~275 px each with
+  // half the screen black (UX-annot-2-03) -- unless another layout is remembered.
+  const [maximizedPane, setMaximizedPane] = useState<VisiblePaneKey | null>(() => {
+    const remembered = rememberedLayout();
+    return remembered ? remembered.maximized : compactNow() ? "axial" : null;
+  });
   useEffect(() => rememberLayout({ visible: paneVisible, maximized: maximizedPane }), [paneVisible, maximizedPane]);
   // Tablet: a finger instead of a mouse (touch gestures, bigger targets,
   // touch hints in the footer) and, below ~1100px, the side panel as a
   // drawer over the panes instead of next to them.
   const coarse = useCoarsePointer();
   const compact = useCompactLayout();
+  const narrow = useNarrowLayout();
   const [panelOpen, setPanelOpen] = useState(false);
   function toggleMaximized(pane: VisiblePaneKey) {
     setMaximizedPane((prev) => (prev === pane ? null : pane));
@@ -592,8 +598,10 @@ export default function ViewerPage() {
       ? ALL_PANE_VISIBILITY_KEYS.filter((p) => (p === "three_d" ? effectiveSurface.show_3d : effectiveSurface.panes.includes(p)))
       : ALL_PANE_VISIBILITY_KEYS
   ).filter((p) => !reviewMode || p !== "three_d");
-  const visiblePaneKeys: VisiblePaneKey[] = maximizedPane
-    ? [maximizedPane]
+  // a remembered maximized pane the job's Surface doesn't allow is no maximized pane
+  const shownMaximized = maximizedPane && allowedPaneKeys.includes(maximizedPane) ? maximizedPane : null;
+  const visiblePaneKeys: VisiblePaneKey[] = shownMaximized
+    ? [shownMaximized]
     : allowedPaneKeys.filter((p) => paneVisible[p]);
   // The 3D view is the only thing on screen (its siblings hidden, or it
   // maximized): it then gets the whole row instead of a square -- see
@@ -4446,6 +4454,22 @@ export default function ViewerPage() {
                       {slab.mode === "avg" ? "AVG" : SLAB_LABEL[slab.mode].toUpperCase()} {slab.thickness}
                     </span>
                   )}
+                  {/* one big pane: the others one tap away, not behind Restore (UX-annot-2-03) */}
+                  {shownMaximized === pane &&
+                    allowedPaneKeys
+                      .filter((p) => p !== pane)
+                      .map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setMaximizedPane(p)}
+                          className={`rounded border border-[#333] px-1.5 text-[10px] uppercase tracking-wider text-gray-500 hover:text-white ${coarse ? "py-1" : ""}`}
+                          title={`Show ${p === "three_d" ? "3D" : PANE_LABELS[p as PaneKey]} instead`}
+                          data-testid={`pane-switch-${p}`}
+                        >
+                          {p === "three_d" ? "3D" : PANE_LABELS[p as PaneKey]}
+                        </button>
+                      ))}
                   <button
                     onClick={() => toggleMaximized(pane)}
                     className="text-gray-500 hover:text-white"
@@ -4609,6 +4633,21 @@ export default function ViewerPage() {
             >
               <div className="flex flex-shrink-0 items-center justify-center gap-1.5 bg-[#111] py-1">
                 <span className="text-center text-[11px] uppercase tracking-wider text-gray-400">3D</span>
+                {shownMaximized === "three_d" &&
+                  allowedPaneKeys
+                    .filter((p) => p !== "three_d")
+                    .map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setMaximizedPane(p)}
+                        className={`rounded border border-[#333] px-1.5 text-[10px] uppercase tracking-wider text-gray-500 hover:text-white ${coarse ? "py-1" : ""}`}
+                        title={`Show ${PANE_LABELS[p as PaneKey]} instead`}
+                        data-testid={`pane-switch-${p}`}
+                      >
+                        {PANE_LABELS[p as PaneKey]}
+                      </button>
+                    ))}
                 <button
                   onClick={() => toggleMaximized("three_d")}
                   className="text-gray-500 hover:text-white"
@@ -4640,7 +4679,9 @@ export default function ViewerPage() {
         <aside
           data-testid="side-panel"
           className={`flex w-72 flex-shrink-0 flex-col gap-4 overflow-y-auto border-l border-[#333] bg-[#1e1e2e] p-3 text-sm ${
-            compact ? "absolute inset-y-0 right-0 z-30 max-w-[85vw] shadow-2xl" : ""
+            // a phone or portrait tablet: a drawer over the panes; a landscape
+            // tablet has room to push the pane aside instead (UX-annot-2-04)
+            compact && narrow ? "absolute inset-y-0 right-0 z-30 max-w-[85vw] shadow-2xl" : ""
           }`}
         >
           {compact && (
