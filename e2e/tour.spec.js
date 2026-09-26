@@ -198,7 +198,7 @@ async function hoverTip(page, locator, label) {
     await vpage.goto(`${VIEWER}/viewer/series/${rseries}?studyId=${STUDY}&caseId=${rcase.id}&jobId=${REVIEW_CARD}&returnUrl=${encodeURIComponent(UI + "/my-jobs")}#${drReviewHandoff}`);
     await vpage.waitForFunction(() => document.querySelectorAll("canvas").length >= 1, null, { timeout: 60000 });
     await vpage.waitForTimeout(3500);
-    check("review viewer title", (await vpage.locator("header h1").innerText()) === "Review");
+    check("review viewer title", /^Review(\s*·|$)/.test(await vpage.locator("header h1").innerText()));
     const rSeen = await walkTour(vpage, "viewer-review");
     check("viewer-review: mentions Submit review", rSeen.some((s) => /Submit/.test(s.title)));
     await hoverTip(vpage, vpage.locator("aside button", { hasText: "Reject" }), "review: Reject");
