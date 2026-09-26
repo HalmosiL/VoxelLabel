@@ -71,6 +71,7 @@ import { isHelpKey } from "../lib/keymap";
 import ReviewSubmitDialog from "../components/ReviewSubmitDialog";
 import ObjectMeasurements from "../components/ObjectMeasurements";
 import { objectSlices } from "../lib/objectMeasure";
+import { isEdge, OUTLINE_MIN_ALPHA, OverlayStyle, rememberedOverlayStyle, rememberOverlayStyle } from "../lib/overlayStyle";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -512,6 +513,24 @@ export default function ViewerPage() {
   const [sharpness, setSharpness] = useState(0);
   const [brushRadius, setBrushRadius] = useState(6);
   const [overlayOpacity, setOverlayOpacity] = useState(DEFAULT_OVERLAY_OPACITY); // percent, applies to every object's overlay
+  // Filled or outline only (O); held Space hides the painting to peek at
+  // the scan under it; in review an object can be hidden on screen only --
+  // the reviewer's eye isn't saved into the annotation (UX-rev-2-05).
+  const [overlayStyle, setOverlayStyleState] = useState<OverlayStyle>(() => rememberedOverlayStyle());
+  function setOverlayStyle(style: OverlayStyle) {
+    setOverlayStyleState(style);
+    rememberOverlayStyle(style);
+  }
+  const [peeking, setPeeking] = useState(false);
+  const [reviewHidden, setReviewHidden] = useState<Set<number>>(() => new Set());
+  function toggleReviewHidden(id: number) {
+    setReviewHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   // 3D starts hidden -- it's the heaviest pane to render and most
   // sessions are 2D-drawing-first, so showing it only on request avoids
@@ -1387,7 +1406,7 @@ export default function ViewerPage() {
   useEffect(() => {
     if (maskReady) renderAllPaneOverlays();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects, labels, overlayOpacity, maskReady]);
+  }, [objects, labels, overlayOpacity, maskReady, overlayStyle, peeking, reviewHidden]);
 
   // ── Volume <-> plane-display coordinate mapping ──────────────────────
   // Every stroke/fill only ever touches the single slice its pane is
@@ -1459,15 +1478,18 @@ export default function ViewerPage() {
     const objectsById = new Map(objects.map((o) => [o.id, o]));
     const labelsById = new Map(labels.map((l) => [l.id, l]));
     const { width, height } = planeDims(pane);
-    const alpha = Math.round((overlayOpacity / 100) * 255);
+    const outline = overlayStyle === "outline";
+    const alpha = outline ? Math.max(OUTLINE_MIN_ALPHA, Math.round((overlayOpacity / 100) * 255)) : Math.round((overlayOpacity / 100) * 255);
     const imageData = new ImageData(width, height);
     const data = imageData.data;
-    for (let py = 0; py < height; py++) {
+    const at = (x: number, y: number) => (x < 0 || y < 0 || x >= width || y >= height ? undefined : readSliceValue(pane, index, x, y));
+    for (let py = 0; py < height && !peeking; py++) {
       for (let px = 0; px < width; px++) {
         const value = readSliceValue(pane, index, px, py);
         if (value === 0) continue;
         const obj = objectsById.get(value);
-        if (!obj || obj.hidden) continue;
+        if (!obj || obj.hidden || reviewHidden.has(value)) continue;
+        if (outline && !isEdge(value, [at(px - 1, py), at(px + 1, py), at(px, py - 1), at(px, py + 1)])) continue;
         const label = labelsById.get(obj.label_id);
         if (!label) continue;
         const { r, g, b } = hexToRgb(label.color);
@@ -3218,6 +3240,19 @@ export default function ViewerPage() {
           <span className="truncate text-sm font-medium text-gray-100" data-testid="review-object-name">
             {label && obj ? `${label.name} ${obj.instance_number}` : "—"}
           </span>
+          {obj && (
+            <button
+              type="button"
+              onClick={() => toggleReviewHidden(obj.id)}
+              title={reviewHidden.has(obj.id) ? "Show it again" : "Hide it on screen, to see the scan under it (not saved)"}
+              aria-label={reviewHidden.has(obj.id) ? "Show this object" : "Hide this object"}
+              aria-pressed={reviewHidden.has(obj.id)}
+              data-testid="review-object-eye"
+              className="ml-auto flex-shrink-0 text-gray-400 hover:text-gray-200"
+            >
+              <EyeIcon visible={!reviewHidden.has(obj.id)} />
+            </button>
+          )}
         </div>
         {obj && (
           <ObjectMeasurements
@@ -3582,6 +3617,8 @@ export default function ViewerPage() {
   // ── Keyboard: arrow keys navigate the last-hovered pane ──────────────────
 
   const hoveredPaneRef = useRef<PaneKey>("axial");
+  const overlayStyleRef = useRef(overlayStyle);
+  overlayStyleRef.current = overlayStyle;
   // "?": every key and gesture (lib/keymap.ts)
   const [keysOpen, setKeysOpen] = useState(false);
   const closeKeys = useMemo(() => () => setKeysOpen(false), []);
@@ -3657,6 +3694,15 @@ export default function ViewerPage() {
         setShowCrosshair((v) => !v);
         return;
       }
+      if (event.key.toLowerCase() === "o" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        setOverlayStyle(overlayStyleRef.current === "outline" ? "fill" : "outline");
+        return;
+      }
+      if (event.code === "Space" && !typing) {
+        event.preventDefault(); // no page scroll, no button press
+        if (!event.repeat) setPeeking(true);
+        return;
+      }
       if (event.key.toLowerCase() === "n" && !typing && !event.ctrlKey && !event.metaKey && activeLabel && !reviewMode) {
         event.preventDefault();
         createObjectInActiveLabel();
@@ -3718,8 +3764,18 @@ export default function ViewerPage() {
       const my = pointer ? pointer.y - rect.top : rect.height / 2;
       applyZoomStep(zoomPane, event.key === "ArrowUp" ? 0.15 : -0.15, mx, my, rect.width, rect.height);
     }
+    // Space released (or the window left while held): the painting is back
+    const endPeek = (event: KeyboardEvent | FocusEvent) => {
+      if (!("code" in event) || event.code === "Space") setPeeking(false);
+    };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", endPeek);
+    window.addEventListener("blur", endPeek);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", endPeek);
+      window.removeEventListener("blur", endPeek);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numSlices, columns, rows, tab, polygonDraft, autoBox, autoHu, activeLabel, objects, roiBox, reviewMode]);
 
@@ -4399,6 +4455,24 @@ export default function ViewerPage() {
 
           <Section title="Appearance" guide="appearance" help="How strongly the coloured annotation overlay is drawn over the scan, and the crosshair showing where the other planes cut. Display only -- nothing about the annotation changes.">
             <SliderRow label="Overlay opacity" help="0% hides the annotation, 100% covers the scan completely." value={overlayOpacity} min={0} max={100} onChange={setOverlayOpacity} suffix="%" />
+            <div className="mt-2 flex items-center gap-2 text-[11px] text-gray-300">
+              <span title="Filled colours, or only each object's outline -- the edge is easiest to judge as a line. Shortcut: O">Draw as</span>
+              <div className="flex rounded border border-[#444]" role="group" aria-label="Draw the annotation as" data-testid="overlay-style">
+                {(["fill", "outline"] as const).map((style) => (
+                  <button
+                    key={style}
+                    type="button"
+                    onClick={() => setOverlayStyle(style)}
+                    aria-pressed={overlayStyle === style}
+                    data-testid={`overlay-style-${style}`}
+                    className={`px-2 py-0.5 ${overlayStyle === style ? "bg-blue-500/30 text-blue-200" : "text-gray-400 hover:bg-[#333]"}`}
+                  >
+                    {style === "fill" ? "Filled" : "Outline"}
+                  </button>
+                ))}
+              </div>
+              <span className="text-gray-500">(O · hold Space to peek)</span>
+            </div>
             <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-300" title="Coloured lines where the other two planes cut each pane, left open in the middle so they never cover the point you are looking at. Shortcut: C">
               <input type="checkbox" checked={showCrosshair} onChange={(e) => setShowCrosshair(e.target.checked)} data-testid="crosshair-toggle" />
               Crosshair <span className="text-gray-500">(C)</span>

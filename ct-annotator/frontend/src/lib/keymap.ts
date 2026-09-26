@@ -35,6 +35,8 @@ export const KEYMAP: KeyGroup[] = [
     entries: [
       { keys: ["Right-drag", "Middle-drag"], what: "Window / level: sideways for width, up and down for level (with a drawing tool: middle-drag)" },
       { keys: ["Alt+click"], what: "The HU value at this point", touch: "Long-press" },
+      { keys: ["O"], what: "Draw the annotation filled or as an outline" },
+      { keys: ["Space (hold)"], what: "Hide the annotation while held, to see the scan under it" },
     ],
   },
   {

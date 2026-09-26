@@ -9,6 +9,7 @@ import Viewer3D from "../components/Viewer3D";
 import Tip from "../components/Tip";
 import KeyboardHelp from "../components/KeyboardHelp";
 import { isHelpKey } from "../lib/keymap";
+import { OUTLINE_MIN_ALPHA, OverlayStyle, outlineMask, rememberedOverlayStyle, rememberOverlayStyle } from "../lib/overlayStyle";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import { ADMIN_UI_URL } from "../config";
@@ -254,6 +255,21 @@ export default function TutorialPage() {
   }, [showCrosshair]);
   const windowDragRef = useRef<{ pointerId: number; x0: number; y0: number; c0: number; w0: number; moved: boolean } | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(70);
+  // as in the real viewer: filled or outline (O), held Space peeks under it
+  const [overlayStyle, setOverlayStyleState] = useState<OverlayStyle>(() => rememberedOverlayStyle());
+  const overlayStyleRef = useRef(overlayStyle);
+  overlayStyleRef.current = overlayStyle;
+  function setOverlayStyle(style: OverlayStyle) {
+    setOverlayStyleState(style);
+    rememberOverlayStyle(style);
+  }
+  const [peeking, setPeeking] = useState(false);
+  /** The mask and opacity a pane draws with, after Outline / peek. */
+  function shownMask(mask: Uint8Array | null, width: number, height: number): Uint8Array | null {
+    if (peeking) return null;
+    return overlayStyle === "outline" ? outlineMask(mask, width, height) : mask;
+  }
+  const shownOpacity = overlayStyle === "outline" ? Math.max(overlayOpacity, Math.round((OUTLINE_MIN_ALPHA / 255) * 100)) : overlayOpacity;
   const [brushRadius, setBrushRadius] = useState(10);
   const [tool, setTool] = useState<DrawTool>("cursor");
   const [labels, setLabels] = useState<TutLabel[]>([PRACTICE_LABEL]);
@@ -548,9 +564,9 @@ export default function TutorialPage() {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     const hu = slab.thickness > 1 ? slabView(volumeRef.current, "axial", axialIndex, slab.thickness, slab.mode) : axialView(volumeRef.current, axialIndex);
-    renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SIZE, axialMaskView(maskRef.current, axialIndex), colorForObjectId, windowCenter, windowWidth, sharpness, overlayOpacity);
+    renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SIZE, shownMask(axialMaskView(maskRef.current, axialIndex), TUTORIAL_SIZE, TUTORIAL_SIZE), colorForObjectId, windowCenter, windowWidth, sharpness, shownOpacity);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volumeLoaded, axialIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey]);
+  }, [volumeLoaded, axialIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey, overlayStyle, peeking]);
 
   // ── Real sagittal/coronal reconstructions, recomputed whenever their
   // own index or the window settings change -- genuine voxels from the
@@ -567,18 +583,18 @@ export default function TutorialPage() {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     const hu = slab.thickness > 1 ? slabView(volumeRef.current, "sagittal", sagittalIndex, slab.thickness, slab.mode) : sagittalView(volumeRef.current, sagittalIndex);
-    renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SLICES, sagittalMaskView(maskRef.current, sagittalIndex), colorForObjectId, windowCenter, windowWidth, sharpness, overlayOpacity);
+    renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SLICES, shownMask(sagittalMaskView(maskRef.current, sagittalIndex), TUTORIAL_SIZE, TUTORIAL_SLICES), colorForObjectId, windowCenter, windowWidth, sharpness, shownOpacity);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volumeLoaded, sagittalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey]);
+  }, [volumeLoaded, sagittalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey, overlayStyle, peeking]);
   useEffect(() => {
     if (!volumeLoaded || !volumeRef.current) return;
     const canvas = coronalCanvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     const hu = slab.thickness > 1 ? slabView(volumeRef.current, "coronal", coronalIndex, slab.thickness, slab.mode) : coronalView(volumeRef.current, coronalIndex);
-    renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SLICES, coronalMaskView(maskRef.current, coronalIndex), colorForObjectId, windowCenter, windowWidth, sharpness, overlayOpacity);
+    renderPlane(ctx, hu, TUTORIAL_SIZE, TUTORIAL_SLICES, shownMask(coronalMaskView(maskRef.current, coronalIndex), TUTORIAL_SIZE, TUTORIAL_SLICES), colorForObjectId, windowCenter, windowWidth, sharpness, shownOpacity);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volumeLoaded, coronalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey]);
+  }, [volumeLoaded, coronalIndex, windowCenter, windowWidth, sharpness, overlayOpacity, maskVersion, objects, labels, slab, paneMountKey, overlayStyle, peeking]);
 
   /** The polygon in progress as an SVG over the pane (like the real
    * viewer's renderPolygonOverlay): zoomed with the image, but its points
@@ -1376,6 +1392,15 @@ export default function TutorialPage() {
         setShowCrosshair((v) => !v);
         return;
       }
+      if (e.key.toLowerCase() === "o" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        setOverlayStyle(overlayStyleRef.current === "outline" ? "fill" : "outline");
+        return;
+      }
+      if (e.code === "Space" && !typing) {
+        e.preventDefault();
+        if (!e.repeat) setPeeking(true);
+        return;
+      }
 
       // Arrow keys act on the last-hovered pane: Left/Right step its
       // slice, Up/Down zoom it -- same split the real viewer uses.
@@ -1391,8 +1416,17 @@ export default function TutorialPage() {
       }
       zoomStep(pane, e.key === "ArrowUp" ? 0.15 : -0.15);
     }
+    const endPeek = (e: KeyboardEvent | FocusEvent) => {
+      if (!("code" in e) || e.code === "Space") setPeeking(false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", endPeek);
+    window.addEventListener("blur", endPeek);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", endPeek);
+      window.removeEventListener("blur", endPeek);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPanel, zoom, phase, activeLabel]);
 
