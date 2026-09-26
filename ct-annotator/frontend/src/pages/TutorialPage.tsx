@@ -1530,6 +1530,8 @@ export default function TutorialPage() {
   function decide(status: "accepted" | "rejected") {
     if (!currentReviewObject) return;
     setObjects((prev) => prev.map((o) => (o.id === currentReviewObject.id ? { ...o, reviewStatus: status } : o)));
+    // as in the viewer: a rejection stays on its object, where its comment is written
+    if (status === "rejected") return;
     const nextPending = reviewObjects.findIndex((o, i) => i > clampedReviewIndex && o.reviewStatus === "pending");
     if (nextPending >= 0) setReviewIndex(nextPending);
     else if (clampedReviewIndex < reviewObjects.length - 1) setReviewIndex(clampedReviewIndex + 1);
@@ -1537,6 +1539,8 @@ export default function TutorialPage() {
 
   const approvedCount = reviewObjects.filter((o) => o.reviewStatus === "accepted").length;
   const rejectedCount = reviewObjects.filter((o) => o.reviewStatus === "rejected").length;
+  // as in the viewer, a rejection needs a comment for the annotator
+  const rejectedWithoutComment = reviewObjects.filter((o) => o.reviewStatus === "rejected" && !(o.comment ?? "").trim()).length;
 
   function replay() {
     maskRef.current = emptyMask();
@@ -1807,9 +1811,18 @@ export default function TutorialPage() {
             </Tip>
           )}
           {reviewMode && (
-            <Tip title="Submit review" description={reviewPending > 0 ? `${reviewPending} object${reviewPending === 1 ? "" : "s"} still need a decision.` : "Finish the tutorial."}>
+            <Tip
+              title="Submit review"
+              description={
+                reviewPending > 0
+                  ? `${reviewPending} object${reviewPending === 1 ? "" : "s"} still need a decision.`
+                  : rejectedWithoutComment > 0
+                    ? "Each rejected object needs a comment for the annotator first."
+                    : "Finish the tutorial."
+              }
+            >
               <span className="flex" data-guide="submit-review">
-                <button onClick={() => setPhase("done")} disabled={reviewPending > 0} className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+                <button onClick={() => setPhase("done")} disabled={reviewPending > 0 || rejectedWithoutComment > 0} className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
                   Submit review
                 </button>
               </span>

@@ -2982,10 +2982,13 @@ export default function ViewerPage() {
   // The object just rejected: its reason chips stay on the card after
   // the review has moved on to the next object, so tagging a reason
   // never costs a step back.
-  const [lastRejectedId, setLastRejectedId] = useState<number | null>(null);
+  const reviewCommentRef = useRef<HTMLTextAreaElement | null>(null);
   const clampedReviewIndex = Math.max(0, Math.min(reviewIndex, reviewOrderedObjects.length - 1));
   const currentReviewObject = reviewOrderedObjects[clampedReviewIndex] ?? null;
   const reviewPendingCount = reviewOrderedObjects.filter((o) => (o.review_status ?? "pending") === "pending").length;
+  // a rejection needs its reason and a comment: a bare "rejected" taught the
+  // annotator nothing (UX-rev-2-02)
+  const rejectIncomplete = reviewOrderedObjects.filter((o) => o.review_status === "rejected" && (!o.reject_reason || !(o.review_comment ?? "").trim()));
   // Why this case can't be reviewed (not handed in, or already decided), or null.
   const reviewBlocked = reviewMode ? reviewBlockedMessage(reviewState) : null;
 
@@ -3018,7 +3021,12 @@ export default function ViewerPage() {
     if (!currentReviewObject) return;
     const decidedId = currentReviewObject.id;
     setObjectReviewStatus(decidedId, status);
-    setLastRejectedId(status === "rejected" ? decidedId : null);
+    if (status === "rejected") {
+      // stay: the reason and the comment belong to THIS object -- the card
+      // used to jump on and show them under the next one (UX-rev-1-09)
+      window.setTimeout(() => reviewCommentRef.current?.focus(), 0);
+      return;
+    }
     const start = reviewOrderedObjects.findIndex((o) => o.id === decidedId);
     const next = nextUndecidedIndex(reviewOrderedObjects.map((o) => o.review_status), start);
     if (next !== null) setReviewIndex(next);
@@ -3070,7 +3078,7 @@ export default function ViewerPage() {
       rejected: "text-red-400 border-red-600",
     };
     return (
-      <div>
+      <div data-testid="review-card">
         <div className="flex items-center justify-between text-[11px] text-gray-500">
           <span>
             {clampedReviewIndex + 1} / {reviewOrderedObjects.length}
@@ -3079,7 +3087,7 @@ export default function ViewerPage() {
         </div>
         <div className="mt-1.5 flex items-center gap-1.5">
           {label && <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: label.color }} />}
-          <span className="truncate text-sm font-medium text-gray-100">
+          <span className="truncate text-sm font-medium text-gray-100" data-testid="review-object-name">
             {label && obj ? `${label.name} ${obj.instance_number}` : "—"}
           </span>
         </div>
@@ -3099,10 +3107,11 @@ export default function ViewerPage() {
           </p>
         )}
         <textarea
+          ref={reviewCommentRef}
           value={obj?.review_comment ?? ""}
           onChange={(e) => obj && setObjectReviewComment(obj.id, e.target.value)}
           title="Shown to the annotator next to this object when the case goes back to them"
-          placeholder="Comment for the annotator…"
+          placeholder={status === "rejected" ? "What is wrong, and what to change (required)…" : "Comment for the annotator…"}
           data-testid="review-comment"
           rows={2}
           className="mt-1.5 w-full resize-none rounded border border-[#444] bg-[#2a2a3e] p-1.5 text-[11px] text-amber-200 placeholder:text-gray-500"
@@ -3153,19 +3162,31 @@ export default function ViewerPage() {
           </Tip>
         </div>
         {renderRejectReasons()}
+        {reviewPendingCount === 0 && rejectIncomplete.length > 0 && (
+          <p className="mt-2 text-[11px] text-amber-300" data-testid="reject-incomplete">
+            {rejectIncomplete
+              .map((o) => {
+                const l = labels.find((x) => x.id === o.label_id);
+                return l ? `${l.name} ${o.instance_number}` : "An object";
+              })
+              .join(", ")}{" "}
+            {rejectIncomplete.length === 1 ? "needs" : "need"} a reason and a comment before you can submit.
+          </p>
+        )}
       </div>
     );
   }
 
   /** "Why?" chips for the object just rejected (one tap, optional). */
   function renderRejectReasons() {
-    const rejected = objects.find((o) => o.id === lastRejectedId && o.review_status === "rejected");
+    // the object on the card, whenever it is rejected -- also after a reload (UX-rev-2-11)
+    const rejected = currentReviewObject && currentReviewObject.review_status === "rejected" ? currentReviewObject : null;
     if (!rejected) return null;
     const label = labels.find((l) => l.id === rejected.label_id);
     return (
       <div className="mt-2 rounded border border-red-900/60 bg-red-950/30 p-1.5" data-testid="reject-reasons">
         <p className="mb-1 text-[10px] text-red-200/80">
-          Why was {label ? `${label.name} ${rejected.instance_number}` : "it"} rejected? <span className="text-gray-500">(optional)</span>
+          Why is {label ? `${label.name} ${rejected.instance_number}` : "it"} rejected? <span className="text-gray-500">(needed, with a comment above)</span>
         </p>
         <div className="flex flex-wrap gap-1">
           {REJECT_REASONS.map((r) => (
@@ -3859,13 +3880,15 @@ export default function ViewerPage() {
               description={
                 reviewPendingCount > 0
                   ? `${reviewPendingCount} object${reviewPendingCount === 1 ? "" : "s"} still need${reviewPendingCount === 1 ? "s" : ""} a decision before you can submit.`
-                  : "Decide the whole case from the objects' decisions: one rejected object rejects the case (it goes back to the annotator with your comments); all accepted approves it."
+                  : rejectIncomplete.length > 0
+                    ? "Each rejected object needs a reason and a comment for the annotator before you can submit."
+                    : "Decide the whole case from the objects' decisions: one rejected object rejects the case (it goes back to the annotator with your comments); all accepted approves it."
               }
             >
               <span className="flex" data-guide="submit-review">
                 <button
                   onClick={() => handleSubmitReview()}
-                  disabled={saving || !studyId || !maskReady || readOnlyLocked || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0}
+                  disabled={saving || !studyId || !maskReady || readOnlyLocked || reviewBlocked !== null || reviewOrderedObjects.length === 0 || reviewPendingCount > 0 || rejectIncomplete.length > 0}
                   className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Submit review
@@ -4464,6 +4487,8 @@ function ReviewObjectsList({
             <li
               key={obj.id}
               onClick={() => onSelect(obj.id)}
+              data-testid={`review-dot-${obj.id}`}
+              data-status={obj.review_status ?? "pending"}
               className={`flex cursor-pointer select-none items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors ${
                 obj.id === currentObjectId ? "bg-blue-500/20 text-blue-200" : "text-gray-400 hover:bg-[#2a2a3e]"
               }`}
