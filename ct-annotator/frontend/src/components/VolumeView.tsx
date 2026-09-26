@@ -58,6 +58,8 @@ uniform float uAirwayOpacity;
 uniform vec3 uPick;
 uniform bool uShowPick;
 uniform vec3 uAspect;
+uniform vec3 uClipLo;
+uniform vec3 uClipHi;
 uniform vec3 uPlanes;
 uniform bool uShowPlanes;
 uniform vec3 uPlaneX;
@@ -92,8 +94,9 @@ float windowed(float v) {
 
 vec2 hitBox(vec3 o, vec3 d) {
   vec3 inv = 1.0 / d;
-  vec3 t0 = (vec3(0.0) - o) * inv;
-  vec3 t1 = (vec3(1.0) - o) * inv;
+  // the crop box, not the whole volume
+  vec3 t0 = (uClipLo - o) * inv;
+  vec3 t1 = (uClipHi - o) * inv;
   vec3 tmin = min(t0, t1);
   vec3 tmax = max(t0, t1);
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
@@ -305,7 +308,11 @@ export default function VolumeView({
   const [focused, setFocused] = useState<number | null>(null);
   const [showPlanes, setShowPlanes] = useState(true);
   const [recording, setRecording] = useState(false);
-  const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0 });
+  // the crop box, 0..1 along columns (right -> left), rows (front -> back), slices (head -> feet)
+  const [clipLo, setClipLo] = useState<Vec3>([0, 0, 0]);
+  const [clipHi, setClipHi] = useState<Vec3>([1, 1, 1]);
+  const cropped = clipLo.some((v) => v > 0) || clipHi.some((v) => v < 1);
+  const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0, clipLo: [0, 0, 0] as Vec3, clipHi: [1, 1, 1] as Vec3 });
   const speedRef = useRef(speed);
   speedRef.current = speed;
   const navRef = useRef(nav);
@@ -454,8 +461,8 @@ export default function VolumeView({
       lung: st.lungOnly ? cpu.current.lung : null,
       airway: st.showAirways ? cpu.current.airway : null,
       nearCut: st.nearCut,
-      clipLo: [0, 0, 0],
-      clipHi: [1, 1, 1],
+      clipLo: st.clipLo,
+      clipHi: st.clipHi,
     });
     if (!hit) return;
     const [px, py, pz] = hit.point as Vec3;
@@ -589,6 +596,8 @@ export default function VolumeView({
             uShowPick: { value: false },
             uAspect: { value: new THREE.Vector3(1, 1, 1) },
             uPlanes: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
+            uClipLo: { value: new THREE.Vector3(0, 0, 0) },
+            uClipHi: { value: new THREE.Vector3(1, 1, 1) },
             uShowPlanes: { value: true },
             uPlaneX: { value: new THREE.Color(PLANE_COLOR.sagittal) },
             uPlaneY: { value: new THREE.Color(PLANE_COLOR.coronal) },
@@ -761,11 +770,13 @@ export default function VolumeView({
     u.uShowMask.value = showMask;
     u.uLungOnly.value = lungOnly && lungState === "ready";
     u.uNearCut.value = nearCut;
+    (u.uClipLo.value as THREE.Vector3).set(...clipLo);
+    (u.uClipHi.value as THREE.Vector3).set(...clipHi);
     u.uShowAirway.value = showAirways && airwayState === "ready";
-    settingsRef.current = { center, width, opacity, mode, showMask, lungOnly: lungOnly && lungState === "ready", showAirways: showAirways && airwayState === "ready", nearCut };
+    settingsRef.current = { center, width, opacity, mode, showMask, lungOnly: lungOnly && lungState === "ready", showAirways: showAirways && airwayState === "ready", nearCut, clipLo, clipHi };
     u.uAirwayOpacity.value = airwayOpacity;
     if (world.current) world.current.dirty = true;
-  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut, showAirways, airwayState, airwayOpacity]);
+  }, [info, center, width, opacity, maskOpacity, smooth, quality, mode, shade, showMask, lungOnly, lungState, nearCut, showAirways, airwayState, airwayOpacity, clipLo, clipHi]);
 
   // ── flying: pointer lock + mouse look, WASD / Space / Shift ─────────────
   useEffect(() => {
@@ -1052,6 +1063,35 @@ export default function VolumeView({
               {mode === "volume" && slider("Opacity", opacity, 0.01, 1, 0.01, setOpacity, "volume-opacity", `${Math.round(opacity * 100)}%`)}
               {slider("Smoothing", smooth, 0, 3, 0.25, setSmooth, "volume-smooth")}
               {slider("Cut away in front", nearCut, 0, 1.5, 0.02, setNearCut, "volume-near-cut", nearCut ? `${Math.round(nearCut * 100)}%` : "off")}
+              <details className="rounded border border-[#333] px-1.5 py-1" data-testid="volume-crop">
+                <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-gray-400">
+                  Crop box {cropped && <span className="normal-case text-yellow-300">· on</span>}
+                </summary>
+                <div className="mt-1 flex flex-col gap-1.5">
+                  {(["Right → left", "Front → back", "Head → feet"] as const).map((axisName, a) => (
+                    <div key={axisName} className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-gray-400">{axisName}</span>
+                      <div className="flex gap-1">
+                        <input
+                          type="range" min={0} max={1} step={0.01} value={clipLo[a]} aria-label={`${axisName}: from`}
+                          data-testid={`volume-crop-${a}-lo`}
+                          onChange={(e) => { const v = Math.min(Number(e.target.value), clipHi[a] - 0.02); setClipLo((c) => c.map((x, i) => (i === a ? v : x)) as Vec3); }}
+                          className="w-1/2 accent-yellow-400"
+                        />
+                        <input
+                          type="range" min={0} max={1} step={0.01} value={clipHi[a]} aria-label={`${axisName}: to`}
+                          data-testid={`volume-crop-${a}-hi`}
+                          onChange={(e) => { const v = Math.max(Number(e.target.value), clipLo[a] + 0.02); setClipHi((c) => c.map((x, i) => (i === a ? v : x)) as Vec3); }}
+                          className="w-1/2 accent-yellow-400"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => { setClipLo([0, 0, 0]); setClipHi([1, 1, 1]); }} disabled={!cropped} className="self-start rounded border border-[#444] px-1.5 py-0.5 text-[10px] hover:bg-[#333] disabled:opacity-40" data-testid="volume-crop-reset">
+                    Whole volume
+                  </button>
+                </div>
+              </details>
               {slider("Quality", quality, 0.5, 2, 0.25, setQuality, "volume-quality", `${quality}×`)}
               {mode === "volume" && (
                 <label className="flex items-center gap-2">
