@@ -103,6 +103,20 @@ class Board:
 # ---------------------------------------------------------------- per-case history
 
 
+def _rounds(h: dict) -> int:
+    """Hand-ins that started a round: the first one, and each one after a
+    decision. Handing in again before the decision is the same round -- a
+    retry counted as a second round (K6)."""
+    times = sorted(a["created_at"] for a in h["submissions"])
+    decisions = sorted(d["t"] for d in h["decisions"])
+    rounds, previous = 0, None
+    for t in times:
+        if previous is None or any(previous < d <= t for d in decisions):
+            rounds += 1
+        previous = t
+    return rounds
+
+
 def _empty_history() -> dict:
     return {"events": [], "drafts": [], "reviewed_rows": [], "submissions": [], "decisions": []}
 
@@ -259,7 +273,7 @@ def cases_table(histories: dict[str, dict], stage: list[dict], board: Board, eff
                     {"card_id": e["card_id"], "step": board.cards[e["card_id"]]["title"] if e["card_id"] in board.cards else None, "kind": e["kind"], "at": e["t"], "by": names.get(e["by"], e["by"])}
                     for e in h["events"]
                 ],
-                "rounds": len(h["submissions"]),
+                "rounds": _rounds(h),
                 "reviews": len(h["decisions"]),
                 "sent_back": sum(1 for d in h["decisions"] if d["kind"] == "rejected"),
                 # no review ever rejected it -- across every review step

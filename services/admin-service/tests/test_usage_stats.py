@@ -294,7 +294,7 @@ def test_case_effort_sums_active_time_across_sittings():
     ]
     [entry] = stats.case_effort(events)
     assert entry == {"job_id": "job-1", "case_id": "case-1", "user_ids": [ALICE], "sittings": 2, "active_ms": 30000 + 20000, "undos": 1, "first_input_ms": [4000, 2000], "device": None}
-    assert stats.effort_summary([entry]) == {"cases": 1, "active_median_ms": 50000, "sittings_median": 2, "undos_per_case": 1.0, "first_input_median_ms": 3000, "first_input_count": 2}
+    assert stats.effort_summary([entry]) == {"cases": 1, "measured": 1, "active_median_ms": 50000, "sittings_median": 2, "undos_per_case": 1.0, "first_input_median_ms": 3000, "first_input_count": 2}
 
 
 def test_friction_stays_linear_on_a_long_sitting():
@@ -444,3 +444,29 @@ def test_clicks_on_look_alike_buttons_keep_their_own_spot():
     button, save = placed
     assert (button["placed"], button["x"], button["y"]) == ("screen", 0.31, 0.34)  # its recorded position, not the first button
     assert save["placed"] == "exact" and save["x"] == 0.93
+
+
+def test_a_visit_without_page_leave_still_counts_until_its_last_input():
+    """K6: 45% of viewer visits in the UX test had no page_leave (a tab
+    closed or the browser quit before the last batch went out), and their
+    hands-on time was 0 -- "10 s annotating per case". Such a visit now
+    counts until its last input, minus idle stretches; a visit replaced by
+    the next case's page_view the same way."""
+    job = {"job_id": "J", "case_id": "A"}
+    v = "/viewer/:id"
+    events = [
+        ev("s1", "page_view", v, at_s=0, app="viewer", detail=job),
+        ev("s1", "click", v, at_s=10, app="viewer"),
+        ev("s1", "idle", v, at_s=70, app="viewer", duration_ms=30000),
+        ev("s1", "key", v, at_s=100, app="viewer", name="Ctrl+z"),
+        # session ends here: no page_leave
+        ev("s2", "page_view", v, at_s=500, app="viewer", detail=job),
+        ev("s2", "action", v, at_s=520, app="viewer", name="save"),
+        ev("s2", "page_view", v, at_s=530, app="viewer", detail={"job_id": "J", "case_id": "B"}),  # moved on, no page_leave for A
+        ev("s2", "click", v, at_s=545, app="viewer"),
+        ev("s2", "page_leave", v, at_s=560, app="viewer", duration_ms=30000),
+    ]
+    by_case = {e["case_id"]: e for e in stats.case_effort(events)}
+    assert by_case["A"]["active_ms"] == (100_000 - 30_000) + 20_000
+    assert by_case["B"]["active_ms"] == 30_000
+    assert stats.effort_summary(list(by_case.values()))["measured"] == 2

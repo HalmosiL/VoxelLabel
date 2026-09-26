@@ -7,6 +7,8 @@ import csv
 import io
 import json
 import re
+import functools
+import threading
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -20,6 +22,7 @@ from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
 from shared_models.models import (
     Annotation,
+    AnnotationReview,
     AnnotationStatus,
     Case,
     ImagingStudy,
@@ -31,7 +34,7 @@ from shared_models.models import (
     UsageSnapshot,
     WorkflowCard,
 )
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.audit import record as audit
@@ -313,13 +316,36 @@ def _window(days: int, since: datetime | None, until: datetime | None) -> tuple[
     return since, until
 
 
+_EVENT_COLUMNS = ("user_id", "session_id", "app", "event_type", "route", "name", "detail", "duration_ms", "occurred_at", "app_version")
+
+# At most this many whole-window usage computations at a time; the rest
+# wait their turn. One 90-day overview holds ~100 MB while it works, and a
+# Usage page fires several at once: five in parallel took the 512 MB
+# service down mid-request in the regression run.
+_HEAVY = threading.BoundedSemaphore(2)
+
+
+def _heavy(fn):
+    """Runs `fn` as one of the few whole-window computations allowed at a
+    time (see _HEAVY). Not re-entrant: none of these calls another."""
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        with _HEAVY:
+            return fn(*args, **kwargs)
+
+    return run
+
+
 def _load(db: Session, since: datetime, until: datetime, user_id: str | None = None, not_counted: set[str] | None = None) -> list[dict]:
-    query = db.query(UsageEvent).filter(UsageEvent.occurred_at >= since, UsageEvent.occurred_at <= until)
+    """The window's events as plain dicts -- read as rows, not ORM objects
+    (a third of the memory)."""
+    query = select(*(getattr(UsageEvent, c) for c in _EVENT_COLUMNS)).where(UsageEvent.occurred_at >= since, UsageEvent.occurred_at <= until)
     if user_id:
-        query = query.filter(UsageEvent.user_id == user_id)
+        query = query.where(UsageEvent.user_id == user_id)
     if not_counted:
-        query = query.filter(UsageEvent.user_id.notin_(not_counted))
-    return _rows_as_dicts(query.order_by(UsageEvent.occurred_at).all())
+        query = query.where(UsageEvent.user_id.notin_(not_counted))
+    return [dict(zip(_EVENT_COLUMNS, row)) for row in db.execute(query.order_by(UsageEvent.occurred_at))]
 
 
 def _iso(value) -> str | None:
@@ -679,6 +705,65 @@ def _case_table(db: Session, entries: list[dict], rating_rows: list[dict], card_
     return rows[:MAX_CASE_ROWS], {"cases": len(worked), "per_object_median_ms": int(median(per_object)) if per_object else None, "drivers": drivers}
 
 
+def _work_done(db: Session, since: datetime, until: datetime, user_ids: list[str], study_id: str | None) -> dict[str, tuple[int, int]]:
+    """Per person, cases handed in and review decisions made in the window
+    -- from the annotations themselves, not from the tracker's actions: a
+    lost batch of events lost the work, and three pages disagreed on a
+    reviewer's count (K6). A hand-in is an annotator's own version that was
+    handed in (a reviewer's working copy, review_of, is not)."""
+    if not user_ids:
+        return {}
+    handed = (
+        db.query(Annotation.annotator_id, func.count(Annotation.id))
+        .filter(
+            Annotation.annotator_id.in_(user_ids),
+            Annotation.review_of_id.is_(None),
+            Annotation.status.in_([AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED, AnnotationStatus.REJECTED]),
+            Annotation.created_at >= since,
+            Annotation.created_at < until,
+        )
+    )
+    decided = (
+        db.query(AnnotationReview.reviewer_id, func.count(AnnotationReview.id))
+        .join(Annotation, Annotation.id == AnnotationReview.annotation_id)
+        .filter(AnnotationReview.reviewer_id.in_(user_ids), AnnotationReview.created_at >= since, AnnotationReview.created_at < until)
+    )
+    if study_id:
+        handed = handed.filter(Annotation.study_id == uuid.UUID(str(study_id)))
+        decided = decided.filter(Annotation.study_id == uuid.UUID(str(study_id)))
+    counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for uid, n in handed.group_by(Annotation.annotator_id).all():
+        counts[uid][0] = n
+    for uid, n in decided.group_by(AnnotationReview.reviewer_id).all():
+        counts[uid][1] = n
+    return {uid: (a, r) for uid, (a, r) in counts.items()}
+
+
+def _reject_reasons(db: Session, since: datetime, until: datetime, user_id: str | None, not_counted: set, study_id: str | None) -> dict:
+    """Why reviewers rejected objects: the rejected objects of the versions
+    decided in the window, as the study analytics page counts them. The
+    tracker's reason-chip actions gave the report a different answer (K6)."""
+    q = (
+        db.query(AnnotationReview.reviewer_id, Annotation.payload)
+        .join(Annotation, Annotation.id == AnnotationReview.annotation_id)
+        .filter(AnnotationReview.decision == "reject", AnnotationReview.created_at >= since, AnnotationReview.created_at < until)
+    )
+    if user_id:
+        q = q.filter(AnnotationReview.reviewer_id == user_id)
+    if study_id:
+        q = q.filter(Annotation.study_id == uuid.UUID(str(study_id)))
+    counts: Counter = Counter()
+    for reviewer, payload in q.all():
+        if reviewer in not_counted:
+            continue
+        for obj in (payload or {}).get("objects") or []:
+            if obj.get("review_status") == "rejected" and obj.get("reject_reason"):
+                counts[obj["reject_reason"]] += 1
+    total = sum(counts.values())
+    return {"total": total, "reasons": [{"reason": r, "count": n, "share": round(n / total, 3)} for r, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]}
+
+
+@_heavy
 def build_usage_summary(db: Session, window_since: datetime, window_until: datetime, user_id: str | None = None, people: dict | None = None, study_id: str | None = None) -> dict:
     """The /summary payload for an explicit window (usernames resolved,
     friction score and per-case effort attached, excluded accounts left
@@ -697,9 +782,12 @@ def build_usage_summary(db: Session, window_since: datetime, window_until: datet
     summary["cases"], summary["complexity"] = _case_table(db, entries, rating_rows, card_types, people)
     for row in summary["releases"]:
         row["first_seen"], row["last_seen"] = _iso(row["first_seen"]), _iso(row["last_seen"])
+    done = _work_done(db, window_since, window_until, [row["user_id"] for row in summary["users"]], study_id)
+    summary["reject_reasons"] = _reject_reasons(db, window_since, window_until, user_id, not_counted, study_id)
     for row in summary["users"]:
         row.update({k: v for k, v in people.get(row["user_id"], {"username": row["user_id"], "email": None}).items() if k in ("username", "email")})
         row["last_seen_at"] = _iso(row["last_seen_at"])
+        row["annotated"], row["reviewed"] = done.get(row["user_id"], (0, 0))
     summary["since"] = window_since.isoformat()
     summary["until"] = window_until.isoformat()
     summary["friction_score"] = friction_score(summary)
@@ -957,6 +1045,7 @@ def export_events_csv(
 
 
 @router.get("/sessions")
+@_heavy
 def list_sessions(
     days: int = Query(30, ge=1, le=365),
     since: datetime | None = Query(None, alias="from"),
@@ -1021,6 +1110,7 @@ def _job_types(db: Session, job_ids: set) -> dict[str, str]:
 
 
 @router.get("/heatmap")
+@_heavy
 def read_heatmap(
     route: str,
     days: int = Query(30, ge=1, le=365),

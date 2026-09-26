@@ -491,6 +491,8 @@ export interface UsageRelease {
   sessions: number;
   cases: number;
   active_median_ms: number | null;
+  // cases with a hands-on time at all (K6)
+  measured?: number;
   first_input_median_ms: number | null;
   no_response_rate: number | null;
   friction_score: number | null;
@@ -550,6 +552,8 @@ export interface UsageTour {
 export interface UsageEffort {
   cases: number;
   active_median_ms: number | null;
+  // cases with a hands-on time at all (K6)
+  measured?: number;
   sittings_median: number | null;
   undos_per_case: number | null;
   first_input_median_ms: number | null;

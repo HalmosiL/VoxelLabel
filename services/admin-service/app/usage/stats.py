@@ -240,16 +240,28 @@ def case_effort(events: list[dict]) -> list[dict]:
     page minus idle stretches), how many sittings it took, undo count,
     and -- per visit -- how long until the first click, key or action
     (loading plus getting oriented: the wait before work can start).
-    Keyed by the job_id/case_id the viewer stamps on its page_view."""
+    Keyed by the job_id/case_id the viewer stamps on its page_view.
+
+    A visit without its page_leave -- the tab closed or the browser quit
+    before the last batch went out, or the next case's page_view came
+    first -- counts until its last input, minus idle: such visits were 0,
+    45% of them in the UX test ("10 s annotating per case", K6)."""
     per: dict[tuple, dict] = {}
     for session_id, rows in _by_session(events).items():
         current: tuple | None = None
         idle = 0
         opened = 0
+        last_input = 0
         waiting_for_input = False
+
+        def settle_unfinished() -> None:
+            if current is not None and last_input > opened:
+                per[current]["active_ms"] += max(last_input - opened - idle, 0)
+
         for e in rows:
             kind = e["event_type"]
             if kind == "page_view":
+                settle_unfinished()
                 d = e.get("detail") or {}
                 current = None
                 if e["route"].startswith(VIEWER_ROUTE_PREFIX) and d.get("case_id") and d.get("job_id"):
@@ -261,6 +273,7 @@ def case_effort(events: list[dict]) -> list[dict]:
                     entry["sessions"].add(session_id)
                     entry["user_ids"].add(e["user_id"])
                     idle, opened, waiting_for_input = 0, _ms(e["occurred_at"]), True
+                    last_input = opened
                 continue
             if current is None:
                 continue
@@ -270,13 +283,18 @@ def case_effort(events: list[dict]) -> list[dict]:
             elif kind == "page_leave":
                 if e.get("duration_ms") is not None:
                     entry["active_ms"] += max(int(e["duration_ms"]) - idle, 0)
+                else:
+                    last_input = max(last_input, _ms(e["occurred_at"]))
+                    settle_unfinished()
                 current = None
             elif kind in ("click", "key", "action"):
+                last_input = max(last_input, _ms(e["occurred_at"]))
                 if waiting_for_input:
                     entry["first_input_ms"].append(_ms(e["occurred_at"]) - opened)
                     waiting_for_input = False
                 if kind == "action" and e.get("name") in UNDO_ACTIONS:
                     entry["undos"] += 1
+        settle_unfinished()  # the session ended mid-visit
     return [
         {
             "job_id": v["job_id"],
@@ -299,8 +317,12 @@ def effort_summary(entries: list[dict]) -> dict:
     first_input = [ms for e in entries for ms in e["first_input_ms"]]
     return {
         "cases": len(entries),
+        # how many of them have a hands-on time at all: the median means
+        # little when most are unmeasured (K6)
+        "measured": len(active),
         "active_median_ms": int(median(active)) if active else None,
-        "sittings_median": median(sittings) if sittings else None,
+        # a whole number of sittings ("19.5 sittings" read as nonsense)
+        "sittings_median": round(median(sittings)) if sittings else None,
         "undos_per_case": round(sum(e["undos"] for e in entries) / len(entries), 1) if entries else None,
         "first_input_median_ms": int(median(first_input)) if first_input else None,
         "first_input_count": len(first_input),
@@ -688,9 +710,11 @@ def per_user(events: list[dict], effort: list[dict] | None = None) -> list[dict]
     for e in events:
         by_user[e["user_id"]].append(e)
     active_by_user: dict[str, list[int]] = defaultdict(list)
+    worked_by_user: dict[str, int] = defaultdict(int)
     for entry in effort or []:
-        if entry["active_ms"] > 0:
-            for uid in entry["user_ids"]:
+        for uid in entry["user_ids"]:
+            worked_by_user[uid] += 1  # a case opened counts even when its time wasn't measured (K6)
+            if entry["active_ms"] > 0:
                 active_by_user[uid].append(entry["active_ms"])
     result = []
     for user_id, rows in by_user.items():
@@ -718,7 +742,7 @@ def per_user(events: list[dict], effort: list[dict] | None = None) -> list[dict]
                 "clicks_per_min": round(clicks / (total_ms / 60000), 1) if total_ms else 0.0,
                 "mouse_px_per_page": int(mouse_distance(rows) / page_views) if page_views else 0,
                 "active_per_case_ms": int(median(active_by_user[user_id])) if active_by_user[user_id] else None,
-                "cases_worked": len(active_by_user[user_id]),
+                "cases_worked": worked_by_user[user_id],
                 "annotated": actions.get(TASK_ACTIONS["annotate"], 0),
                 "reviewed": actions.get(TASK_ACTIONS["review"], 0),
                 "errors": sum(s["errors"] for s in user_sessions),

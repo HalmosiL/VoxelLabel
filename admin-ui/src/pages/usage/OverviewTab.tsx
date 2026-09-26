@@ -133,12 +133,15 @@ function StatTiles({ summary, previous, pipeline, pipelinePrevious }: { summary:
   const pq = pipelinePrevious?.quality;
   const pct = (v: number | null | undefined) => (v === null || v === undefined ? "–" : `${Math.round(v * 100)}%`);
   const sittings = (v: number | null) => (v === null ? "" : ` · ${v} ${v === 1 ? "sitting" : "sittings"}`);
+  // how many cases the median rests on: most unmeasured makes it a hint at best (K6)
+  const measured = (x: { cases: number; measured?: number }) =>
+    x.measured !== undefined && x.measured < x.cases ? ` · measured for ${x.measured} of ${x.cases}` : "";
   const tiles: Tile[] = [
     {
       key: "hands-on-annotating",
       label: "Hands-on time per case · annotating",
       value: formatDuration(e.annotation.active_median_ms),
-      sub: `${e.annotation.cases} cases${sittings(e.annotation.sittings_median)}`,
+      sub: `${e.annotation.cases} cases${sittings(e.annotation.sittings_median)}${measured(e.annotation)}`,
       title: "Median active time spent in the viewer on one case of an annotation job, summed over every sitting, idle stretches (30 s+ without input) left out. The real labour cost of a case. Lower is better.",
       current: e.annotation.active_median_ms,
       previous: pe?.annotation.active_median_ms ?? null,
@@ -150,7 +153,7 @@ function StatTiles({ summary, previous, pipeline, pipelinePrevious }: { summary:
       key: "hands-on-reviewing",
       label: "Hands-on time per case · reviewing",
       value: formatDuration(e.review.active_median_ms),
-      sub: `${e.review.cases} cases${sittings(e.review.sittings_median)}`,
+      sub: `${e.review.cases} cases${sittings(e.review.sittings_median)}${measured(e.review)}`,
       title: "The same for review jobs: median active viewer time per reviewed case. Lower is better.",
       current: e.review.active_median_ms,
       previous: pe?.review.active_median_ms ?? null,

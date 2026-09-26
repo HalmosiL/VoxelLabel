@@ -185,7 +185,10 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
             decisions = reviews_by_annotation.get(rid, [])
             own_version = review_of is not None or any(reviewer == who for _t, reviewer, _d in decisions)
             if raw in _EVER_SUBMITTED and not own_version:
-                out.append({"submitted_at": at, "submitter": who, "decided_at": None, "decider": None, "decision": None})
+                # handed in again while the last hand-in awaits its decision:
+                # the same round, not a second one (K6)
+                if not (out and out[-1]["decided_at"] is None):
+                    out.append({"submitted_at": at, "submitter": who, "decided_at": None, "decider": None, "decision": None})
             for t, reviewer, decision in decisions:
                 if out and out[-1]["decided_at"] is None and t >= out[-1]["submitted_at"]:
                     out[-1].update(decided_at=t, decider=reviewer, decision=decision)

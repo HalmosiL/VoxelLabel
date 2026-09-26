@@ -138,7 +138,7 @@ def test_summary_sessions_and_heatmap(client):
     assert summary["transitions"] == [{"from": "/my-jobs", "to": "/viewer/:id", "count": 1, "sessions": 1}]
     assert [a["name"] for a in summary["actions"]] == ["mark_annotated", "tool.paint"]
     user = summary["users"][0]
-    assert user["user_id"] == ANNOTATOR_SUBJECT and user["username"] == "dr-test" and user["annotated"] == 1
+    assert user["user_id"] == ANNOTATOR_SUBJECT and user["username"] == "dr-test" and user["annotated"] == 0  # counted from the annotations themselves, none here (K6)
     assert summary["recording"] == {"enabled": True, "disabled_user_ids": []}
     # the user filter narrows to nothing for someone with no events
     assert client.get("/admin/usage/summary", params={"user_id": REVIEWER_SUBJECT}).json()["totals"]["sessions"] == 0
@@ -679,3 +679,58 @@ def test_typed_characters_are_never_stored_only_shortcuts(client, db):
     stored = [e.name for e in db.query(UsageEvent).filter_by(event_type="key").order_by(UsageEvent.occurred_at).all()]
     assert stored == ["char", "char", "char", "Ctrl+z", "Meta+Shift+z", "Alt+ArrowUp", "Enter", "Space", "ArrowRight"]
 
+
+
+def test_how_much_each_person_did_comes_from_the_work_itself(client, db):
+    """K6: the Usage page's per-person "annotated · reviewed" counted the
+    tracker's mark_annotated / submit_review actions, so a lost batch lost
+    the work: a reviewer with 2 decisions showed 0 here, 1 in the report and
+    2 on the study analytics page. Now the hand-ins and decisions are
+    counted from the annotations themselves, like the analytics page."""
+    from .conftest import REVIEWER_SUBJECT, make_annotation, make_case, make_review, make_series, make_study
+
+    client.as_admin()
+    sid = make_study(client)
+    s1 = make_series(db, make_case(client, sid, external="W-1")["id"])
+    s2 = make_series(db, make_case(client, sid, external="W-2")["id"])
+    a1 = make_annotation(db, sid, s1, ANNOTATOR_SUBJECT, "submitted")
+    make_annotation(db, sid, s2, ANNOTATOR_SUBJECT, "submitted")
+    make_annotation(db, sid, s2, ANNOTATOR_SUBJECT, "draft")  # a draft is not a hand-in
+    make_review(db, a1, REVIEWER_SUBJECT, "reject")
+
+    for subject in (ANNOTATOR_SUBJECT, REVIEWER_SUBJECT):  # both were around, no task actions recorded
+        client.as_user(subject)
+        post(client, [ev("page_view", "/my-jobs", session=f"w-{subject[-4:]}")])
+    client.as_admin()
+    users = {u["user_id"]: u for u in client.get("/admin/usage/summary").json()["users"]}
+    assert (users[ANNOTATOR_SUBJECT]["annotated"], users[ANNOTATOR_SUBJECT]["reviewed"]) == (2, 0)
+    assert (users[REVIEWER_SUBJECT]["annotated"], users[REVIEWER_SUBJECT]["reviewed"]) == (0, 1)
+
+
+def test_reject_reasons_come_from_the_decisions_themselves(client, db):
+    """K6: the report said "boundary 1 (100%)" while the study's Labels tab
+    said "boundary off 2, not a finding 1" -- the report counted the
+    tracker's reason-chip actions. Now both count the rejected objects of
+    the decided versions."""
+    from shared_models.models import Annotation
+
+    from .conftest import REVIEWER_SUBJECT, make_annotation, make_case, make_review, make_series, make_study
+
+    client.as_admin()
+    sid = make_study(client)
+    series = make_series(db, make_case(client, sid, external="R-1")["id"])
+    version = make_annotation(db, sid, series, REVIEWER_SUBJECT, "submitted")
+    db.query(Annotation).filter_by(id=version).update({"payload": {"mask_volume_key": "k", "labels": [], "objects": [
+        {"id": 1, "review_status": "rejected", "reject_reason": "boundary"},
+        {"id": 2, "review_status": "rejected", "reject_reason": "boundary"},
+        {"id": 3, "review_status": "rejected", "reject_reason": "not_finding"},
+        {"id": 4, "review_status": "accepted"},
+    ]}})
+    db.commit()
+    make_review(db, version, REVIEWER_SUBJECT, "reject")
+    client.as_user(REVIEWER_SUBJECT)
+    post(client, [ev("page_view", "/my-jobs", session="rr")])
+    client.as_admin()
+    reasons = client.get("/admin/usage/summary").json()["reject_reasons"]
+    assert reasons["total"] == 3
+    assert [(r["reason"], r["count"]) for r in reasons["reasons"]] == [("boundary", 2), ("not_finding", 1)]

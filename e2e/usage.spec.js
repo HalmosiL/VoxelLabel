@@ -186,8 +186,13 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     check("clicks are split by the kind of job they were made in", (await page.locator('[data-testid="usage-heatmap-mode-annotation"]').count()) === 1);
     check("the heatmap says how the clicks were placed on this picture", /on the same element/.test(await page.locator('[data-testid="usage-heatmap-placement"]').innerText()) && (await page.locator('[data-testid="usage-heatmap-dot"][data-placed="exact"]').count()) >= 1);
     await page.locator('[data-testid="usage-heatmap-mode-annotation"]').click();
-    await page.waitForTimeout(800);
-    const modesShown = await page.locator('[data-testid="usage-heatmap-dot"]').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute("data-mode")))]);
+    // with a lot of recorded clicks the redraw takes a few seconds: wait for it, not a fixed pause
+    let modesShown = [];
+    for (let i = 0; i < 40; i++) {
+      await page.waitForTimeout(200);
+      modesShown = await page.locator('[data-testid="usage-heatmap-dot"]').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute("data-mode")))]);
+      if (modesShown.length === 1 && modesShown[0] === "annotation") break;
+    }
     check("filtering to annotation jobs leaves only annotation-job clicks", modesShown.length === 1 && modesShown[0] === "annotation", modesShown);
     await page.locator('[data-testid="usage-heatmap-mode-all"]').click();
     await page.waitForTimeout(800);

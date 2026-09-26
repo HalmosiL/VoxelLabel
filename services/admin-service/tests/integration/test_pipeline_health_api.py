@@ -222,3 +222,24 @@ def test_every_review_round_is_a_leg_and_rework_is_open_work(client, db):
     health = client.get("/admin/pipeline-health/summary").json()
     assert any(b["card_type"] == "annotation" and b["kind"] == "queue" for b in health["bottlenecks"]), health["bottlenecks"]
     assert any(a["assignee_id"] == ANNOTATOR_SUBJECT for a in health["assignee_load"])
+
+
+def test_handing_in_twice_before_a_decision_is_one_round(client, db):
+    """K6 / UX-ux-admin-32: an annotator who handed in the same case twice
+    before it was reviewed (a retry after a slow response) got two review
+    rounds -- "Rounds 5" for 2 cases, and the case listed twice at once as a
+    bottleneck. A second hand-in while the first awaits its decision is the
+    same round."""
+    from app.pipeline_health.api import load_legs
+
+    sid, cases, series, ann, rev = _pipeline(client, db, n_cases=1)
+    s = series[0]
+    first = make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")
+    make_annotation(db, sid, s, ANNOTATOR_SUBJECT, "submitted")  # handed in again, nothing decided yet
+    reviews = [leg for leg in load_legs(db, None, uuid.UUID(sid)) if leg["card_type"] == "review"]
+    assert len(reviews) == 1
+    make_review(db, first, REVIEWER_SUBJECT, "approve")
+    client.as_admin()
+    analytics = client.get(f"/admin/studies/{sid}/analytics").json()
+    [row] = analytics["cases"]
+    assert row["rounds"] == 1, row
