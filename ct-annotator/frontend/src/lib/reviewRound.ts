@@ -71,3 +71,19 @@ export function previousReviewText(obj: SegObject): string | null {
   const reason = prev.status === "rejected" ? rejectReasonLabel(prev.reject_reason)?.toLowerCase() : undefined;
   return `${prev.status}${reason ? ` (${reason})` : ""}${prev.review_comment ? `: ${prev.review_comment}` : ""}`;
 }
+
+/** What the reviewer sent back, for the annotator's rework banner: each
+ * rejected object with its reason and comment, and the case-level comment
+ * when no object carries one (a case sent back as a missed finding). */
+export function sentBackItems(objects: SegObject[], labels: SegLabel[], caseComment?: string | null): { id: number | null; name: string; text: string }[] {
+  const items = objects
+    .filter((o) => o.review_status === "rejected")
+    .map((o) => {
+      const label = labels.find((l) => l.id === o.label_id);
+      const reason = rejectReasonLabel(o.reject_reason);
+      const text = [reason, o.review_comment?.trim()].filter(Boolean).join(": ");
+      return { id: o.id, name: label ? `${label.name} ${o.instance_number}` : `Object ${o.instance_number}`, text: text || "rejected" };
+    });
+  if (items.length === 0 && caseComment?.trim()) return [{ id: null, name: "The case", text: caseComment.trim() }];
+  return items;
+}

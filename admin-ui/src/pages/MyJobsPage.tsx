@@ -9,7 +9,7 @@ import { refreshViewerHandoffOnClick, withViewerHandoff } from "../auth/viewerHa
 import { ANNOTATOR_UI_URL } from "../config";
 import { useRegisterGuide } from "../guide/GuideContext";
 import { MY_JOBS_STEPS } from "../guide/workbenchSteps";
-import { finishedCount, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
+import { finishedCount, sentBackCount, TASK_STATUS_STYLE } from "../components/workflow/statusStyle";
 import { DocumentIcon, PencilIcon, SparklesIcon } from "../components/icons";
 
 // todo/in_progress surface first -- those are the jobs actually waiting
@@ -165,6 +165,7 @@ function JobCard({ job, showBoardLink, guideExample }: { job: MyJob; showBoardLi
   const total = job.cases.length;
   const open = openCases(job);
   const finished = finishedCount(job.card_type, job.cases); // a sent-back case is reviewed too (D-09)
+  const sentBack = sentBackCount(job.card_type, job.cases);
   const doneShare = total === 0 ? 0 : Math.round((finished / total) * 100);
   const cases = `${total} case${total === 1 ? "" : "s"}`;
   const progress = isReview
@@ -195,6 +196,15 @@ function JobCard({ job, showBoardLink, guideExample }: { job: MyJob; showBoardLi
             <span className={`badge-dot ${style.dot}`} />
             {style.label}
           </span>
+          {sentBack > 0 && (
+            <span
+              className="badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200"
+              data-testid="sent-back-count"
+              title="Cases the reviewer sent back to you -- open the job to see why"
+            >
+              Sent back: {sentBack}
+            </span>
+          )}
         </div>
         <p className="mt-0.5 truncate text-sm text-gray-500">{job.study_name ?? "Unknown study"}</p>
         <div className="mt-2 flex items-center gap-3">

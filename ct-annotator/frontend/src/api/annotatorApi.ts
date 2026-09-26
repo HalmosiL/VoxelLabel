@@ -258,6 +258,9 @@ export interface JobCase {
   // Review jobs only -- the id of a still-SUBMITTED (undecided)
   // annotation on this case, null once it's been approved/rejected.
   pending_annotation_id?: string | null;
+  // The reviewer's comment on the latest decision -- for a case sent
+  // back with no objects, the only place that says why.
+  latest_review_comment?: string | null;
 }
 
 /** Every case in this job (Annotation or Review), in the same scope

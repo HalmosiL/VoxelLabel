@@ -56,3 +56,9 @@ export function jobProgressText(cardType: string, cases: JobCase[]): string {
 export function finishedCount(cardType: string, cases: JobCase[]): number {
   return cases.filter((c) => c.status === "done" || (cardType === "review" && c.status === "rejected")).length;
 }
+
+/** Cases the reviewer sent back that are the annotator's to redo -- an
+ * Annotation job only (on a Review job they are decided work). */
+export function sentBackCount(cardType: string, cases: JobCase[]): number {
+  return cardType === "review" ? 0 : cases.filter((c) => c.status === "rejected").length;
+}

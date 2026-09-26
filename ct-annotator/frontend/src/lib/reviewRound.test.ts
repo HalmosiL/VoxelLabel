@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SegLabel, SegObject } from "../api/annotatorApi";
-import { handInObjects, isNewThisRound, previousReviewText, reviewCommentText } from "./reviewRound";
+import { handInObjects, isNewThisRound, previousReviewText, reviewCommentText, sentBackItems } from "./reviewRound";
 
 const labels: SegLabel[] = [{ id: 1, name: "Nodule", color: "#f00" }, { id: 2, name: "Cyst", color: "#0f0" }];
 const obj = (id: number, label_id: number, n: number, extra: Partial<SegObject> = {}): SegObject => ({ id, label_id, instance_number: n, locked: false, hidden: false, ...extra });
@@ -37,5 +37,28 @@ describe("handInObjects", () => {
     const objects = handInObjects([obj(1, 1, 1, { review_status: "accepted" })]).concat(obj(2, 1, 2));
     expect(isNewThisRound(objects[1], objects)).toBe(true);
     expect(isNewThisRound(objects[0], objects)).toBe(false);
+  });
+});
+
+describe("sentBackItems", () => {
+  const base = { label_id: 1, locked: false, hidden: false };
+  it("lists each rejected object with its reason and comment", () => {
+    const items = sentBackItems(
+      [
+        { ...base, id: 1, instance_number: 1, review_status: "rejected", reject_reason: "boundary", review_comment: " tighten the edge " },
+        { ...base, id: 2, instance_number: 2, review_status: "accepted" },
+        { ...base, id: 3, instance_number: 3, review_status: "rejected" },
+      ],
+      labels,
+    );
+    expect(items).toEqual([
+      { id: 1, name: "Nodule 1", text: "Boundary off: tighten the edge" },
+      { id: 3, name: "Nodule 3", text: "rejected" },
+    ]);
+  });
+
+  it("falls back to the case's comment when no object was rejected", () => {
+    expect(sentBackItems([], labels, "No objects: missed finding")).toEqual([{ id: null, name: "The case", text: "No objects: missed finding" }]);
+    expect(sentBackItems([], labels, null)).toEqual([]);
   });
 });

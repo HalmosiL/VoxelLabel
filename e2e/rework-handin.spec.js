@@ -4,7 +4,7 @@
 // hand-in with the objects as they were before it. Sets up: case A sent
 // back by the reviewer, case B still open; the annotator hands A in.
 const { chromium } = require("playwright");
-const { F, token, saveMaskAs } = require("./helpers");
+const { F, login, token, saveMaskAs } = require("./helpers");
 const ADMIN = "http://localhost:8004", VIEWER = "http://localhost:5174", A8010 = "http://localhost:8010";
 
 const results = [];
@@ -42,6 +42,19 @@ const seriesOf = async (tok, caseId) => (await api(tok, `${F.DATA}/data/cases/${
   await page.fill("#username", "dr-test"); await page.fill("#password", "Test1234!"); await page.click("#kc-login");
   await page.waitForFunction(() => document.querySelectorAll('[data-testid$="-image"]').length >= 1, null, { timeout: 60000 });
   await page.waitForTimeout(2500);
+  // what came back is said at the top, with a way to each object (UX "Most")
+  const banner = page.locator('[data-testid="rework-banner"]');
+  check("a sent-back case says so at the top", await banner.isVisible());
+  check("... with the reviewer's reason and comment", /boundary off: tighten the edge/i.test(await banner.innerText().catch(() => "")));
+  // ... and My Jobs counts it
+  const jobsPage = await ctx.newPage();
+  await login(jobsPage, "dr-test", "Test1234!", "http://localhost:5173/my-jobs");
+  await jobsPage.waitForSelector('[data-guide="job-card"], .card', { timeout: 30000 }).catch(() => {});
+  await jobsPage.waitForTimeout(2000);
+  const rejected = (await api(at, `${ADMIN}/admin/my-jobs`)).find((j) => j.card_id === F.ANNOT_CARD).cases.filter((c) => c.status === "rejected").length;
+  const chips = await jobsPage.locator('[data-testid="sent-back-count"]').allInnerTexts();
+  check("My Jobs shows how many cases came back", chips.includes(`Sent back: ${rejected}`), { chips, rejected });
+  await jobsPage.close();
   const mark = page.locator("header button", { hasText: /^Mark as Annotated$/ });
   await mark.click();
   // the hand-in may first show its summary; confirm it if so

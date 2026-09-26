@@ -35,7 +35,7 @@ import SliceControl from "../components/SliceControl";
 import SliceNumber from "../components/SliceNumber";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
 import { nextUndecidedIndex } from "../lib/reviewNav";
-import { handInObjects, isNewThisRound, previousReviewText, REJECT_REASONS, rejectReasonLabel, reviewCommentText } from "../lib/reviewRound";
+import { handInObjects, isNewThisRound, previousReviewText, REJECT_REASONS, rejectReasonLabel, reviewCommentText, sentBackItems } from "../lib/reviewRound";
 import { reviewBlockedMessage, ReviewState, reviewStateOf } from "../lib/reviewState";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import {
@@ -2493,6 +2493,11 @@ export default function ViewerPage() {
     offerUndo({ annotationId, message, undoneMessage, backTo: `/viewer/series/${seriesId}?${searchParams.toString()}` });
   }
 
+  // The annotator's reminder of what came back on a sent-back case -- it
+  // said nowhere at the top which objects to fix, and why (UX "Most")
+  const currentJobCase = jobCaseIndex >= 0 && jobCases ? jobCases[jobCaseIndex] : null;
+  const reworkItems = !reviewMode && currentJobCase?.status === "rejected" ? sentBackItems(objects, labels, currentJobCase.latest_review_comment) : [];
+
   const [handInDraft, setHandInDraft] = useState<HandInSummary | null>(null);
   const closeHandIn = useMemo(() => () => setHandInDraft(null), []);
   /** "Mark as Annotated" first shows what is being handed in. */
@@ -3964,6 +3969,26 @@ export default function ViewerPage() {
       {mixedSizes && (
         <div className="flex-shrink-0 bg-amber-900/60 px-4 py-1.5 text-xs text-amber-100" data-testid="mixed-sizes">
           {mixedSizes}
+        </div>
+      )}
+      {reworkItems.length > 0 && (
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-x-3 gap-y-1 bg-rose-950/80 px-4 py-1.5 text-xs text-rose-100" data-testid="rework-banner">
+          <span className="font-semibold">Sent back by the reviewer:</span>
+          {reworkItems.map((item) =>
+            item.id === null ? (
+              <span key="case">{item.text}</span>
+            ) : (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => { setActiveObjectId(item.id); jumpToObject(item.id!); }}
+                className="rounded border border-rose-400/40 px-2 py-0.5 text-left hover:bg-rose-900"
+                title="Go to this object"
+              >
+                <span className="font-medium">{item.name}</span> -- {item.text}
+              </button>
+            ),
+          )}
         </div>
       )}
       {polygonDraft && (
