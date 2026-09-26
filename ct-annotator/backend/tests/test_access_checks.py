@@ -377,3 +377,34 @@ def test_undo_goes_to_annotation_service_and_its_refusal_comes_back(monkeypatch)
     assert ok.status_code == 200 and ok.json()["status"] == "draft"
     assert calls[0].endswith("/annotations/a1/undo")
     assert late.status_code == 409 and "too late" in late.json()["detail"]
+
+
+def test_object_stats_measure_the_mask_sent_with_the_series_hu(api, monkeypatch):
+    """The review card's numbers (UX-rev-1-17): the viewer sends its mask as
+    it is now, and gets each object's slices, volume, long axis and HU."""
+    import base64
+    import gzip
+    from types import SimpleNamespace
+
+    hu = np.array([[[40, -900], [40, 40]], [[40, 40], [40, 40]]], dtype=np.float32)
+    monkeypatch.setitem(main._volume_cache, SERIES, (main.time.monotonic(), hu))
+    first = SimpleNamespace(PixelSpacing=[0.5, 0.5], ImagePositionPatient=[0, 0, 0.0])
+
+    async def dataset(instance_id, user):
+        return first
+
+    monkeypatch.setattr(main, "_get_dataset", dataset)
+    mask = np.array([[[1, 1], [0, 0]], [[0, 0], [0, 2]]], dtype=np.uint8)
+    body = {"mask_gzip_base64": base64.b64encode(gzip.compress(mask.tobytes())).decode()}
+    api.as_user(MEMBER)
+    r = api.post(f"/series/{SERIES}/object-stats", json=body)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    one = got["objects"]["1"]
+    assert (one["voxels"], one["first_slice"], one["slice_count"], one["hu_min"], one["below_minus_500"]) == (2, 1, 1, -900, 0.5)
+    assert got["objects"]["2"]["first_slice"] == 2
+    # a mask of the wrong size is refused, and so is a caller without access
+    wrong = {"mask_gzip_base64": base64.b64encode(gzip.compress(b"\x00" * 3)).decode()}
+    assert api.post(f"/series/{SERIES}/object-stats", json=wrong).status_code == 422
+    api.as_user(OUTSIDER)
+    assert api.post(f"/series/{SERIES}/object-stats", json=body).status_code == 403

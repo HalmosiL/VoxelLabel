@@ -416,6 +416,32 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+/** One painted object's measurements (ct-annotator backend's
+ * object_stats.py). Slices are 1-based; what needs the spacing or the HU
+ * volume is null without it. */
+export interface ObjectStats {
+  voxels: number;
+  first_slice: number;
+  last_slice: number;
+  slice_count: number;
+  volume_ml: number | null;
+  long_axis_mm: number | null;
+  long_axis_slice: number | null;
+  hu_mean: number | null;
+  hu_min: number | null;
+  hu_max: number | null;
+  /** share of the voxels below -500 HU (air) */
+  below_minus_500: number | null;
+}
+
+/** Measures the mask as it is now (saved or not): per object id. */
+export async function fetchObjectStats(seriesId: string, gzipBytes: ArrayBuffer): Promise<{ spacing_mm: number[] | null; objects: Record<string, ObjectStats> }> {
+  return apiFetch(API.annotator, `/series/${seriesId}/object-stats`, {
+    method: "POST",
+    body: JSON.stringify({ mask_gzip_base64: arrayBufferToBase64(gzipBytes) }),
+  });
+}
+
 /** Fetches the series' saved segmentation (volume + label/object
  * definitions), or null if none has been saved yet -- the caller
  * (ViewerPage) ungzips the volume into its own Uint8Array; this backend

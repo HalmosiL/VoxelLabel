@@ -32,6 +32,7 @@ from app.config import (
     RENDER_CACHE_TTL_SECONDS,
 )
 from app.dicom_render import SLAB_MODES, extract_metadata, parse_dataset, render_plane, render_png, rescaled_pixels, slab_plane
+from app.object_stats import object_stats, series_spacing
 from app.storage import (
     delete_mask_object,
     download_bytes,
@@ -421,6 +422,35 @@ async def get_plane_hu(
             "X-Box-Y0": str(cy0),
         },
     )
+
+
+class ObjectStatsBody(BaseModel):
+    mask_gzip_base64: str
+
+
+@app.post("/series/{series_id}/object-stats")
+async def get_object_stats(series_id: str, body: ObjectStatsBody, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Each painted object's measurements -- slices, volume (mL), long axis
+    (mm), HU mean/min/max, the share that is air -- for the review card
+    (UX-rev-1-03/-17). The viewer sends its mask as it is now (gzip, one
+    byte per voxel, like a save), so unsaved work is measured too; nothing
+    is stored. The HU volume and the spacing are the series' own."""
+    if len(body.mask_gzip_base64) > _MAX_MASK_BASE64_CHARS:
+        raise HTTPException(status_code=413, detail="That mask is far larger than any series could need")
+    volume = await _get_volume(series_id, user)
+    try:
+        raw = gzip.decompress(base64.b64decode(body.mask_gzip_base64, validate=True))
+    except (ValueError, OSError, EOFError):
+        raise HTTPException(status_code=422, detail="mask_gzip_base64 is not a gzipped mask") from None
+    if len(raw) != volume.size:
+        raise HTTPException(status_code=422, detail=f"The mask has {len(raw)} voxels, the series {volume.size}")
+    mask = np.frombuffer(raw, dtype=np.uint8).reshape(volume.shape)
+    ordered = sorted(await _series_instances_checked(series_id, user), key=lambda i: i.get("instance_number") or 0)
+    first = await _get_dataset(ordered[0]["id"], user) if ordered else None
+    second = await _get_dataset(ordered[1]["id"], user) if len(ordered) > 1 else None
+    spacing = series_spacing(first, second) if first is not None else None
+    stats = await asyncio.to_thread(object_stats, mask, volume, spacing)
+    return {"spacing_mm": list(spacing) if spacing else None, "objects": {str(k): v for k, v in stats.items()}}
 
 
 # Lung-mask threshold/labeling is a second or so of real work over a full

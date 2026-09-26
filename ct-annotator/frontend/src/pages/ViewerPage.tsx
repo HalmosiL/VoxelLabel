@@ -10,6 +10,7 @@ import {
   fetchSlabBlobUrl,
   fetchJobCases,
   fetchPlaneHU,
+  fetchObjectStats,
   fetchSegmentationVolume,
   fetchSurfaceConfig,
   fetchVoxelHU,
@@ -22,6 +23,7 @@ import {
   listAnnotationTypes,
   saveSegmentationVolume,
   SegLabel,
+  ObjectStats,
   SegObject,
   SlabMode,
   SurfaceConfig,
@@ -67,6 +69,8 @@ import HandInDialog from "../components/HandInDialog";
 import KeyboardHelp from "../components/KeyboardHelp";
 import { isHelpKey } from "../lib/keymap";
 import ReviewSubmitDialog from "../components/ReviewSubmitDialog";
+import ObjectMeasurements from "../components/ObjectMeasurements";
+import { objectSlices } from "../lib/objectMeasure";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
 // bar (Save/Undo/Redo), a left icon toolbar (Cursor/Paint/Erase/Fill --
@@ -3104,6 +3108,31 @@ export default function ViewerPage() {
     return () => window.clearTimeout(timer);
   }, [seriesId, axialIndex, coronalIndex, sagittalIndex, reviewMode]);
 
+  // The reviewer's numbers (UX-rev-1-17): the mask measured once per load
+  // -- review doesn't change the painting -- and the current object's slices.
+  const [objectStats, setObjectStats] = useState<Record<string, ObjectStats> | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  useEffect(() => {
+    setObjectStats(null);
+    const volume = maskVolumeRef.current;
+    if (!reviewMode || !maskReady || !seriesId || !volume) return;
+    let cancelled = false;
+    setStatsLoading(true);
+    gzipUint8Array(volume)
+      .then((gz) => fetchObjectStats(seriesId, gz))
+      .then((r) => !cancelled && setObjectStats(r.objects))
+      .catch(() => undefined) // the card just shows no numbers
+      .finally(() => !cancelled && setStatsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewMode, maskReady, seriesId]);
+  const currentReviewSlices = useMemo(
+    () => (reviewMode && maskReady && currentReviewObject ? objectSlices(maskVolumeRef.current, rows * columns, currentReviewObject.id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reviewMode, maskReady, currentReviewObject?.id, rows, columns],
+  );
+
   function goToPrevReviewObject() {
     setReviewIndex((i) => Math.max(0, i - 1));
   }
@@ -3190,6 +3219,15 @@ export default function ViewerPage() {
             {label && obj ? `${label.name} ${obj.instance_number}` : "—"}
           </span>
         </div>
+        {obj && (
+          <ObjectMeasurements
+            stats={objectStats?.[String(obj.id)] ?? null}
+            loading={statsLoading}
+            slices={currentReviewSlices}
+            currentSlice={axialIndex}
+            onGoToSlice={setAxialIndex}
+          />
+        )}
         {obj && (
           <div className="mt-1.5">
             <ObjectFormEditor fields={fieldsOfLabel(label)} answers={obj.attributes} onChange={(next) => setObjectAttributes(obj.id, next)} />
