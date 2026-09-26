@@ -211,6 +211,23 @@ interface World {
   /** something changed: draw the next frame (only then -- a ray-marched
    * frame is heavy, an idle view shouldn't keep the GPU busy) */
   dirty: boolean;
+  /** a turnaround being recorded: one turn around `target` */
+  turn: { start: number; duration: number; target: THREE.Vector3; offset: THREE.Vector3; done: () => void } | null;
+}
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function stamp(): string {
+  return new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 }
 
 export default function VolumeView({
@@ -287,6 +304,7 @@ export default function VolumeView({
   const [follow, setFollow] = useState(false);
   const [focused, setFocused] = useState<number | null>(null);
   const [showPlanes, setShowPlanes] = useState(true);
+  const [recording, setRecording] = useState(false);
   const settingsRef = useRef({ center: -600, width: 1500, opacity: 0.25, mode: "volume" as Mode, showMask: true, lungOnly: false, showAirways: false, nearCut: 0 });
   const speedRef = useRef(speed);
   speedRef.current = speed;
@@ -330,6 +348,7 @@ export default function VolumeView({
       pitch: 0,
       keys: { forward: false, back: false, left: false, right: false, up: false, down: false },
       dirty: true,
+      turn: null,
     };
     orbit.addEventListener("change", () => (w.dirty = true));
     world.current = w;
@@ -355,7 +374,22 @@ export default function VolumeView({
     const tick = (now: number) => {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
-      if (navRef.current === "fly") {
+      if (w.turn) {
+        // recording: one even turn around the target, a frame every tick
+        const k = Math.min(1, (now - w.turn.start) / w.turn.duration);
+        const o = w.turn.offset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), k * Math.PI * 2);
+        camera.position.copy(w.turn.target).add(o);
+        camera.lookAt(w.turn.target);
+        w.dirty = true;
+        if (k >= 1) {
+          const e = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+          w.yaw = e.y; // flying on from where the turn ended
+          w.pitch = e.x;
+          const done = w.turn.done;
+          w.turn = null;
+          done();
+        }
+      } else if (navRef.current === "fly") {
         const [dx, dy, dz] = flyStep(w.keys, w.yaw, w.pitch, speedRef.current, dt);
         if (dx || dy || dz) {
           camera.position.x += dx;
@@ -465,6 +499,36 @@ export default function VolumeView({
   useEffect(() => {
     if (follow && focusObjectId != null && status === "ready") flyToRef.current(focusObjectId);
   }, [follow, focusObjectId, status]);
+
+  /** A picture of the view as it is, as a PNG download. */
+  function saveImage() {
+    const w = world.current;
+    if (!w) return;
+    // drawn and read in the same task: the WebGL buffer is still there
+    w.renderer.render(w.scene, w.camera);
+    w.renderer.domElement.toBlob((blob) => blob && download(blob, `ct-3d-${stamp()}.png`), "image/png");
+  }
+
+  /** One turn around the view's middle (or the object gone to), as a
+   * webm video download. */
+  function recordTurn() {
+    const w = world.current;
+    if (!w || recording || typeof MediaRecorder === "undefined") return;
+    const canvas = w.renderer.domElement;
+    const stream = canvas.captureStream(30);
+    const type = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
+    const recorder = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 6_000_000 } : undefined);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = () => {
+      download(new Blob(chunks, { type: "video/webm" }), `ct-3d-turn-${stamp()}.webm`);
+      setRecording(false);
+    };
+    const target = w.orbit.target.clone();
+    w.turn = { start: performance.now(), duration: 8000, target, offset: w.camera.position.clone().sub(target), done: () => recorder.stop() };
+    setRecording(true);
+    recorder.start(250);
+  }
 
   /** In front of the patient, the whole volume in view. */
   function resetView() {
@@ -877,16 +941,31 @@ export default function VolumeView({
                 : "Click the view to fly: mouse looks, W A S D, Space up, Shift down"
               : "Drag to turn · right-drag to move · wheel to zoom · click picks a point"}
           </div>
-          <div className="absolute right-2 top-2 flex gap-1">
+          {/* one column in the pane: the buttons wrap inside it, the settings open below them */}
+          <div className="pointer-events-none absolute inset-x-2 top-2 bottom-10 flex flex-col gap-1">
+          <div className="pointer-events-auto flex flex-wrap justify-end gap-1">
             <button type="button" onClick={() => setShowPanel((v) => !v)} className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333]" data-testid="volume-panel-toggle">
               {showPanel ? "Hide settings" : "Settings"}
+            </button>
+            <button type="button" onClick={saveImage} className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333]" title="A PNG of the view as it is" data-testid="volume-save-image">
+              Save image
+            </button>
+            <button
+              type="button"
+              onClick={recordTurn}
+              disabled={recording}
+              className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333] disabled:text-red-300"
+              title="A video of one turn around the view's middle (8 s) -- for a report or a slide"
+              data-testid="volume-record"
+            >
+              {recording ? "● Recording…" : "Record turnaround"}
             </button>
             <button type="button" onClick={toggleFullscreen} className="rounded border border-[#444] bg-black/70 px-2 py-1 text-[11px] text-gray-200 hover:bg-[#333]" data-testid="volume-fullscreen">
               {fullscreen ? "Exit full screen" : "Full screen"}
             </button>
           </div>
           {showPanel && (
-            <div className="absolute left-2 top-10 flex max-h-[calc(100%-5rem)] w-56 max-w-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto rounded border border-[#333] bg-black/75 p-2.5 text-[11px] text-gray-200" data-testid="volume-panel">
+            <div className="pointer-events-auto flex min-h-0 w-56 max-w-full flex-col gap-2 self-start overflow-y-auto rounded border border-[#333] bg-black/75 p-2.5 text-[11px] text-gray-200" data-testid="volume-panel">
               <div className="flex gap-1" role="group" aria-label="Rendering">
                 {(["volume", "mip"] as const).map((m) => (
                   <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} data-testid={`volume-mode-${m}`} className={`flex-1 rounded border px-1.5 py-0.5 ${mode === m ? "border-blue-500 bg-blue-500/25" : "border-[#444] hover:bg-[#333]"}`}>
@@ -1001,6 +1080,7 @@ export default function VolumeView({
               )}
             </div>
           )}
+          </div>
         </>
       )}
     </div>

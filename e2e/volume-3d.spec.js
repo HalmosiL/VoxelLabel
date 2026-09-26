@@ -18,7 +18,7 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   const seriesId = (await api(at, `${F.DATA}/data/cases/${kase.id}/series`))[0].id;
 
   const browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
-  const ctx = await browser.newContext({ viewport: { width: 1300, height: 800 } });
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 800 }, acceptDownloads: true });
   await ctx.addInitScript(() => { try { for (const k of ["annotate", "review"]) localStorage.setItem(`vl.guide.${k}.seen`, "1"); localStorage.removeItem("vl.view.layout"); } catch {} });
   const page = await ctx.newPage();
   const errors = []; page.on("pageerror", (e) => errors.push(e.message));
@@ -88,6 +88,13 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   const pickedSlice = Number((pickedText.match(/slice (\d+)/) || [])[1]);
   check("a click in 3D picks a point", pickedSlice > 0, pickedText);
   check("... and the axial pane goes to its slice", Number(await page.locator('[data-testid="slice-number-axial"]').innerText().catch(() => "0")) === pickedSlice, pickedSlice);
+  // a picture and a turnaround video of the view, as downloads
+  const [png] = await Promise.all([page.waitForEvent("download", { timeout: 30000 }), page.locator('[data-testid="volume-save-image"]').click()]);
+  const pngSize = require("fs").statSync(await png.path()).size;
+  check("Save image downloads a PNG of the view", /\.png$/.test(png.suggestedFilename()) && pngSize > 2000, { name: png.suggestedFilename(), pngSize });
+  const [video] = await Promise.all([page.waitForEvent("download", { timeout: 60000 }), page.locator('[data-testid="volume-record"]').click()]);
+  const videoSize = require("fs").statSync(await video.path()).size;
+  check("Record turnaround downloads a video", /\.webm$/.test(video.suggestedFilename()) && videoSize > 10000, { name: video.suggestedFilename(), videoSize });
   await page.locator('[data-testid="three-d-surfaces"]').click(); await page.waitForTimeout(800);
   check("the surfaces view is still one click away", (await page.locator('[data-testid="volume-view"]').count()) === 0);
   check("no shader or page errors", errors.length === 0, errors.slice(0, 3));
