@@ -635,3 +635,34 @@ def test_a_review_wired_straight_from_its_annotation_settles_after_run(client, d
     r = client.patch(f"/admin/workflow-cards/{ds['id']}", json={"config": {"mode": "manual", "case_ids": [cases[1]["id"]]}})
     assert r.status_code == 200, r.text
     assert card("Annotate")["stale"]
+
+
+def test_a_card_the_board_makes_does_not_cover_another(client, db):
+    """UX-ux-admin-08: a Review's "(approved)" card landed on a card that
+    already sat beside it."""
+    sid = make_study(client)
+    add_member(client, sid, ANNOTATOR_SUBJECT, "annotator")
+    add_member(client, sid, REVIEWER_SUBJECT, "reviewer")
+    make_case(client, sid)
+    ds = _card(client, sid, "dataset", "All", {"mode": "all_cases"})
+    ann = _card(client, sid, "annotation", "Annotate", {"assigned_user_id": ANNOTATOR_SUBJECT}, x=300)
+    rev = _card(client, sid, "review", "Review", {"assigned_user_id": REVIEWER_SUBJECT}, x=600)
+    _card(client, sid, "note", "In the way", x=860)  # exactly where "(approved)" would go
+    _edge(client, sid, ds["id"], ann["id"])
+    _edge(client, sid, ann["id"], rev["id"])
+    client.post(f"/admin/workflow-cards/{ann['id']}/run")
+    assert client.post(f"/admin/workflow-cards/{rev['id']}/run").status_code == 200
+    cards = client.get(f"/admin/studies/{sid}/workflow").json()["cards"]
+
+    def box(c):
+        return (c["position_x"], c["position_y"], c["width"] or 240, c["height"] or 110)
+
+    made = [c for c in cards if c.get("materialized_from")]
+    assert {c["title"] for c in made} >= {"Review (approved)", "Review (rejected)"}
+    for m in made:
+        mx, my, mw, mh = box(m)
+        for other in cards:
+            if other["id"] == m["id"]:
+                continue
+            ox, oy, ow, oh = box(other)
+            assert not (mx < ox + ow and ox < mx + mw and my < oy + oh and oy < my + mh), (m["title"], other["title"])

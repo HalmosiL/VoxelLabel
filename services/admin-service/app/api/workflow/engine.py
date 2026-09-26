@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.llm_client import run_llm_turn
 
-from .constants import _MATERIALIZED_DEFAULT_HEIGHT, _MATERIALIZED_DEFAULT_WIDTH, _NO_RUN_TYPES
+from .constants import _CARD_DEFAULT_HEIGHT, _CARD_DEFAULT_WIDTH, _MATERIALIZED_DEFAULT_HEIGHT, _MATERIALIZED_DEFAULT_WIDTH, _NO_RUN_TYPES
 from .graph import (
     _card_is_stale,
     _card_or_404,
@@ -29,6 +29,7 @@ from .graph import (
     _single_incoming_edge,
     is_all_cases_dataset,
 )
+from .layout import free_spot
 from .status import _case_ids_with_status
 
 # Handed-in work, as a downstream Review sees it: awaiting a decision or decided.
@@ -126,13 +127,24 @@ def _upsert_materialized_dataset(
     cases -- see _retire_removed_parts. Stamped with the parent's own `now` so anything downstream of the
     child is correctly flagged stale (see _is_stale)."""
     if existing is None:
+        # its usual spot beside the maker, stepped down past any card it
+        # would cover (UX-ux-admin-08) -- the siblings made earlier in this
+        # Run included, not yet in the database (no autoflush)
+        pending = [c for c in db.new if isinstance(c, WorkflowCard) and c.study_id == parent.study_id]
+        taken = [
+            (c.position_x, c.position_y, c.width or _CARD_DEFAULT_WIDTH, c.height or _CARD_DEFAULT_HEIGHT)
+            for c in [*db.query(WorkflowCard).filter(WorkflowCard.study_id == parent.study_id).all(), *pending]
+        ]
+        x, y = free_spot(
+            (parent.position_x + 260, parent.position_y + index * 140, _MATERIALIZED_DEFAULT_WIDTH, _MATERIALIZED_DEFAULT_HEIGHT), taken
+        )
         db.add(
             WorkflowCard(
                 study_id=parent.study_id,
                 type=WorkflowCardType.DATASET,
                 title=title,
-                position_x=parent.position_x + 260,
-                position_y=parent.position_y + index * 140,
+                position_x=x,
+                position_y=y,
                 width=_MATERIALIZED_DEFAULT_WIDTH,
                 height=_MATERIALIZED_DEFAULT_HEIGHT,
                 config={"mode": "manual", "case_ids": case_ids},

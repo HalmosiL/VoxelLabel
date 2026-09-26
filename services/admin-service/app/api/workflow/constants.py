@@ -68,6 +68,11 @@ _MATERIALIZED_DEFAULT_WIDTH = 200.0
 
 _MATERIALIZED_DEFAULT_HEIGHT = 90.0
 
+# a card saved without a size (the board draws it at about this) -- what
+# placing a made card counts it as (layout.free_spot)
+_CARD_DEFAULT_WIDTH = 240.0
+_CARD_DEFAULT_HEIGHT = 110.0
+
 # The permissive default returned by get_surface_config when an
 # Annotation/Review card has no Surface card connected -- keeps
 # unrestricted jobs (the common case today) behaving exactly as before
