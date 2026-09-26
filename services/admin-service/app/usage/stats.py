@@ -848,17 +848,19 @@ def place_clicks(points: list[dict], anchors: list | None, viewport: list[int]) 
     return placed, [{"target": t, "clicks": n} for t, n in hidden.most_common(10)]
 
 
-def within_study(events: list[dict], study_id: str) -> list[dict]:
-    """Only what happened on pages of one study: every event belongs to
-    the page view before it in its session, and a page view says its
-    study (the viewer's studyId, admin-ui's /studies/<id>/...)."""
+def within_study(events: list[dict], study_id) -> list[dict]:
+    """Only what happened on pages of one study (or of any of several:
+    pass a list): every event belongs to the page view before it in its
+    session, and a page view says its study (the viewer's studyId,
+    admin-ui's /studies/<id>/...)."""
+    wanted = {study_id} if isinstance(study_id, str) else set(study_id)
     out = []
     for rows in _by_session(events).values():
         current = None
         for e in rows:
             if e["event_type"] == "page_view":
                 current = (e.get("detail") or {}).get("study_id")
-            if current == study_id:
+            if current in wanted:
                 out.append(e)
     return out
 

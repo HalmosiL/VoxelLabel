@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.api.workflow.status import _effective_status
 from app.keycloak_admin import display_name, list_realm_users
+from app.study_scope import study_uuids
 
 from . import stats
 
@@ -66,13 +67,13 @@ def _usernames() -> dict[str, dict]:
         return {}
 
 
-def load_legs(db: Session, card_id: str | None = None, study_id: uuid.UUID | None = None) -> list[dict]:
+def load_legs(db: Session, card_id: str | None = None, study_id: uuid.UUID | list[uuid.UUID] | None = None) -> list[dict]:
     """Public entry to the legs (see _load_legs) -- also what the
     per-study analytics page builds on."""
     return _load_legs(db, card_id, study_id)
 
 
-def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = None) -> list[dict]:
+def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | list[uuid.UUID] | None = None) -> list[dict]:
     """One entry per (card, case) with a recorded queue-start. See
     module docstring and stats.py for what a "leg" means; the Review
     branch below re-anchors on the actual SUBMITTED Annotation's own
@@ -80,8 +81,9 @@ def _load_legs(db: Session, card_id: str | None, study_id: uuid.UUID | None = No
     approximate for Review (stamped by the ripple that runs right after
     submission, not the submission itself)."""
     card_query = db.query(WorkflowCard).filter(WorkflowCard.type.in_([WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW]))
-    if study_id is not None:
-        card_query = card_query.filter(WorkflowCard.study_id == study_id)
+    in_studies = study_uuids(study_id)
+    if in_studies:
+        card_query = card_query.filter(WorkflowCard.study_id.in_(in_studies))
     if card_id:
         try:
             card_query = card_query.filter(WorkflowCard.id == uuid.UUID(card_id))
@@ -313,11 +315,7 @@ def build_summary(db: Session, window_since: datetime, window_until: datetime, c
     With `person_id`, only the cases that person was assigned or did;
     the "usual wait" a bottleneck is judged against stays every case's,
     so one person's cases aren't flagged by a yardstick of their own."""
-    try:
-        study_uuid = uuid.UUID(study_id) if study_id else None
-    except ValueError:
-        raise HTTPException(status_code=422, detail="study_id must be a UUID") from None
-    all_legs = _load_legs(db, card_id, study_uuid)
+    all_legs = _load_legs(db, card_id, study_uuids(study_id))
     legs = [leg for leg in all_legs if person_id in (leg["assignee_id"], leg["actor_id"])] if person_id else all_legs
     windowed = [leg for leg in legs if leg["terminal_at"] is not None and window_since <= leg["terminal_at"] <= window_until]
     names = _usernames()
@@ -364,7 +362,7 @@ def read_summary(
 
 
 def build_learning_curve(
-    db: Session, person_id: str | None = None, study_id: uuid.UUID | None = None, not_counted: set[str] | None = None
+    db: Session, person_id: str | None = None, study_id: uuid.UUID | list[uuid.UUID] | None = None, not_counted: set[str] | None = None
 ) -> list[dict]:
     """Every person's week-of-tenure medians, usernames resolved -- the
     /learning-curve payload, also consumed by app/usage's findings and

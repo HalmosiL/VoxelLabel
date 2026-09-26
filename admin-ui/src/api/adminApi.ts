@@ -180,6 +180,8 @@ export interface Me {
   is_admin: boolean;
   realm_roles: string[];
   memberships: MeMembership[];
+  // studies this person created (with the memberships, the Usage page's "My studies")
+  created_study_ids?: string[];
 }
 
 /** Who am I -- global admin flag + every study membership with its role.

@@ -41,6 +41,7 @@ from app.api.audit import record as audit
 from app.keycloak_admin import display_name, list_realm_users
 from app.pipeline_health.api import build_learning_curve
 from app.pipeline_health.api import build_summary as build_pipeline_summary
+from app.study_scope import study_ids, study_uuids
 
 from . import clearing, snapshots, stats
 from .findings import findings as compute_findings
@@ -728,9 +729,10 @@ def _work_done(db: Session, since: datetime, until: datetime, user_ids: list[str
         .join(Annotation, Annotation.id == AnnotationReview.annotation_id)
         .filter(AnnotationReview.reviewer_id.in_(user_ids), AnnotationReview.created_at >= since, AnnotationReview.created_at < until)
     )
-    if study_id:
-        handed = handed.filter(Annotation.study_id == uuid.UUID(str(study_id)))
-        decided = decided.filter(Annotation.study_id == uuid.UUID(str(study_id)))
+    in_studies = study_uuids(study_id)
+    if in_studies:
+        handed = handed.filter(Annotation.study_id.in_(in_studies))
+        decided = decided.filter(Annotation.study_id.in_(in_studies))
     counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for uid, n in handed.group_by(Annotation.annotator_id).all():
         counts[uid][0] = n
@@ -750,8 +752,9 @@ def _reject_reasons(db: Session, since: datetime, until: datetime, user_id: str 
     )
     if user_id:
         q = q.filter(AnnotationReview.reviewer_id == user_id)
-    if study_id:
-        q = q.filter(Annotation.study_id == uuid.UUID(str(study_id)))
+    in_studies = study_uuids(study_id)
+    if in_studies:
+        q = q.filter(Annotation.study_id.in_(in_studies))
     counts: Counter = Counter()
     for reviewer, payload in q.all():
         if reviewer in not_counted:
@@ -773,8 +776,9 @@ def build_usage_summary(db: Session, window_since: datetime, window_until: datet
     settings = get_settings(db)
     not_counted = _not_counted(settings, people)
     events = _load(db, window_since, window_until, user_id, not_counted)
-    if study_id:
-        events = stats.within_study(events, study_id)
+    in_studies = study_ids(study_id)
+    if in_studies:
+        events = stats.within_study(events, in_studies)
     summary = stats.summarize(events)
     entries, rating_rows = summary.pop("_effort"), summary.pop("_ratings")
     card_types = _card_types(db, entries)
@@ -819,11 +823,7 @@ def _build_findings_bundle(db: Session, window_since: datetime, window_until: da
     pipeline = build_pipeline_summary(db, window_since, window_until, person_id=user_id, study_id=study_id)
     pipeline_previous = build_pipeline_summary(db, prev_since, prev_until, person_id=user_id, study_id=study_id)
     not_counted = _not_counted(get_settings(db), people)
-    try:
-        study_uuid = uuid.UUID(study_id) if study_id else None
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"'{study_id}' is not a valid id") from None
-    learning = build_learning_curve(db, person_id=user_id, study_id=study_uuid, not_counted=not_counted)
+    learning = build_learning_curve(db, person_id=user_id, study_id=study_uuids(study_id), not_counted=not_counted)
     return {
         "since": window_since.isoformat(),
         "until": window_until.isoformat(),
@@ -945,9 +945,11 @@ def read_report(
     scope = []
     if user_id:
         scope.append(f"person {_people().get(user_id, {}).get('username', user_id)}")
-    if study_id:
-        study = db.get(Study, uuid.UUID(study_id))
-        scope.append(f"study {study.name if study else study_id}")
+    in_studies = study_uuids(study_id)
+    if in_studies:
+        names = {s.id: s.name for s in db.query(Study).filter(Study.id.in_(in_studies)).all()}
+        labels = [names.get(sid, str(sid)) for sid in in_studies]
+        scope.append(f"{'study' if len(labels) == 1 else 'studies'} {', '.join(labels)}")
     text = render_markdown(
         window_since, window_until, bundle["usage"], bundle["pipeline"], bundle["findings"], bundle["learning_curve"], scope=" · ".join(scope) or None
     )
@@ -986,19 +988,20 @@ def _events_csv(db: Session, window_since: datetime, window_until: datetime, use
         query = query.filter(UsageEvent.event_type.notin_(("mouse_trace", "layout")))
     if not_counted:
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
-    if study_id:
+    in_studies = study_ids(study_id)
+    if in_studies:
         # the sittings that opened a page of the study; within them, only
         # the events on its pages -- stats.within_study's rule, which every
         # study-filtered figure uses. Whole sessions made the spreadsheet
         # disagree with the page (H-01).
-        sessions_of_study = db.query(UsageEvent.session_id).filter(UsageEvent.event_type == "page_view", UsageEvent.detail["study_id"].astext == study_id).distinct()
+        sessions_of_study = db.query(UsageEvent.session_id).filter(UsageEvent.event_type == "page_view", UsageEvent.detail["study_id"].astext.in_(in_studies)).distinct()
         query = query.filter(UsageEvent.session_id.in_(sessions_of_study))
     page_study: dict[str, str | None] = {}  # session -> the study of its current page
     for e in query.order_by(UsageEvent.occurred_at, UsageEvent.id).yield_per(1000):
-        if study_id:
+        if in_studies:
             if e.event_type == "page_view":
                 page_study[e.session_id] = (e.detail or {}).get("study_id")
-            if page_study.get(e.session_id) != study_id:
+            if page_study.get(e.session_id) not in in_studies:
                 continue
         writer.writerow(
             [_safe_cell(v) for v in [
@@ -1061,8 +1064,9 @@ def list_sessions(
     window_since, window_until = _window(days, since, until)
     names = _usernames()
     events = _load(db, window_since, window_until, user_id)
-    if study_id:
-        events = stats.within_study(events, study_id)
+    in_studies = study_ids(study_id)
+    if in_studies:
+        events = stats.within_study(events, in_studies)
     rows = stats.sessions(events)[:limit]
     for s in rows:
         s["username"] = names.get(s["user_id"], {}).get("username", s["user_id"])
@@ -1145,12 +1149,13 @@ def read_heatmap(
         query = query.filter(UsageEvent.user_id.notin_(not_counted))
     events = _rows_as_dicts(query.order_by(UsageEvent.occurred_at).all())
     points = stats.click_points(events, route)
-    if study_id:
-        points = [p for p in points if p["study_id"] == study_id]
+    in_studies = study_ids(study_id)
+    if in_studies:
+        points = [p for p in points if p["study_id"] in in_studies]
     layouts = stats.screen_layouts(events, route)
     snap_query = db.query(UsageSnapshot).filter(UsageSnapshot.route == route)
-    if study_id:
-        snap_query = snap_query.filter(UsageSnapshot.study_id == study_id)
+    if in_studies:
+        snap_query = snap_query.filter(UsageSnapshot.study_id.in_(in_studies))
     snaps = snap_query.order_by(UsageSnapshot.occurred_at.desc()).limit(snapshots.KEEP_PER_SCREEN).all()
     job_types = _job_types(db, {p["job_id"] for p in points} | {lay["job_id"] for lay in layouts} | {snap.job_id for snap in snaps})
     for p in points:

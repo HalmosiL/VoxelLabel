@@ -31,6 +31,8 @@ import OverviewTab from "./OverviewTab";
 import PeopleTab from "./PeopleTab";
 import SettingsTab from "./SettingsTab";
 import { formatWhen } from "./shared";
+import { initialChoice, MY_STUDIES, myStudyIds, rememberChoice, rememberedChoice, scopeOf } from "./studyScope";
+import { useMe } from "../../auth/MeContext";
 
 const RANGES = [7, 30, 90] as const;
 
@@ -114,10 +116,23 @@ export default function UsagePage() {
   const [tab, setTab] = useState<UsageTab>("overview");
   const [range, setRange] = useState<UsageRange>({ days: 30 });
   const [userFilter, setUserFilter] = useState<string>("");
-  // One study's work only -- every figure, the heatmap (and the picture
-  // behind it) and the sessions follow it.
-  const [studyFilter, setStudyFilter] = useState<string>("");
-  const [studies, setStudies] = useState<Study[]>([]);
+  // All studies, My studies, or one study -- every figure, the heatmap (and
+  // the picture behind it) and the sessions follow it. null until the
+  // studies are loaded and the opening choice is made (see studyScope.ts),
+  // so the page doesn't fetch everything twice.
+  const { me } = useMe();
+  const [studyChoice, setStudyChoice] = useState<string | null>(null);
+  const [studies, setStudies] = useState<Study[] | null>(null);
+  const mine = studies ? myStudyIds(me?.memberships ?? [], studies, me?.created_study_ids) : [];
+  const studyFilter = studyChoice === null ? "" : scopeOf(studyChoice, mine);
+  useEffect(() => {
+    if (studies === null || me === null || studyChoice !== null) return;
+    setStudyChoice(initialChoice(rememberedChoice(), myStudyIds(me.memberships, studies, me.created_study_ids), studies.map((st) => st.id)));
+  }, [studies, me, studyChoice]);
+  function chooseStudy(choice: string) {
+    setStudyChoice(choice);
+    rememberChoice(choice);
+  }
   const [overview, setOverview] = useState<UsageOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [settings, setSettings] = useState<UsageSettings | null>(null);
@@ -142,6 +157,7 @@ export default function UsagePage() {
   const sessionsSeq = useRef(0);
 
   function refreshOverview() {
+    if (studyChoice === null) return;
     const seq = ++overviewSeq.current;
     setLoading(true);
     getUsageOverview(range, userFilter || null, studyFilter || null)
@@ -161,7 +177,7 @@ export default function UsagePage() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  useEffect(refreshOverview, [rangeKey, userFilter, studyFilter, logVersion]);
+  useEffect(refreshOverview, [rangeKey, userFilter, studyFilter, studyChoice, logVersion]);
   useEffect(() => {
     getUsageSettings()
       .then(setSettings)
@@ -169,7 +185,7 @@ export default function UsagePage() {
     refreshPeople();
     listStudies()
       .then(setStudies)
-      .catch(() => undefined);
+      .catch(() => setStudies([]));
   }, []);
 
   useEffect(() => {
@@ -180,7 +196,7 @@ export default function UsagePage() {
   }, [summary, heatRoute]);
 
   useEffect(() => {
-    if (!heatRoute) {
+    if (!heatRoute || studyChoice === null) {
       setHeatmap(null);
       return;
     }
@@ -189,7 +205,7 @@ export default function UsagePage() {
       .then((h) => seq === heatmapSeq.current && setHeatmap(h))
       .catch((err) => seq === heatmapSeq.current && setError(describeApiError(err)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey is range's stable identity
-  }, [heatRoute, rangeKey, userFilter, heatMode, studyFilter, logVersion]);
+  }, [heatRoute, rangeKey, userFilter, heatMode, studyFilter, studyChoice, logVersion]);
 
   function loadSessions(who: { user_id: string; username: string }, replayLatest: boolean) {
     const seq = ++sessionsSeq.current;
@@ -284,9 +300,10 @@ export default function UsagePage() {
                 </option>
               ))}
             </select>
-            <select className="input w-56 max-w-full" value={studyFilter} onChange={(e) => setStudyFilter(e.target.value)} aria-label="Study" data-testid="usage-study-filter">
+            <select className="input w-56 max-w-full" value={studyChoice ?? ""} onChange={(e) => chooseStudy(e.target.value)} aria-label="Study" data-testid="usage-study-filter">
+              {mine.length > 0 && <option value={MY_STUDIES}>My studies ({mine.length})</option>}
               <option value="">All studies</option>
-              {studies.map((st) => (
+              {(studies ?? []).map((st) => (
                 <option key={st.id} value={st.id}>
                   {st.name}
                 </option>
@@ -310,7 +327,11 @@ export default function UsagePage() {
       <p className="text-sm text-gray-500" data-testid="usage-range-label">
         {"from" in range ? `Showing ${formatWhen(range.from)} – ${range.to ? formatWhen(range.to) : "now"}` : `Showing the last ${range.days} days`}
         {chosen ? ` · only ${chosen.name || chosen.username}` : " · everyone"}
-        {studyFilter && ` · study ${studies.find((st) => st.id === studyFilter)?.name ?? ""}`}
+        {studyChoice === MY_STUDIES
+          ? ` · my ${mine.length === 1 ? "study" : `${mine.length} studies`}`
+          : studyChoice
+            ? ` · study ${(studies ?? []).find((st) => st.id === studyChoice)?.name ?? ""}`
+            : " · all studies"}
         {summary && (
           <span data-testid="usage-basis">
             {" "}

@@ -49,3 +49,11 @@ def test_analytics_name_who_did_the_work(client, db):
     assert done["annotators"] == ["Dr-Test User"] and done["reviewers"] == ["Dr-Review User"]
     assert body["cards"][ann["id"]]["assignee"] == "Dr-Test User"
     assert {p["name"] for p in body["people"]} >= {"Dr-Test User", "Dr-Review User"}
+
+
+def test_me_names_the_studies_i_created(client):
+    """The Usage page's "My studies" for a platform admin who creates
+    studies without joining them: the studies they created count too."""
+    sid = make_study(client, "Created by me")
+    me = client.get("/admin/me").json()
+    assert sid in me["created_study_ids"] and me["memberships"] == []

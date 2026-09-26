@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from shared_auth import CurrentUser, get_current_user
 from shared_models.database import get_db
-from shared_models.models import Study, StudyMembership, StudyRole
+from shared_models.models import AuditLog, Study, StudyMembership, StudyRole
 from sqlalchemy.orm import Session
 
 from app.api import audit
@@ -34,7 +34,11 @@ def get_me(
     checks stay the real access control regardless."""
     memberships = db.query(StudyMembership).filter_by(user_id=user.subject).all()
     studies = {str(s.id): s for s in db.query(Study).filter(Study.id.in_([m.study_id for m in memberships])).all()} if memberships else {}
+    # the studies this person created (a platform admin often doesn't join
+    # them) -- with the memberships, the Usage page's "My studies"
+    created = [row.entity_id for row in db.query(AuditLog.entity_id).filter(AuditLog.action == "study.create", AuditLog.actor_id == user.subject).all()]
     return {
+        "created_study_ids": [str(sid) for sid in dict.fromkeys(created)],
         "subject": user.subject,
         "email": user.email,
         "is_admin": "admin" in user.realm_roles,

@@ -734,3 +734,32 @@ def test_reject_reasons_come_from_the_decisions_themselves(client, db):
     reasons = client.get("/admin/usage/summary").json()["reject_reasons"]
     assert reasons["total"] == 3
     assert [(r["reason"], r["count"]) for r in reasons["reasons"]] == [("boundary", 2), ("not_finding", 1)]
+
+
+def test_the_study_filter_takes_several_studies_my_studies(client, db):
+    """UX: the Usage page opened on every study on the platform -- the QA
+    and test studies included -- and its "Act now" was about work the
+    viewer can't change. It now opens on "My studies": `study_id` takes a
+    comma-separated list, and every figure follows it."""
+    client.as_admin()
+    a, b, c = make_study(client, name="Mine A"), make_study(client, name="Mine B"), make_study(client, name="Not mine")
+    client.as_user(ANNOTATOR_SUBJECT, ["annotator"])
+    post(client, [
+        ev("page_view", "/viewer/:id", session="a", app="viewer", detail={"study_id": a}),
+        ev("click", "/viewer/:id", session="a", app="viewer", at_s=1, detail={"x": 1, "y": 1, "viewport": [800, 600], "target": "t", "rx": 0.5, "ry": 0.5}),
+        ev("page_view", "/viewer/:id", session="b", app="viewer", at_s=10, detail={"study_id": b}),
+        ev("page_view", "/viewer/:id", session="c", app="viewer", at_s=20, detail={"study_id": c}),
+    ])
+    client.as_admin()
+    both = f"{a},{b}"
+    assert client.get("/admin/usage/summary", params={"study_id": both}).json()["totals"]["sessions"] == 2
+    assert client.get("/admin/usage/summary", params={"study_id": a}).json()["totals"]["sessions"] == 1
+    assert sorted(s["session_id"] for s in client.get("/admin/usage/sessions", params={"study_id": both}).json()) == ["a", "b"]
+    assert len(client.get("/admin/usage/heatmap", params={"route": "/viewer/:id", "study_id": both}).json()["points"]) == 1
+    rows = [line for line in client.get("/admin/usage/export/events.csv", params={"days": 7, "study_id": both}).text.splitlines()[1:] if line.strip()]
+    assert len(rows) == 3
+    assert client.get("/admin/usage/findings", params={"study_id": both}).status_code == 200
+    report = client.get("/admin/usage/report.md", params={"study_id": both}).text
+    assert "Mine A" in report and "Mine B" in report
+    assert client.get("/admin/pipeline-health/summary", params={"study_id": both}).status_code == 200
+    assert client.get("/admin/usage/summary", params={"study_id": f"{a},nope"}).status_code == 422

@@ -104,6 +104,8 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true, timezoneId: "Europe/Budapest" });
     await ctx.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => undefined);
     await ctx.addInitScript(seenGuides);
+    // the whole platform's usage: the page would open on "My studies" (usage-my-studies.spec.js)
+    await ctx.addInitScript(() => { try { localStorage.setItem("vl.usage.study", ""); } catch {} });
     const page = await ctx.newPage();
     const errors = []; page.on("pageerror", (e) => errors.push(e.message));
     await login(page, "platform-admin", "platform-admin", `${UI}/usage`);
@@ -175,10 +177,12 @@ const seenGuides = () => { try { for (const k of ["workbench","job","case","anno
     await frame.waitFor({ timeout: 15000 });
     const srcdoc = (await frame.getAttribute("srcdoc")) || "";
     check("the recorded screen is drawn behind the clicks, in a sandboxed frame", (await frame.getAttribute("sandbox")) === "" && (await page.locator('[data-testid="usage-screen-snapshot"] [data-testid="usage-heatmap-svg"]').count()) === 1);
+    // The best picture may be an annotator's or a reviewer's screen (other
+    // specs record review sessions too): either header's own button counts.
     // Case images are on in this run: the only <img> allowed is the
     // tracker's inline picture -- never a canvas, a script or a fetched image.
     const foreignImg = (srcdoc.match(/<img\b[^>]*>/gi) || []).filter((t) => !/^<img data-vl-shot="" (class="[^"]*" )?src="data:image\/(webp|png|jpeg);base64,/.test(t));
-    check("the recorded screen keeps the page's controls; no canvas, script or fetched image", srcdoc.includes("Mark as") && !/<canvas|<script/i.test(srcdoc) && foreignImg.length === 0, { length: srcdoc.length, foreignImg: foreignImg.slice(0, 2) });
+    check("the recorded screen keeps the page's controls; no canvas, script or fetched image", /Mark as|Submit review/.test(srcdoc) && !/<canvas|<script/i.test(srcdoc) && foreignImg.length === 0, { length: srcdoc.length, foreignImg: foreignImg.slice(0, 2) });
     if (/data-vl-shot/.test(srcdoc)) {
       check("the heatmap offers the case images of its screen", (await page.locator('[data-testid="usage-heatmap-images"]').count()) === 1);
     }
