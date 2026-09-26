@@ -718,6 +718,35 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
     }
 
 
+@app.get("/series/{series_id}/previous-round")
+async def get_previous_round(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """What the reviewer sent back last time: the newest rejected version
+    of this series' segmentation (its mask and objects), for round 2's
+    "what changed" and the ghost outline (UX-rev-1-16, UX-rev-2-24). All
+    nulls when nothing was ever rejected."""
+    resp = await _http_client.get(f"{ANNOTATION_SERVICE_URL}/annotations/series/{series_id}", headers=_auth_headers(user))
+    if resp.status_code >= 400:
+        raise _upstream_error(resp)
+    type_names = {t["id"]: t["name"] for t in await _get_annotation_types(user)}
+    rejected = [
+        a
+        for a in resp.json()
+        if a.get("status") == "rejected"
+        and type_names.get(a.get("type_id")) == "segmentation_volume"
+        and _is_mask_key((a.get("payload") or {}).get("mask_volume_key"))
+    ]
+    if not rejected:
+        return {"version_id": None, "mask_gzip_base64": None, "objects": [], "labels": []}
+    last = rejected[-1]  # oldest-first, like get_mask_volume
+    payload = last["payload"]
+    return {
+        "version_id": last["id"],
+        "mask_gzip_base64": base64.b64encode(download_bytes(payload["mask_volume_key"])).decode(),
+        "objects": payload.get("objects", []),
+        "labels": payload.get("labels", []),
+    }
+
+
 @app.post("/series/{series_id}/mask-volume", status_code=201)
 async def save_mask_volume(
     series_id: str, body: SaveMaskVolumeBody, user: CurrentUser = Depends(get_current_user)

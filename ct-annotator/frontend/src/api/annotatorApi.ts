@@ -440,6 +440,13 @@ export interface ObjectStats {
   below_minus_500: number | null;
 }
 
+/** What the reviewer sent back last time (the newest rejected version):
+ * round 2's comparison. `gzipBytes` null when there was no such round. */
+export async function fetchPreviousRound(seriesId: string): Promise<{ versionId: string | null; gzipBytes: ArrayBuffer | null; objects: SegObject[]; labels: SegLabel[] }> {
+  const r = await apiFetch<{ version_id: string | null; mask_gzip_base64: string | null; objects: SegObject[]; labels: SegLabel[] }>(API.annotator, `/series/${seriesId}/previous-round`);
+  return { versionId: r.version_id, gzipBytes: r.mask_gzip_base64 ? base64ToArrayBuffer(r.mask_gzip_base64) : null, objects: r.objects ?? [], labels: r.labels ?? [] };
+}
+
 /** The series' (slice, row, column) spacing in mm -- the ruler's scale. */
 export async function fetchSeriesSpacing(seriesId: string): Promise<[number, number, number] | null> {
   const r = await apiFetch<{ spacing_mm: [number, number, number] | null }>(API.annotator, `/series/${seriesId}/spacing`);

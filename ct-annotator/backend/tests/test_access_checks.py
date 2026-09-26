@@ -459,3 +459,35 @@ def test_case_answers_travel_with_the_save_and_come_back(api, monkeypatch):
     monkeypatch.setattr(main, "download_bytes", lambda key: b"gz")
     r = api.get(f"/series/{SERIES}/mask-volume").json()
     assert r["case_fields"] == fields and r["case_answers"] == {"Finding": "No finding"}
+
+
+def test_the_previous_round_is_the_last_rejected_version(api, monkeypatch):
+    """Round 2 (UX-rev-1-16): the reviewer compares the rework with what
+    they sent back -- the newest rejected version before the current one."""
+    real_get = api.fake.get
+    rows = [
+        {"id": "v1", "type_id": "t", "status": "rejected", "review_of_id": None, "payload": {"mask_volume_key": "annotation-masks/r1.gz", "labels": [], "objects": [{"id": 1}]}},
+        {"id": "v2", "type_id": "t", "status": "rejected", "review_of_id": "v1x", "payload": {"mask_volume_key": "annotation-masks/r2.gz", "labels": [], "objects": [{"id": 2}]}},
+        {"id": "v3", "type_id": "t", "status": "draft", "review_of_id": None, "payload": {"mask_volume_key": "annotation-masks/d.gz", "labels": [], "objects": []}},
+        {"id": "v4", "type_id": "t", "status": "submitted", "review_of_id": None, "payload": {"mask_volume_key": "annotation-masks/s.gz", "labels": [], "objects": []}},
+    ]
+
+    async def get(url, headers=None, **kw):
+        if url.endswith(f"/annotations/series/{SERIES}"):
+            return _Resp(200, rows)
+        return await real_get(url, headers=headers, **kw)
+
+    async def types(user):
+        return [{"id": "t", "name": "segmentation_volume"}]
+
+    api.fake.get = get
+    monkeypatch.setattr(main, "_get_annotation_types", types)
+    monkeypatch.setattr(main, "download_bytes", lambda key: key.encode())
+    api.as_user(MEMBER)
+    r = api.get(f"/series/{SERIES}/previous-round").json()
+    assert r["version_id"] == "v2" and r["objects"] == [{"id": 2}]
+    import base64
+    assert base64.b64decode(r["mask_gzip_base64"]) == b"annotation-masks/r2.gz"
+    # a first round has none
+    rows[:] = rows[2:]
+    assert api.get(f"/series/{SERIES}/previous-round").json() == {"version_id": None, "mask_gzip_base64": None, "objects": [], "labels": []}

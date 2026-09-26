@@ -39,6 +39,7 @@ export const KEYMAP: KeyGroup[] = [
       { keys: ["Alt+click"], what: "The HU value at this point", touch: "Long-press" },
       { keys: ["M"], what: "Ruler: drag on a pane to measure in mm; Esc clears the line", viewerOnly: true },
       { keys: ["O"], what: "Draw the annotation filled or as an outline" },
+      { keys: ["G"], what: "Round 2 of a review: the last round's outline on / off", mode: "review", viewerOnly: true },
       { keys: ["Space (hold)"], what: "Hide the annotation while held, to see the scan under it" },
     ],
   },

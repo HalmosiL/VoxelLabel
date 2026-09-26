@@ -13,6 +13,7 @@ import {
   fetchObjectStats,
   fetchSegmentationVolume,
   fetchSeriesSpacing,
+  fetchPreviousRound,
   fetchSurfaceConfig,
   fetchVoxelHU,
   JobCase,
@@ -73,6 +74,7 @@ import ReviewSubmitDialog from "../components/ReviewSubmitDialog";
 import ObjectMeasurements from "../components/ObjectMeasurements";
 import { objectSlices } from "../lib/objectMeasure";
 import { Ruler, rulerLabel, RulerPoint, Spacing } from "../lib/ruler";
+import { deletedSince, diffByObject, ObjectChange, roundChangeText } from "../lib/roundDiff";
 import { isEdge, OUTLINE_MIN_ALPHA, OverlayStyle, rememberedOverlayStyle, rememberOverlayStyle } from "../lib/overlayStyle";
 
 // Layout modeled on CVAT (Computer Vision Annotation Tool): a top job
@@ -524,6 +526,9 @@ export default function ViewerPage() {
     rememberOverlayStyle(style);
   }
   const [peeking, setPeeking] = useState(false);
+  // round 2 of a review: the mask sent back last time, drawn as a ghost (G)
+  const prevMaskRef = useRef<Uint8Array | null>(null);
+  const [showLastRound, setShowLastRound] = useState(false);
   // The ruler (M): a drag on a pane measures in mm and touches nothing
   // else (UX-rev-1-03). One line; Esc or turning it off clears it.
   const [rulerOn, setRulerOn] = useState(false);
@@ -1454,7 +1459,7 @@ export default function ViewerPage() {
   useEffect(() => {
     if (maskReady) renderAllPaneOverlays();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects, labels, overlayOpacity, maskReady, overlayStyle, peeking, reviewHidden]);
+  }, [objects, labels, overlayOpacity, maskReady, overlayStyle, peeking, reviewHidden, showLastRound]);
 
   // ── Volume <-> plane-display coordinate mapping ──────────────────────
   // Every stroke/fill only ever touches the single slice its pane is
@@ -1618,6 +1623,26 @@ export default function ViewerPage() {
         data[i + 1] = g;
         data[i + 2] = b;
         data[i + 3] = alpha;
+      }
+    }
+    // Round 2: the last round's outline, white, over everything (G)
+    const prevMask = showLastRound ? prevMaskRef.current : null;
+    if (prevMask && !peeking) {
+      const prevAt = (x: number, y: number) => {
+        if (x < 0 || y < 0 || x >= width || y >= height) return undefined;
+        const v = paneLocalToVolumeXYZ(pane, index, x, y);
+        return prevMask[maskIndex(v.x, v.y, v.z)];
+      };
+      for (let py = 0; py < height; py++) {
+        for (let px = 0; px < width; px++) {
+          const value = prevAt(px, py) ?? 0;
+          if (value === 0 || !isEdge(value, [prevAt(px - 1, py), prevAt(px + 1, py), prevAt(px, py - 1), prevAt(px, py + 1)])) continue;
+          const i = (py * width + px) * 4;
+          data[i] = 255;
+          data[i + 1] = 255;
+          data[i + 2] = 255;
+          data[i + 3] = 220;
+        }
       }
     }
     // Auto-contour's not-yet-committed preview, drawn on top in a
@@ -3278,6 +3303,34 @@ export default function ViewerPage() {
       cancelled = true;
     };
   }, [reviewMode, maskReady, seriesId]);
+  // Round 2 (UX-rev-1-16): the version the reviewer sent back last time,
+  // what each object did since, and its outline as a ghost (G).
+  const [roundChanges, setRoundChanges] = useState<Map<number, ObjectChange> | null>(null);
+  const [roundDeleted, setRoundDeleted] = useState<string[]>([]);
+  const [roundObjectIds, setRoundObjectIds] = useState<Set<number>>(() => new Set());
+  useEffect(() => {
+    prevMaskRef.current = null;
+    setRoundChanges(null);
+    setRoundDeleted([]);
+    setShowLastRound(false);
+    const volume = maskVolumeRef.current;
+    if (!reviewMode || !maskReady || !seriesId || !volume) return;
+    let cancelled = false;
+    fetchPreviousRound(seriesId)
+      .then(async (prev) => {
+        if (cancelled || !prev.gzipBytes) return;
+        const mask = await gunzipToUint8Array(prev.gzipBytes);
+        if (cancelled || mask.length !== volume.length) return;
+        prevMaskRef.current = mask;
+        setRoundChanges(diffByObject(mask, volume));
+        setRoundObjectIds(new Set(prev.objects.map((o) => o.id)));
+        setRoundDeleted(deletedSince(prev.objects, objectsNowRef.current, prev.labels.length ? prev.labels : labelsNowRef.current));
+      })
+      .catch(() => undefined); // no comparison, the review itself still works
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewMode, maskReady, seriesId]);
   const currentReviewSlices = useMemo(
     () => (reviewMode && maskReady && currentReviewObject ? objectSlices(maskVolumeRef.current, rows * columns, currentReviewObject.id) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3392,6 +3445,16 @@ export default function ViewerPage() {
             onGoToSlice={setAxialIndex}
           />
         )}
+        {obj &&
+          roundChanges &&
+          (() => {
+            const text = roundChangeText(roundChanges.get(obj.id), roundObjectIds.has(obj.id));
+            return (
+              <p className={`mt-1 text-[11px] ${text.startsWith("Unchanged") ? "text-gray-400" : "text-sky-300"}`} data-testid="round-change">
+                {text}
+              </p>
+            );
+          })()}
         {obj && (
           <div className="mt-1.5">
             <ObjectFormEditor fields={fieldsOfLabel(label)} answers={obj.attributes} onChange={(next) => setObjectAttributes(obj.id, next)} />
@@ -3834,6 +3897,10 @@ export default function ViewerPage() {
       }
       if (event.key === "Escape" && !typing && rulerRef.current) {
         setRuler(null);
+        return;
+      }
+      if (event.key.toLowerCase() === "g" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey && prevMaskRef.current) {
+        setShowLastRound((v) => !v);
         return;
       }
       if (event.key.toLowerCase() === "o" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -4592,6 +4659,11 @@ export default function ViewerPage() {
           )}
           {reviewMode && (
             <Section title="Review" guide="review-card" help="The current object and its decision. Accept or Reject each object; a comment explains a rejection to the annotator.">
+              {roundDeleted.length > 0 && (
+                <p className="mb-2 rounded border border-sky-800/60 bg-sky-950/40 px-1.5 py-1 text-[11px] text-sky-200" data-testid="round-deleted">
+                  Deleted since the last round: {roundDeleted.join(", ")}
+                </p>
+              )}
               {renderReviewCard()}
             </Section>
           )}
@@ -4643,6 +4715,12 @@ export default function ViewerPage() {
               </div>
               <span className="text-gray-500">(O · hold Space to peek)</span>
             </div>
+            {roundChanges && (
+              <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-300" title="The outline of what you sent back last round, in white -- to see what the rework changed. Shortcut: G">
+                <input type="checkbox" checked={showLastRound} onChange={(e) => setShowLastRound(e.target.checked)} data-testid="last-round-toggle" />
+                Last round&apos;s outline <span className="text-gray-500">(G)</span>
+              </label>
+            )}
             <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-300" title="Coloured lines where the other two planes cut each pane, left open in the middle so they never cover the point you are looking at. Shortcut: C">
               <input type="checkbox" checked={showCrosshair} onChange={(e) => setShowCrosshair(e.target.checked)} data-testid="crosshair-toggle" />
               Crosshair <span className="text-gray-500">(C)</span>
