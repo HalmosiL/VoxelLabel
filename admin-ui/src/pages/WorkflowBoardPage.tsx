@@ -72,6 +72,7 @@ import ReviewNode from "../components/workflow/nodes/ReviewNode";
 import ReviewSurfaceNode from "../components/workflow/nodes/ReviewSurfaceNode";
 import SplitNode from "../components/workflow/nodes/SplitNode";
 import DuplicateNode from "../components/workflow/nodes/DuplicateNode";
+import CompareNode from "../components/workflow/nodes/CompareNode";
 import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
@@ -95,6 +96,7 @@ const NODE_TYPES = {
   dataset: DatasetNode,
   split: SplitNode,
   duplicate: DuplicateNode,
+  compare: CompareNode,
   filter: FilterNode,
   annotation: AnnotationNode,
   review: ReviewNode,

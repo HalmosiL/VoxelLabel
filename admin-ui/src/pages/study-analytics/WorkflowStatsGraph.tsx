@@ -19,6 +19,7 @@ const TYPE_LABEL: Record<string, string> = {
   dataset: "Dataset",
   split: "Split",
   duplicate: "Duplicate",
+  compare: "Compare",
   filter: "Filter",
   annotation: "Annotation",
   review: "Review",

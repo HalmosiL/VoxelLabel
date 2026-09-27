@@ -16,7 +16,7 @@ from itertools import combinations
 
 import numpy as np
 from fastapi import HTTPException
-from shared_models.models import Annotation, AnnotationStatus, AnnotationType, Case, ImagingStudy, Series, WorkflowCard, WorkflowEdge
+from shared_models.models import Annotation, AnnotationStatus, AnnotationType, Case, ImagingStudy, Series, WorkflowCard, WorkflowCardType, WorkflowEdge
 from sqlalchemy.orm import Session
 
 from app.quality.compare import compare_pair, object_labels
@@ -49,6 +49,8 @@ def _inputs(db: Session, card: WorkflowCard) -> list[dict]:
                 "title": source.title,
                 "branch": card_branch(db, source),
                 "assigned_user_id": (job.config or {}).get("assigned_user_id") if job is not None else None,
+                # the job behind it (itself, or the job that made this "(annotated)" card): the viewer opens its branch
+                "job_id": str(job.id) if job is not None and job.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW) else None,
                 "cases": set(_resolve_output(db, source, set())),
             }
         )
@@ -152,7 +154,7 @@ def compare(db: Session, card: WorkflowCard, now: datetime) -> tuple[dict, list[
     results = {
         "computed_at": now.isoformat(),
         "agree_dice": threshold,
-        "inputs": [{k: i[k] for k in ("card_id", "title", "branch", "assigned_user_id")} for i in inputs],
+        "inputs": [{k: i[k] for k in ("card_id", "job_id", "title", "branch", "assigned_user_id")} for i in inputs],
         "pairs": pair_summary,
         "images": images,
         "skipped": skipped,

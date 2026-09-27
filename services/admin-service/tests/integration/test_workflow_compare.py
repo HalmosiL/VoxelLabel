@@ -57,6 +57,7 @@ def test_the_copies_are_compared_on_the_cases_both_handed_in(client, db, monkeyp
     card = next(c for c in results["cards"] if c["id"] == cmp["id"])
     res = card["config"]["results"]
     assert [i["card_id"] for i in res["inputs"]] == [job_a["id"], job_b["id"]]
+    assert [i["job_id"] for i in res["inputs"]] == [job_a["id"], job_b["id"]]
     (pair,) = res["pairs"]
     assert (pair["a"], pair["b"], pair["images"], pair["mean_dice"]) == (0, 1, 1, 0.5)
     (image,) = res["images"]

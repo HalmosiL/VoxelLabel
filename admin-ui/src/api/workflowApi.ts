@@ -27,9 +27,37 @@ export type WorkflowCardType =
   | "criterion"
   // the same cases down 2-4 lanes ("copy_0", ...), each annotated apart on
   // its own branch -- for comparing annotators on the same images
-  | "duplicate";
+  | "duplicate"
+  // two or more inputs on different branches (a Duplicate's copies' jobs),
+  // compared on the images they share -- see CompareResults
+  | "compare";
 
 export type WorkflowCardConfig = Record<string, unknown>;
+
+/** One pair of a Compare card's inputs on one image (inputs by index). */
+export interface ComparePair {
+  a: number;
+  b: number;
+  // null: neither drew anything there -- nothing to agree on
+  dice: number | null;
+  by_label: Record<string, number>;
+  objects: { both: number; only_a: number; only_b: number };
+  voxels_a: number;
+  voxels_b: number;
+}
+
+/** What a Compare card's Run found (its config.results). */
+export interface CompareResults {
+  computed_at: string;
+  agree_dice: number;
+  // job_id: the Annotation/Review job behind the input (the viewer opens its branch)
+  inputs: { card_id: string; job_id: string | null; title: string; branch: string | null; assigned_user_id: string | null }[];
+  pairs: { a: number; b: number; images: number; mean_dice: number | null; objects: { both: number; only_a: number; only_b: number } }[];
+  images: { case_id: string; case_title: string; series_id: string; pairs: ComparePair[]; min_dice: number | null }[];
+  skipped: { case_id: string; case_title: string; reason: string }[];
+  cases_agree: number;
+  cases_disagree: number;
+}
 
 export interface WorkflowCard {
   id: string;

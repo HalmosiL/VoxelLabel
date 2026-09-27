@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getWorkflowBoard, SplitPart, WorkflowCard } from "../api/workflowApi";
+import { CompareResults, getWorkflowBoard, SplitPart, WorkflowCard } from "../api/workflowApi";
 import {
   DatabaseIcon,
   FlagIcon,
@@ -45,6 +45,12 @@ function describeCard(card: WorkflowCard): string {
       return parts
         .map((p, i) => `${p.name} ${Math.round(p.ratio * 100)}%${counts ? ` (${counts[`part_${i}`] ?? 0})` : ""}`)
         .join(", ");
+    }
+    case "compare": {
+      const results = card.config.results as CompareResults | undefined;
+      if (!results) return "not run yet";
+      const dice = results.pairs.map((p) => p.mean_dice).filter((d): d is number => d !== null);
+      return `${results.images.length} images compared · ${dice.length ? `mean Dice ${Math.min(...dice).toFixed(2)}` : "no Dice yet"} · ${results.cases_disagree} disagree`;
     }
     case "duplicate": {
       const counts = (card.output_count as Record<string, number> | null) ?? null;

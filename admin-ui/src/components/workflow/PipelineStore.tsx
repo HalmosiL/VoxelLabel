@@ -3,7 +3,7 @@ import React, { DragEvent, useEffect, useMemo, useState } from "react";
 import { describeApiError } from "../../api/client";
 import keycloak from "../../keycloak";
 import { deletePipelineTemplate, listPipelineTemplates, WorkflowCardType } from "../../api/workflowApi";
-import { CopiesIcon, DatabaseIcon, DocumentIcon, ForkIcon, FunnelCheckIcon, FunnelIcon, MergeIcon, PencilIcon, SparklesIcon, TrashIcon, WrenchIcon } from "../icons";
+import { CopiesIcon, DatabaseIcon, DocumentIcon, ForkIcon, FunnelCheckIcon, FunnelIcon, MergeIcon, PencilIcon, ScaleIcon, SparklesIcon, TrashIcon, WrenchIcon } from "../icons";
 import {
   materializedChildrenFor,
   PIPELINE_TEMPLATES,
@@ -20,6 +20,7 @@ const TYPE_ICON: Partial<Record<WorkflowCardType, (props: { className?: string }
   dataset: DatabaseIcon,
   split: ForkIcon,
   duplicate: CopiesIcon,
+  compare: ScaleIcon,
   filter: FunnelIcon,
   union: MergeIcon,
   annotation: PencilIcon,

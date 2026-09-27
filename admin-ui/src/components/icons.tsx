@@ -77,6 +77,16 @@ export function CopiesIcon({ className }: { className?: string }) {
   );
 }
 
+/** A balance: the Compare card (annotators' work weighed against each other). */
+export function ScaleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 3v14M6 17h8M4 6h12" />
+      <path d="M4 6l-2.5 5a2.5 2.5 0 0 0 5 0L4 6zM16 6l-2.5 5a2.5 2.5 0 0 0 5 0L16 6z" />
+    </svg>
+  );
+}
+
 export function FunnelIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">

@@ -21,6 +21,9 @@ export const HANDLE_RULES: Record<WorkflowCardType, HandleRule> = {
   split: { inputHandles: ["input"], outputHandles: [] },
   // Like Split: its copies are materialized Dataset cards, not an edge.
   duplicate: { inputHandles: ["input"], outputHandles: [] },
+  // Any number of inputs (each on its own branch); its "agree"/"disagree"
+  // results are materialized Dataset cards, like a Criterion's.
+  compare: { inputHandles: ["input"], outputHandles: [] },
   filter: { inputHandles: ["input"], outputHandles: ["output"] },
   union: { inputHandles: ["input"], outputHandles: ["output"] },
   // "surface_config" is a second, independent input -- a Surface card's
@@ -96,4 +99,4 @@ export function isValidConnection(
 // case against my stored criterion") is well-defined and repeatable, so
 // Run is a canned-message shortcut for it (see _run_one_card's own
 // CRITERION branch) rather than something only reachable via chat.
-export const RUNNABLE_TYPES: WorkflowCardType[] = ["dataset", "split", "duplicate", "filter", "union", "annotation", "review", "criterion"];
+export const RUNNABLE_TYPES: WorkflowCardType[] = ["dataset", "split", "duplicate", "filter", "union", "annotation", "review", "criterion", "compare"];

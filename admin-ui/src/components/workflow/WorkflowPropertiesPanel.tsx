@@ -2,8 +2,10 @@ import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { CaseSummary } from "../../api/dataApi";
-import { SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
+import { CompareResults, SplitPart, WorkflowCard, WorkflowCardPatchInput } from "../../api/workflowApi";
 import { TrashIcon } from "../icons";
+import CompareReportModal from "./CompareReportModal";
+import { diceTone } from "./compareReport";
 import { RUNNABLE_TYPES } from "./handleRules";
 import LabelFormModal, { LabelField } from "./LabelFormModal";
 import PytorchExportModal from "./PytorchExportModal";
@@ -131,6 +133,10 @@ export default function WorkflowPropertiesPanel({
 
         {card.type === "duplicate" && (
           <DuplicateFields card={card} onPatch={onPatch} onRun={onRun} onSelectCard={onSelectCard} running={running} />
+        )}
+
+        {card.type === "compare" && (
+          <CompareFields card={card} studyId={studyId} assignees={assignees} onPatch={onPatch} onRun={onRun} onSelectCard={onSelectCard} running={running} />
         )}
 
         {card.type === "filter" && (
@@ -524,6 +530,102 @@ function SplitFields({
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** When two inputs agree (a Dice threshold), Run, and what it found --
+ * each pair's mean Dice, agree / disagree, and the full report. */
+function CompareFields({
+  card,
+  studyId,
+  assignees,
+  onPatch,
+  onRun,
+  onSelectCard,
+  running,
+}: {
+  card: WorkflowCard;
+  studyId: string;
+  assignees: Assignee[];
+  onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+  onRun: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
+  running: boolean;
+}) {
+  const results = card.config.results as CompareResults | undefined;
+  const threshold = typeof card.config.agree_dice === "number" ? card.config.agree_dice : 0.7;
+  const [draft, setDraft] = useState(String(threshold));
+  const [reportOpen, setReportOpen] = useState(false);
+  const materializedIds = card.materialized_card_ids ?? {};
+  const names = Object.fromEntries(assignees.map((a) => [a.id, a.label]));
+
+  function commitThreshold() {
+    const value = Number(draft);
+    if (Number.isFinite(value) && value >= 0 && value <= 1 && value !== threshold) {
+      onPatch(card.id, { config: { agree_dice: value } });
+    } else {
+      setDraft(String(threshold));
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="hint">
+        Compares its inputs -- each on its own branch, typically the Annotation jobs of a Duplicate's copies -- on the images they share:
+        each one's latest hand-in, Dice overall and per label, and the findings both drew or only one did.
+      </p>
+      <label className="flex flex-col gap-1">
+        <span className="label">Agree at Dice ≥</span>
+        <input
+          className="input w-24"
+          type="number"
+          min="0"
+          max="1"
+          step="0.05"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitThreshold}
+          data-testid="compare-threshold"
+        />
+        <span className="hint">A case agrees when every pair reaches it; the rest go to "disagree" -- wire that on to an adjudicating review.</span>
+      </label>
+      <RunButton card={card} onRun={onRun} running={running} label="Run compare" />
+      <LastRun card={card} />
+      <StaleBadge card={card} />
+      {results && (
+        <div className="flex flex-col gap-2">
+          {results.pairs.map((p) => (
+            <div key={`${p.a}-${p.b}`} className="flex items-center justify-between gap-2 text-xs">
+              <span className="min-w-0 text-gray-700">
+                {results.inputs[p.a]?.title} vs {results.inputs[p.b]?.title}
+              </span>
+              <span className={`flex-shrink-0 rounded px-1.5 py-0.5 font-medium tabular-nums ${diceTone(p.mean_dice, threshold)}`}>
+                {p.mean_dice === null ? "--" : p.mean_dice.toFixed(2)}
+              </span>
+            </div>
+          ))}
+          <p className="text-xs text-gray-600">
+            {results.images.length} images · {results.cases_agree} agree · {results.cases_disagree} disagree
+            {results.skipped.length > 0 && ` · ${results.skipped.length} not comparable yet`}
+          </p>
+          <button type="button" className="btn-primary btn-sm self-start" onClick={() => setReportOpen(true)} data-testid="compare-open-report">
+            Open report
+          </button>
+          <div className="flex gap-3">
+            {(["agree", "disagree"] as const).map((handle) =>
+              materializedIds[handle] ? (
+                <button key={handle} onClick={() => onSelectCard(materializedIds[handle])} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                  → {handle} cases
+                </button>
+              ) : null
+            )}
+          </div>
+        </div>
+      )}
+      {reportOpen && results && (
+        <CompareReportModal title={card.title} results={results} studyId={studyId} names={names} onClose={() => setReportOpen(false)} />
       )}
     </div>
   );

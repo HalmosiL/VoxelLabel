@@ -44,6 +44,12 @@ export function materializedChildrenFor(card: PipelineTemplateCard): { handle: s
       { handle: "rejected", label: "rejected" },
     ];
   }
+  if (card.type === "compare") {
+    return [
+      { handle: "agree", label: "agree" },
+      { handle: "disagree", label: "disagree" },
+    ];
+  }
   if (card.type === "criterion") {
     return [
       { handle: "included", label: "included" },

@@ -1,7 +1,7 @@
 import { DragEvent, ReactNode } from "react";
 
 import { WorkflowCardConfig, WorkflowCardType } from "../../api/workflowApi";
-import { CopiesIcon, DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelCheckIcon, FunnelIcon, MergeIcon, MonitorCheckIcon, MonitorIcon, PencilIcon, SparklesIcon, WrenchIcon } from "../icons";
+import { CopiesIcon, DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelCheckIcon, FunnelIcon, MergeIcon, MonitorCheckIcon, MonitorIcon, PencilIcon, ScaleIcon, SparklesIcon, WrenchIcon } from "../icons";
 
 export interface CardTemplate {
   type: WorkflowCardType;
@@ -79,6 +79,17 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
         defaultConfig: { copies: 2 },
         defaultWidth: 220,
         defaultHeight: 100,
+      },
+      {
+        type: "compare",
+        label: "Compare",
+        icon: <ScaleIcon className="h-4 w-4" />,
+        defaultTitle: "Compare annotators",
+        // Wire each Duplicate copy's job in; Run compares them on the
+        // shared images (Dice, findings), agree / disagree come out.
+        defaultConfig: { agree_dice: 0.7 },
+        defaultWidth: 240,
+        defaultHeight: 130,
       },
       {
         type: "union",
