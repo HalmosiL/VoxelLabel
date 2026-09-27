@@ -1,4 +1,5 @@
 """HTTP API for creating, listing and reviewing annotations."""
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -64,13 +65,26 @@ def _lock_target(db: Session, target_type: str, target_id: uuid.UUID) -> None:
     db.query(Series).filter(Series.id == series_id).with_for_update().one()
 
 
-def _latest_version(db: Session, target_type: str, target_id: uuid.UUID, study_id: str, type_id) -> Annotation | None:
+def _latest_version(db: Session, target_type: str, target_id: uuid.UUID, study_id: str, type_id, branch: str | None) -> Annotation | None:
+    """The newest version on `branch` (None: the main chain) -- another
+    branch's saves are never "newer" (see Annotation.branch)."""
     return (
         db.query(Annotation)
-        .filter_by(target_type=target_type, target_id=target_id, study_id=study_id, type_id=type_id)
+        .filter_by(target_type=target_type, target_id=target_id, study_id=study_id, type_id=type_id, branch=branch)
         .order_by(Annotation.created_at.desc(), Annotation.id.desc())
         .first()
     )
+
+
+# A Duplicate card's lane key, e.g. "dup:<card id>:copy_1" (nested lanes
+# joined with "/"): a short plain key, never free text.
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9:_/-]{1,128}$")
+
+
+def _checked_branch(branch: str | None) -> str | None:
+    if branch is not None and (not _BRANCH_RE.match(branch) or ".." in branch):
+        raise HTTPException(status_code=422, detail="branch must be a lane key like dup:<card>:copy_1")
+    return branch
 
 
 def _handed_in(db: Session, annotation: Annotation) -> Annotation | None:
@@ -118,6 +132,7 @@ def create_annotation(
     status: AnnotationStatus = AnnotationStatus.DRAFT,
     base_version_id: str | None = None,
     review_of: str | None = None,
+    branch: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
@@ -127,6 +142,9 @@ def create_annotation(
     the review then decides. Reviewers and admins only; refused with 409
     unless that version is handed in and nobody else saved on top of it
     (F-01, F-07, F-09).
+
+    `branch`: the independent chain to save on (a Duplicate card's lane,
+    see Annotation.branch); omitted, the main chain.
 
     `base_version_id`: the version this save was edited from ("none"
     when the target had no annotation of this type yet). When given, the
@@ -151,6 +169,7 @@ def create_annotation(
     except ValueError:
         raise HTTPException(status_code=422, detail="study_id must be a UUID") from None
     require_study_role(db, study_id, user, allowed_roles=["annotator", "reviewer", "admin"])
+    branch = _checked_branch(branch)
     if _study_of_target(db, target_type, target_id) != study_id:
         raise HTTPException(status_code=403, detail="That image doesn't belong to this study")
 
@@ -176,8 +195,8 @@ def create_annotation(
             reviewed = db.get(Annotation, uuid.UUID(review_of))
         except ValueError:
             raise HTTPException(status_code=422, detail="review_of must be an annotation id") from None
-        if reviewed is None or (reviewed.target_type, reviewed.target_id, str(reviewed.study_id), reviewed.type_id) != (
-            target_type, target_id, study_id, annotation_type.id
+        if reviewed is None or (reviewed.target_type, reviewed.target_id, str(reviewed.study_id), reviewed.type_id, reviewed.branch) != (
+            target_type, target_id, study_id, annotation_type.id, branch
         ):
             raise HTTPException(status_code=404, detail="The version under review isn't an annotation of this image")
         if reviewed.status != AnnotationStatus.SUBMITTED and "admin" not in user.realm_roles:
@@ -185,7 +204,7 @@ def create_annotation(
         if reviewed.annotator_id == user.subject and "admin" not in user.realm_roles:
             raise HTTPException(status_code=403, detail=_OWN_WORK)
         _lock_target(db, target_type, target_id)
-        latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id)
+        latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id, branch)
         if latest is not None and latest.id != reviewed.id and latest.review_of_id != reviewed.id:
             raise HTTPException(
                 status_code=409,
@@ -195,7 +214,7 @@ def create_annotation(
     parent_id = None
     if base_version_id is not None:
         _lock_target(db, target_type, target_id)
-        latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id)
+        latest = _latest_version(db, target_type, target_id, study_id, annotation_type.id, branch)
         expected = None if base_version_id in ("", "none") else base_version_id
         if (str(latest.id) if latest else None) != expected:
             raise HTTPException(
@@ -214,6 +233,7 @@ def create_annotation(
         status=status,
         parent_version_id=parent_id,
         review_of_id=reviewed.id if reviewed is not None else None,
+        branch=branch,
         # The wall-clock moment of this save, not the transaction start
         # (server default now()): saves in quick succession must stay in
         # the order they happened, so "the latest" is unambiguous.
@@ -225,6 +245,7 @@ def create_annotation(
         "id": str(annotation.id),
         "status": annotation.status.value,
         "review_of_id": str(annotation.review_of_id) if annotation.review_of_id else None,
+        "branch": annotation.branch,
     }
 
 
@@ -252,6 +273,7 @@ def list_annotations_for_study(
             "payload": a.payload,
             "status": a.status.value,
             "annotator_id": a.annotator_id,
+            "branch": a.branch,
         }
         for a in query.all()
     ]
@@ -261,6 +283,7 @@ def list_annotations_for_study(
 def list_annotations_for_target(
     target_type: str,
     target_id: uuid.UUID,
+    branch: str | None = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
@@ -269,14 +292,15 @@ def list_annotations_for_target(
     creation time so a caller that wants "the latest version" can just
     take the last element, rather than relying on whatever order the
     database happens to return an otherwise-unordered query in (not
-    guaranteed to match insertion order, and in practice doesn't always)."""
+    guaranteed to match insertion order, and in practice doesn't always).
+    One branch's versions only (`branch` omitted: the main chain)."""
     # Access follows the target's own study -- not whichever annotation
     # happens to be first -- and only that study's annotations come back.
     study_id = _study_of_target(db, target_type, target_id)
     require_study_role(db, study_id, user, allowed_roles=_READ_ROLES)
     annotations = (
         db.query(Annotation)
-        .filter_by(target_type=target_type, target_id=target_id, study_id=study_id)
+        .filter_by(target_type=target_type, target_id=target_id, study_id=study_id, branch=_checked_branch(branch))
         .order_by(Annotation.created_at, Annotation.id)
         .all()
     )
@@ -289,6 +313,7 @@ def list_annotations_for_target(
             "status": a.status.value,
             "review_of_id": str(a.review_of_id) if a.review_of_id else None,
             "created_at": a.created_at.isoformat() if a.created_at else None,
+            "branch": a.branch,
         }
         for a in annotations
     ]
@@ -348,7 +373,7 @@ def review_annotation(
             # separation of duties: an annotator who is also a reviewer
             # approved their own submission (F-10)
             raise HTTPException(status_code=403, detail=_OWN_WORK)
-        latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id)
+        latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id, annotation.branch)
         if latest is not None and latest.id != annotation.id:
             raise HTTPException(status_code=409, detail="A newer version of this image exists -- reload before deciding.")
     annotation.status = AnnotationStatus.APPROVED if decision == "approve" else AnnotationStatus.REJECTED
@@ -392,7 +417,7 @@ def undo_annotation_step(
     if annotation is None:
         raise HTTPException(status_code=404, detail="Annotation not found")
     require_study_role(db, str(annotation.study_id), user, allowed_roles=["annotator", "reviewer", "admin"])
-    latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id)
+    latest = _latest_version(db, annotation.target_type, annotation.target_id, str(annotation.study_id), annotation.type_id, annotation.branch)
     is_latest = latest is None or latest.id == annotation.id
 
     if annotation.status == AnnotationStatus.SUBMITTED:

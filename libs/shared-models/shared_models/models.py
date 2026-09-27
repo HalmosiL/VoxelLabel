@@ -524,9 +524,16 @@ class Annotation(Base):
         UUID(as_uuid=True), ForeignKey("annotations.id", ondelete="SET NULL")
     )
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Which independent chain of this image's annotation the version is on:
+    # null is the main chain; a Duplicate card's lanes each save on their
+    # own (see admin-service's workflow/branches.py), so the same image can
+    # be annotated twice, apart, and compared. "Latest", conflicts, review
+    # and undo never cross branches.
+    branch: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         CheckConstraint("target_type IN ('instance','series','study')", name="ck_annotation_target_type"),
+        Index("ix_annotations_target_branch", "target_type", "target_id", "branch"),
     )
 
 
