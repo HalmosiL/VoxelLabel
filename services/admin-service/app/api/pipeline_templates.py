@@ -121,6 +121,8 @@ def _makes(card_type: str, handle: str) -> bool:
         return handle in ("approved", "rejected")
     if card_type == WorkflowCardType.CRITERION.value:
         return handle in ("included", "excluded")
+    if card_type == WorkflowCardType.COMPARE.value:
+        return handle in ("agree", "disagree")
     return card_type == WorkflowCardType.ANNOTATION.value and handle == "output"
 
 

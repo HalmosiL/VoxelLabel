@@ -41,7 +41,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.workflow import _cascade_new_case
-from app.api.workflow.constants import _NO_RUN_TYPES
+from app.api.workflow.constants import _MANUAL_RUN_TYPES, _NO_RUN_TYPES
 from app.api.workflow.graph import _downstream_cards, is_all_cases_dataset
 
 log = logging.getLogger(__name__)
@@ -53,9 +53,10 @@ _tried: dict[uuid.UUID, datetime] = {}
 
 
 def _cascaded_card(card: WorkflowCard) -> bool:
-    """Would _cascade_run actually run this card? Criterion cards and the
-    no-Run types never are, so their last Run time says nothing."""
-    return card.type not in _NO_RUN_TYPES and card.type != WorkflowCardType.CRITERION
+    """Would _cascade_run actually run this card? The run-when-asked types
+    (Criterion, Compare) and the no-Run types never are, so their last Run
+    time says nothing."""
+    return card.type not in _NO_RUN_TYPES and card.type not in _MANUAL_RUN_TYPES
 
 
 def _studies_with_new_cases(db: Session) -> dict[uuid.UUID, datetime]:

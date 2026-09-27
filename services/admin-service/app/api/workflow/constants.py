@@ -43,6 +43,7 @@ _SURFACE_TYPES = {WorkflowCardType.SURFACE, WorkflowCardType.ANNOTATION_SURFACE,
 _NO_OUTPUT_TYPES = {
     WorkflowCardType.SPLIT,
     WorkflowCardType.DUPLICATE,
+    WorkflowCardType.COMPARE,
     WorkflowCardType.NOTE,
     WorkflowCardType.MILESTONE,
     WorkflowCardType.LLM,
@@ -64,6 +65,11 @@ _NO_RUN_TYPES = {
     WorkflowCardType.BUILDER,
     *_SURFACE_TYPES,
 }
+
+# Run only when asked, never by a ripple from upstream (engine._cascade_run,
+# workflow_new_cases): a Criterion's Run is a model call, a Compare's
+# downloads and compares every mask.
+_MANUAL_RUN_TYPES = {WorkflowCardType.CRITERION, WorkflowCardType.COMPARE}
 
 _MATERIALIZED_DEFAULT_WIDTH = 200.0
 

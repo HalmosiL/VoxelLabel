@@ -132,6 +132,15 @@ class WorkflowCardType(str, enum.Enum):
     # independently, for a Compare card to set side by side. See
     # admin-service's workflow/branches.py.
     DUPLICATE = "duplicate"
+    # Its inputs' work on the same images, side by side: two or more inputs
+    # on different branches (typically each Duplicate copy's Annotation
+    # job); Run compares every shared image's hand-ins (Dice overall and
+    # per label, the findings both / only one drew) into config.results,
+    # and materializes the cases that agree and those that don't
+    # ("agree"/"disagree") -- the disagreements can go to an
+    # adjudicating review. Heavy (every mask downloaded), so it runs when
+    # asked, never on a ripple. See admin-service's workflow/compare.py.
+    COMPARE = "compare"
 
 
 class Study(Base):

@@ -19,7 +19,15 @@ from sqlalchemy.orm import Session
 from app.llm_client import run_llm_turn
 
 from .branches import copy_title, duplicate_copies, lanes_reaching
-from .constants import _CARD_DEFAULT_HEIGHT, _CARD_DEFAULT_WIDTH, _MATERIALIZED_DEFAULT_HEIGHT, _MATERIALIZED_DEFAULT_WIDTH, _NO_RUN_TYPES
+from .compare import compare as compare_inputs
+from .constants import (
+    _CARD_DEFAULT_HEIGHT,
+    _CARD_DEFAULT_WIDTH,
+    _MANUAL_RUN_TYPES,
+    _MATERIALIZED_DEFAULT_HEIGHT,
+    _MATERIALIZED_DEFAULT_WIDTH,
+    _NO_RUN_TYPES,
+)
 from .graph import (
     _card_is_stale,
     _card_or_404,
@@ -371,6 +379,19 @@ def _run_review(db: Session, card: WorkflowCard, now: datetime) -> None:
         )
 
 
+def _run_compare(db: Session, card: WorkflowCard, now: datetime) -> None:
+    """Its inputs compared on their shared images (workflow/compare.py):
+    the result on the card, the cases that agree and those that don't as
+    "agree"/"disagree" Datasets."""
+    results, agree, disagree = compare_inputs(db, card, now)
+    card.config = {**card.config, "results": results}
+    existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
+    for index, (handle, case_ids) in enumerate((("agree", agree), ("disagree", disagree))):
+        _upsert_materialized_dataset(
+            db, card, existing_children.get(handle), handle=handle, title=f"{card.title} ({handle})", case_ids=sorted(case_ids), now=now, index=index
+        )
+
+
 def _run_criterion(db: Session, card: WorkflowCard, now: datetime) -> None:
     # "Run" here is a convenience shortcut for the same thing typing a
     # message into this card's own chat session would do -- a fixed
@@ -415,6 +436,7 @@ _RUNNERS = {
     WorkflowCardType.ANNOTATION: _run_annotation,
     WorkflowCardType.REVIEW: _run_review,
     WorkflowCardType.CRITERION: _run_criterion,
+    WorkflowCardType.COMPARE: _run_compare,
 }
 
 
@@ -508,8 +530,9 @@ def _cascade_run(db: Session, card: WorkflowCard, visited: set[uuid.UUID]) -> No
     batch import adds, via _cascade_new_case) would be slow and
     surprising. A Criterion only ever evaluates when its own Run is
     clicked (or its own chat is used) directly, never as a side effect
-    of some other card's Run."""
-    if card.id in visited or card.type in _NO_RUN_TYPES or card.type == WorkflowCardType.CRITERION:
+    of some other card's Run. A Compare (downloading every mask) likewise
+    -- see _MANUAL_RUN_TYPES."""
+    if card.id in visited or card.type in _NO_RUN_TYPES or card.type in _MANUAL_RUN_TYPES:
         return
     visited = visited | {card.id}
     _run_one_card(db, card)

@@ -183,6 +183,7 @@ def create_workflow_card(
     _validate_case_ids(db, study_id, body.config)
     _validate_split_parts(body.type, body.config)
     _validate_duplicate(body.type, body.config)
+    _validate_compare(body.type, body.config)
     card = WorkflowCard(
         id=body.id or uuid.uuid4(),
         study_id=study_id,
@@ -218,6 +219,15 @@ def _validate_duplicate(card_type, config: dict) -> None:
     names = config.get("names", [])
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
         raise HTTPException(status_code=422, detail="A Duplicate's copy names are a list of text")
+
+
+def _validate_compare(card_type, config: dict) -> None:
+    """A Compare's agreement threshold is a Dice from 0 to 1."""
+    if card_type != WorkflowCardType.COMPARE or "agree_dice" not in config:
+        return
+    value = config["agree_dice"]
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1:
+        raise HTTPException(status_code=422, detail="The agreement threshold is a Dice from 0 to 1")
 
 
 def _validate_split_parts(card_type, config: dict) -> None:
@@ -323,6 +333,7 @@ def update_workflow_card(
         _validate_case_ids(db, card.study_id, body.config)
         _validate_split_parts(card.type, body.config)
         _validate_duplicate(card.type, body.config)
+        _validate_compare(card.type, body.config)
         # A merge, not a replace: a caller that only knows about the one
         # field it's changing (e.g. ct-annotator's status-dropdown proxy,
         # which sends only {"status": ...} with no visibility into the

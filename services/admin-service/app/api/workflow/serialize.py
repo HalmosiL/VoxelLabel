@@ -47,7 +47,7 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
             db, output_case_ids, review=is_review, since=None if is_review else card.created_at, branch=card_branch(db, card)
         )
 
-    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.DUPLICATE, WorkflowCardType.REVIEW, WorkflowCardType.LLM, WorkflowCardType.CRITERION):
+    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.DUPLICATE, WorkflowCardType.REVIEW, WorkflowCardType.LLM, WorkflowCardType.CRITERION, WorkflowCardType.COMPARE):
         # Split materializes one Dataset per part (part_0, part_1, ...);
         # Review materializes one per decision (approved, rejected) -- the
         # "rejected" one is what a feedback edge back into an Annotation
@@ -58,7 +58,7 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
         # approved/rejected. Same plural shape for all four.
         children = _materialized_children(db, card.id)
         result["materialized_card_ids"] = {c.materialized_source_handle: str(c.id) for c in children}
-        if card.type in (WorkflowCardType.REVIEW, WorkflowCardType.CRITERION):
+        if card.type in (WorkflowCardType.REVIEW, WorkflowCardType.CRITERION, WorkflowCardType.COMPARE):
             # Backs the small named-output markers on the node itself
             # (approved/rejected or included/excluded case counts), each
             # child's own stored case list is already a plain "manual"
