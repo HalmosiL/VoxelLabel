@@ -289,6 +289,9 @@ export default function ViewerPage() {
   // so the viewer behaves exactly as it did before this feature existed
   // unless it's explicitly opened as someone's assigned job.
   const [surfaceConfig, setSurfaceConfig] = useState<SurfaceConfig | null>(null);
+  // the branch of the annotations this job works on (SurfaceConfig.branch),
+  // set when the series' segmentation loads, used by every save
+  const jobBranchRef = useRef<string | null>(null);
   // The job's settings didn't load: nothing is known about what this job
   // allows (a Review job must never fall back to editing), so the viewer
   // stays read-only instead of opening the full annotation surface (F-14).
@@ -1267,8 +1270,21 @@ export default function ViewerPage() {
       let loadedObjects: SegObject[] = [];
       let loadedCaseFields: ObjectField[] = [];
       let loadedCaseAnswers: ObjectAnswers = {};
+      // The job's surface first: its branch (a Duplicate copy's work is
+      // on its own chain) decides which segmentation is this job's -- and
+      // its labels seed a series with none, below.
+      let jobSurface: SurfaceConfig | null = null;
+      if (jobId) {
+        try {
+          jobSurface = await fetchSurfaceConfig(jobId);
+        } catch {
+          // no surface connected, or the fetch failed: the main chain and
+          // the normal empty-labels start, as before this existed
+        }
+      }
+      jobBranchRef.current = jobSurface?.branch ?? null;
       try {
-        const loaded = await fetchSegmentationVolume(seriesId);
+        const loaded = await fetchSegmentationVolume(seriesId, jobBranchRef.current);
         loadedVersionRef.current = loaded.versionId;
         setReviewState(reviewStateOf(loaded.versionId, loaded.versionStatus, loaded.reviewOfId));
         const result = loaded.volume;
@@ -1296,16 +1312,8 @@ export default function ViewerPage() {
       // whole effect later because `surfaceConfig` state changed would
       // reset maskVolumeRef and wipe out any painting the annotator had
       // already started in the meantime.
-      if (loadedLabels.length === 0 && jobId) {
-        try {
-          const config = await fetchSurfaceConfig(jobId);
-          if (config.labels.length > 0) {
-            loadedLabels = config.labels.map((l, i) => ({ id: i + 1, name: l.name, color: l.color, ...(l.fields?.length ? { fields: l.fields } : {}) }));
-          }
-        } catch {
-          // No surface connected, or the fetch failed -- fall back to
-          // the normal empty-labels start, same as before this existed.
-        }
+      if (loadedLabels.length === 0 && jobSurface && jobSurface.labels.length > 0) {
+        loadedLabels = jobSurface.labels.map((l, i) => ({ id: i + 1, name: l.name, color: l.color, ...(l.fields?.length ? { fields: l.fields } : {}) }));
       }
 
       if (cancelled) return;
@@ -2799,7 +2807,7 @@ export default function ViewerPage() {
       const objectsToSave = status === "submitted" ? handInObjects(objects) : objects;
       if (status === "submitted") setObjects(objectsToSave);
       const caseForm = { fields: caseFields, answers: caseAnswers };
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current, reviewSaveOf(), caseForm);
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objectsToSave, status, loadedVersionRef.current, reviewSaveOf(), caseForm, jobBranchRef.current);
       loadedVersionRef.current = saved.id;
       markSaved(labels, objectsToSave, caseForm.answers);
       trackAction(status === "submitted" ? "mark_annotated" : "save");
@@ -2857,7 +2865,7 @@ export default function ViewerPage() {
     try {
       const gzipBytes = await gzipUint8Array(volume);
       const caseForm = { fields: caseFields, answers: caseAnswers };
-      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current, reviewSaveOf(), caseForm);
+      const saved = await saveSegmentationVolume(seriesId, studyId, gzipBytes, labels, objects, "draft", loadedVersionRef.current, reviewSaveOf(), caseForm, jobBranchRef.current);
       loadedVersionRef.current = saved.id;
       markSaved(labels, objects, caseForm.answers);
       const decision = emptyDecision ?? (reviewOrderedObjects.some((o) => o.review_status === "rejected") ? "reject" : "approve");
@@ -3376,7 +3384,7 @@ export default function ViewerPage() {
     const volume = maskVolumeRef.current;
     if (!reviewMode || !maskReady || !seriesId || !volume) return;
     let cancelled = false;
-    fetchPreviousRound(seriesId)
+    fetchPreviousRound(seriesId, jobBranchRef.current)
       .then(async (prev) => {
         if (cancelled || !prev.gzipBytes) return;
         const mask = await gunzipToUint8Array(prev.gzipBytes);

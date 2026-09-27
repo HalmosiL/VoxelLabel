@@ -605,3 +605,41 @@ def test_the_vessels_come_like_the_airways(api, monkeypatch):
     assert api.get(f"/series/{SERIES}/vessels").status_code == 403
     main._lung_mask_cache.clear()
     main._vessel_cache.clear()
+
+
+def test_a_duplicates_copy_saves_and_reads_on_its_own_branch(api, monkeypatch):
+    """A Duplicate card's lanes annotate the same image apart: the viewer
+    saves on its job's branch, and loads (and compares with the last
+    round) on it -- another lane's work is never its "latest"."""
+    posted, asked = [], []
+    monkeypatch.setattr(main, "upload_mask_volume", lambda data: "annotation-masks/new.gz")
+
+    async def post(url, params=None, json=None, headers=None):
+        posted.append(params)
+        return _Resp(200, {"id": "v9", "status": "draft"})
+
+    real_get = api.fake.get
+
+    async def get(url, headers=None, params=None, **kw):
+        if url.endswith(f"/annotations/series/{SERIES}"):
+            asked.append(params)
+            return _Resp(200, [])
+        return await real_get(url, headers=headers, **kw)
+
+    async def types(user):
+        return [{"id": "t", "name": "segmentation_volume"}]
+
+    api.fake.post = post
+    api.fake.get = get
+    monkeypatch.setattr(main, "_get_annotation_types", types)
+    api.as_user(MEMBER)
+    lane = "d:0123456789abcdef0123456789abcdef:copy_1"
+    assert api.post(f"/series/{SERIES}/mask-volume", json={**_save_body("v1"), "branch": lane}).status_code == 201
+    assert posted[-1]["branch"] == lane
+    api.post(f"/series/{SERIES}/mask-volume", json=_save_body("v1"))
+    assert "branch" not in posted[-1]  # off any Duplicate: the main chain
+    assert api.get(f"/series/{SERIES}/mask-volume", params={"branch": lane}).status_code == 200
+    assert api.get(f"/series/{SERIES}/previous-round", params={"branch": lane}).status_code == 200
+    assert [p.get("branch") if p else None for p in asked] == [lane, lane]
+    api.get(f"/series/{SERIES}/mask-volume")
+    assert not (asked[-1] or {}).get("branch")

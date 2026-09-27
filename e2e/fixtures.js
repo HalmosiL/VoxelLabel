@@ -6,6 +6,7 @@ const fixtures = {
   KC: "http://localhost:8080",
   ADMIN: "http://localhost:8004",
   DATA: "http://localhost:8002",
+  ANNOTATIONS: "http://localhost:8003",
   ANNOTATOR_API: "http://localhost:8010",
   // Study "LIDC-IDRI Real CT Sample" with its annotation + review job cards.
   STUDY: "4c6bfb9a-e10c-4000-9695-9952b28d891b",
@@ -44,7 +45,7 @@ try {
 // URLs, and so its tokens' issuer, on that address) -- localhost URLs would
 // mint tokens the backends reject.
 if (process.env.E2E_HOST) {
-  for (const key of ["UI", "VIEWER", "KC", "ADMIN", "DATA", "ANNOTATOR_API"]) fixtures[key] = fixtures[key].replace("localhost", process.env.E2E_HOST);
+  for (const key of ["UI", "VIEWER", "KC", "ADMIN", "DATA", "ANNOTATIONS", "ANNOTATOR_API"]) fixtures[key] = fixtures[key].replace("localhost", process.env.E2E_HOST);
 }
 
 module.exports = fixtures;

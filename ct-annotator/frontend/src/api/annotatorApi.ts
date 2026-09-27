@@ -248,6 +248,10 @@ export interface SurfaceConfig {
   // For a Review job the labels come from the upstream Annotation
   // job's surface, so the reviewer sees the same form.
   labels: { name: string; color: string; fields?: ObjectField[] }[];
+  // The branch of the annotations this job saves on and reads: one copy
+  // of a Duplicate card (each copy annotates the same images apart);
+  // null/absent off any Duplicate -- the main chain.
+  branch?: string | null;
   // The window preset cases open in ("Lung", ...), or null for the image's
   // own -- set on the job's Surface; a Review job inherits it (K8).
   default_window?: string | null;
@@ -487,8 +491,8 @@ export interface ObjectStats {
 
 /** What the reviewer sent back last time (the newest rejected version):
  * round 2's comparison. `gzipBytes` null when there was no such round. */
-export async function fetchPreviousRound(seriesId: string): Promise<{ versionId: string | null; gzipBytes: ArrayBuffer | null; objects: SegObject[]; labels: SegLabel[] }> {
-  const r = await apiFetch<{ version_id: string | null; mask_gzip_base64: string | null; objects: SegObject[]; labels: SegLabel[] }>(API.annotator, `/series/${seriesId}/previous-round`);
+export async function fetchPreviousRound(seriesId: string, branch?: string | null): Promise<{ versionId: string | null; gzipBytes: ArrayBuffer | null; objects: SegObject[]; labels: SegLabel[] }> {
+  const r = await apiFetch<{ version_id: string | null; mask_gzip_base64: string | null; objects: SegObject[]; labels: SegLabel[] }>(API.annotator, `/series/${seriesId}/previous-round${branchQuery(branch)}`);
   return { versionId: r.version_id, gzipBytes: r.mask_gzip_base64 ? base64ToArrayBuffer(r.mask_gzip_base64) : null, objects: r.objects ?? [], labels: r.labels ?? [] };
 }
 
@@ -526,7 +530,12 @@ export async function fetchObjectStats(seriesId: string, gzipBytes: ArrayBuffer)
  * definitions), or null if none has been saved yet -- the caller
  * (ViewerPage) ungzips the volume into its own Uint8Array; this backend
  * never interprets voxel values or the label/object payload. */
-export async function fetchSegmentationVolume(seriesId: string): Promise<LoadedSegmentation> {
+/** `?branch=...` for a Duplicate copy's job, nothing for the main chain. */
+function branchQuery(branch?: string | null): string {
+  return branch ? `?branch=${encodeURIComponent(branch)}` : "";
+}
+
+export async function fetchSegmentationVolume(seriesId: string, branch?: string | null): Promise<LoadedSegmentation> {
   const result = await apiFetch<{
     mask_gzip_base64: string | null;
     labels: SegLabel[];
@@ -536,7 +545,7 @@ export async function fetchSegmentationVolume(seriesId: string): Promise<LoadedS
     review_of_id?: string | null;
     case_fields?: ObjectField[];
     case_answers?: ObjectAnswers;
-  }>(API.annotator, `/series/${seriesId}/mask-volume`);
+  }>(API.annotator, `/series/${seriesId}/mask-volume${branchQuery(branch)}`);
   const version = { versionId: result.version_id ?? null, versionStatus: result.version_status ?? null, reviewOfId: result.review_of_id ?? null };
   // no volume = nothing saved for this series yet (a normal 200 answer,
   // see the backend's get_mask_volume) -- start from an empty volume.
@@ -569,7 +578,9 @@ export function saveSegmentationVolume(
   // is a reviewer's draft that keeps the case handed in (F-01).
   reviewOf?: string | null,
   // the case questions and their answers, when the job has any
-  caseForm?: { fields: ObjectField[]; answers: ObjectAnswers }
+  caseForm?: { fields: ObjectField[]; answers: ObjectAnswers },
+  // the job's branch (a Duplicate copy; see SurfaceConfig.branch)
+  branch?: string | null
 ): Promise<{ id: string; status: string }> {
   return apiFetch(API.annotator, `/series/${seriesId}/mask-volume`, {
     method: "POST",
@@ -582,6 +593,7 @@ export function saveSegmentationVolume(
       ...(baseVersionId !== undefined ? { base_version_id: baseVersionId ?? "" } : {}),
       ...(reviewOf ? { review_of: reviewOf } : {}),
       ...(caseForm && caseForm.fields.length > 0 ? { case_fields: caseForm.fields, case_answers: caseForm.answers } : {}),
+      ...(branch ? { branch } : {}),
     }),
   });
 }

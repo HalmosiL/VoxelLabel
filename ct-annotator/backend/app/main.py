@@ -786,6 +786,9 @@ def _is_mask_key(key) -> bool:
 
 class SaveMaskVolumeBody(BaseModel):
     study_id: str
+    # The job's branch of the annotations (its surface-config's `branch`:
+    # a Duplicate card's copy); absent, the main chain.
+    branch: str | None = None
     mask_gzip_base64: str
     labels: list[dict]
     objects: list[dict]
@@ -815,8 +818,14 @@ class SaveMaskVolumeBody(BaseModel):
 _MAX_MASK_BASE64_CHARS = 128 * 1024 * 1024
 
 
+def _branch_params(branch: str | None) -> dict:
+    """annotation-service's `branch` query parameter -- none at all for the
+    main chain, so a save or read off any Duplicate is exactly as before."""
+    return {"branch": branch} if branch else {}
+
+
 @app.get("/series/{series_id}/mask-volume")
-async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+async def get_mask_volume(series_id: str, branch: str | None = None, user: CurrentUser = Depends(get_current_user)) -> dict:
     """Returns the latest saved CVAT-style segmentation for this series:
     the 3D volume as gzip bytes (base64) plus the label/object
     definitions those voxel ids refer to -- the browser holds/edits the
@@ -824,9 +833,11 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
     interprets voxel values. A series with no saved segmentation yet
     answers 200 with `mask_gzip_base64: null` (the frontend starts from
     an empty volume, no labels/objects) -- it used to be a 404, which
-    browsers log as an error on every first open of a fresh series."""
+    browsers log as an error on every first open of a fresh series.
+    `branch`: the job's own chain (a Duplicate card's copy), see
+    SaveMaskVolumeBody."""
     resp = await _http_client.get(
-        f"{ANNOTATION_SERVICE_URL}/annotations/series/{series_id}", headers=_auth_headers(user)
+        f"{ANNOTATION_SERVICE_URL}/annotations/series/{series_id}", headers=_auth_headers(user), params=_branch_params(branch)
     )
     if resp.status_code >= 400:
         raise _upstream_error(resp)
@@ -860,12 +871,12 @@ async def get_mask_volume(series_id: str, user: CurrentUser = Depends(get_curren
 
 
 @app.get("/series/{series_id}/previous-round")
-async def get_previous_round(series_id: str, user: CurrentUser = Depends(get_current_user)) -> dict:
+async def get_previous_round(series_id: str, branch: str | None = None, user: CurrentUser = Depends(get_current_user)) -> dict:
     """What the reviewer sent back last time: the newest rejected version
     of this series' segmentation (its mask and objects), for round 2's
     "what changed" and the ghost outline (UX-rev-1-16, UX-rev-2-24). All
     nulls when nothing was ever rejected."""
-    resp = await _http_client.get(f"{ANNOTATION_SERVICE_URL}/annotations/series/{series_id}", headers=_auth_headers(user))
+    resp = await _http_client.get(f"{ANNOTATION_SERVICE_URL}/annotations/series/{series_id}", headers=_auth_headers(user), params=_branch_params(branch))
     if resp.status_code >= 400:
         raise _upstream_error(resp)
     type_names = {t["id"]: t["name"] for t in await _get_annotation_types(user)}
@@ -908,6 +919,7 @@ async def save_mask_volume(
         params["base_version_id"] = body.base_version_id or "none"
     if body.review_of:
         params["review_of"] = body.review_of
+    params.update(_branch_params(body.branch))
     try:
         resp = await _http_client.post(
             f"{ANNOTATION_SERVICE_URL}/annotations/studies/{body.study_id}",
