@@ -124,6 +124,14 @@ class WorkflowCardType(str, enum.Enum):
     # one's "included" child) is what makes the board itself read as a
     # CONSORT flow diagram.
     CRITERION = "criterion"
+    # The same cases down several lanes, each annotated apart: like Split
+    # (one input, materialized Dataset children, no output edge of its
+    # own), but every copy ("copy_0", "copy_1", ...) holds *all* the
+    # input's cases, and each is its own branch of the annotations
+    # (Annotation.branch) -- so two annotators work the same images
+    # independently, for a Compare card to set side by side. See
+    # admin-service's workflow/branches.py.
+    DUPLICATE = "duplicate"
 
 
 class Study(Base):

@@ -42,6 +42,7 @@ _SURFACE_TYPES = {WorkflowCardType.SURFACE, WorkflowCardType.ANNOTATION_SURFACE,
 # run_llm_turn loop, not a separate deterministic implementation.
 _NO_OUTPUT_TYPES = {
     WorkflowCardType.SPLIT,
+    WorkflowCardType.DUPLICATE,
     WorkflowCardType.NOTE,
     WorkflowCardType.MILESTONE,
     WorkflowCardType.LLM,

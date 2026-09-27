@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.llm_client import run_llm_turn
 
+from .branches import copy_title, duplicate_copies, lanes_reaching
 from .constants import _CARD_DEFAULT_HEIGHT, _CARD_DEFAULT_WIDTH, _MATERIALIZED_DEFAULT_HEIGHT, _MATERIALIZED_DEFAULT_WIDTH, _NO_RUN_TYPES
 from .graph import (
     _card_is_stale,
@@ -233,6 +234,36 @@ def _retire_removed_parts(children: dict[str, WorkflowCard], live: dict[str, lis
         child.last_run_at = now
 
 
+def _run_duplicate(db: Session, card: WorkflowCard, now: datetime) -> None:
+    """Every copy gets all the input's cases -- as its own Dataset child
+    ("copy_0", "copy_1", ...), each its own branch of the annotations
+    (branches.py). A copy removed since the last Run is emptied, as a
+    Split's removed part is."""
+    edge = _single_incoming_edge(db, card)
+    source = _card_or_404(db, edge.source_card_id)
+    case_ids = sorted(_resolve_output(db, source, set()))
+    existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
+    output: dict[str, list[str]] = {}
+    for index in range(duplicate_copies(card.config)):
+        handle = f"copy_{index}"
+        output[handle] = case_ids
+        _upsert_materialized_dataset(
+            db, card, existing_children.get(handle), handle=handle, title=copy_title(card.config, index), case_ids=case_ids, now=now, index=index
+        )
+    _retire_removed_parts(existing_children, output, now)
+    card.output_case_ids = output
+
+
+def _one_lane(db: Session, card: WorkflowCard) -> str | None:
+    """The branch an Annotation/Review job works on -- refused when its
+    inputs come from more than one copy of a Duplicate: one image would
+    carry two annotators' work."""
+    lanes = lanes_reaching(db, card)
+    if len(lanes) > 1:
+        raise HTTPException(status_code=422, detail="This job takes cases from more than one of a Duplicate's copies -- a job works on one copy; give each copy its own job")
+    return next(iter(lanes))
+
+
 def _run_filter(db: Session, card: WorkflowCard, now: datetime) -> None:
     edge = _single_incoming_edge(db, card)
     source = _card_or_404(db, edge.source_card_id)
@@ -274,6 +305,7 @@ def _run_annotation(db: Session, card: WorkflowCard, now: datetime) -> None:
     # against cycles because Run only ever reads each upstream card's
     # already-computed, stored output_case_ids (or a manual Dataset's
     # static case_ids) -- never a live recursive walk.
+    branch = _one_lane(db, card)
     card.output_case_ids = _union_of_incoming(
         db, card, target_handle="input", error="Annotation requires at least one incoming connection"
     )
@@ -289,7 +321,7 @@ def _run_annotation(db: Session, card: WorkflowCard, now: datetime) -> None:
         # (C-09). The job's own progress still counts a rejection as not
         # done (_annotation_progress). `since` keeps a brand-new card from
         # taking credit for older work on the same cases.
-        case_ids = _case_ids_with_status(db, card.output_case_ids, _HANDED_IN_STATUSES, since=card.created_at)
+        case_ids = _case_ids_with_status(db, card.output_case_ids, _HANDED_IN_STATUSES, since=card.created_at, branch=branch)
         children = _materialized_children(db, card.id)
         _upsert_materialized_dataset(
             db,
@@ -309,6 +341,7 @@ def _run_review(db: Session, card: WorkflowCard, now: datetime) -> None:
     # via PATCH, not Run.
     edge = _single_incoming_edge(db, card)
     source = _card_or_404(db, edge.source_card_id)
+    branch = _one_lane(db, card)
     card.output_case_ids = _resolve_output(db, source, set())
     _record_case_stage_entries(db, card, card.output_case_ids, now)
 
@@ -322,8 +355,8 @@ def _run_review(db: Session, card: WorkflowCard, now: datetime) -> None:
     # in (see _cases_with_annotated_status).
     existing_children = {c.materialized_source_handle: c for c in _materialized_children(db, card.id)}
     branches = {
-        "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED]),
-        "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED]),
+        "approved": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.APPROVED], branch=branch),
+        "rejected": _case_ids_with_status(db, card.output_case_ids, [AnnotationStatus.REJECTED], branch=branch),
     }
     for index, (handle, case_ids) in enumerate(branches.items()):
         _upsert_materialized_dataset(
@@ -376,6 +409,7 @@ def _append_messages(db: Session, card: WorkflowCard, new_messages: list[dict]) 
 _RUNNERS = {
     WorkflowCardType.DATASET: _run_dataset,
     WorkflowCardType.SPLIT: _run_split,
+    WorkflowCardType.DUPLICATE: _run_duplicate,
     WorkflowCardType.FILTER: _run_filter,
     WorkflowCardType.UNION: _run_union,
     WorkflowCardType.ANNOTATION: _run_annotation,

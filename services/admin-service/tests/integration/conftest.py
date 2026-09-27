@@ -232,9 +232,9 @@ def make_series(db, case_id):
     return series_id
 
 
-def make_annotation(db, study_id, series_id, subject, status):
+def make_annotation(db, study_id, series_id, subject, status, branch=None):
     """One annotation version on a series, as ct-annotator's save would
-    write it (target_type 'series')."""
+    write it (target_type 'series'), on `branch` (None: the main chain)."""
     from shared_models.models import Annotation, AnnotationStatus, AnnotationType
     # Postgres's now() is the *transaction start* time. Touching an
     # expired attribute after a commit (e.g. `series.id`) silently opens
@@ -252,6 +252,7 @@ def make_annotation(db, study_id, series_id, subject, status):
     row = Annotation(
         target_type="series", target_id=series_id, study_id=uuid.UUID(study_id), annotator_id=subject,
         type_id=atype.id, payload={"mask_volume_key": "k", "labels": [], "objects": []}, status=AnnotationStatus(status),
+        branch=branch,
     )
     db.add(row)
     db.commit()

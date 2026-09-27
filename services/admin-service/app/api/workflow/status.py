@@ -18,10 +18,12 @@ from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
+from .branches import card_branch
+
 _ANNOTATED_STATUSES = [AnnotationStatus.SUBMITTED, AnnotationStatus.APPROVED]
 
 
-def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set, since=None, handed_in_only: bool = False) -> dict:
+def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set, since=None, handed_in_only: bool = False, branch: str | None = None) -> dict:
     """Maps each of `target_ids` (all the same `target_type`) to its most
     recently created Annotation's (id, status, created_at) -- "latest
     version" the same way annotation-service's list_annotations_for_target
@@ -37,12 +39,15 @@ def _latest_annotation_by_target(db: Session, target_type: str, target_ids: set,
     handed-in work it reviews, i.e. SUBMITTED: the reviewer saving their
     progress mustn't take the case back out of "handed in" for the
     annotator, or leave the review queue nothing to decide (F-01). Its
-    own id is the one to decide."""
+    own id is the one to decide.
+
+    `branch`: one branch's versions only (see branches.py) -- None, the
+    main chain."""
     if not target_ids:
         return {}
     query = db.query(
         Annotation.target_id, Annotation.id, Annotation.status, Annotation.created_at, Annotation.review_of_id
-    ).filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids))
+    ).filter(Annotation.target_type == target_type, Annotation.target_id.in_(target_ids), Annotation.branch.is_(None) if branch is None else Annotation.branch == branch)
     if handed_in_only:
         # skip annotators' in-progress drafts (a reviewer's draft stands for handed-in work)
         query = query.filter(or_(Annotation.status != AnnotationStatus.DRAFT, Annotation.review_of_id.isnot(None)))
@@ -59,7 +64,7 @@ def _effective_status(status: AnnotationStatus, review_of_id) -> AnnotationStatu
     return status
 
 
-def _latest_annotation_per_case(db: Session, case_ids: list[str], since=None, handed_in_only: bool = False) -> dict:
+def _latest_annotation_per_case(db: Session, case_ids: list[str], since=None, handed_in_only: bool = False, branch: str | None = None) -> dict:
     """Maps each of `case_ids` to its single most-recent Annotation's
     (id, status, created_at) -- across *all* of that case's targets, not
     just whichever target type happens to match first. Shared by
@@ -107,8 +112,8 @@ def _latest_annotation_per_case(db: Session, case_ids: list[str], since=None, ha
         .all()
     )
 
-    series_latest = _latest_annotation_by_target(db, "series", {row[1] for row in series_rows}, since=since, handed_in_only=handed_in_only)
-    instance_latest = _latest_annotation_by_target(db, "instance", {row[1] for row in instance_rows}, since=since, handed_in_only=handed_in_only)
+    series_latest = _latest_annotation_by_target(db, "series", {row[1] for row in series_rows}, since=since, handed_in_only=handed_in_only, branch=branch)
+    instance_latest = _latest_annotation_by_target(db, "instance", {row[1] for row in instance_rows}, since=since, handed_in_only=handed_in_only, branch=branch)
 
     # The single most recent Annotation for each case, across both of its
     # target types (compared by created_at, the 3rd element of each entry).
@@ -125,17 +130,17 @@ def _latest_annotation_per_case(db: Session, case_ids: list[str], since=None, ha
     return latest_per_case
 
 
-def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus], since=None) -> list[str]:
+def _case_ids_with_status(db: Session, case_ids: list[str], statuses: list[AnnotationStatus], since=None, branch: str | None = None) -> list[str]:
     """The subset of `case_ids` whose single most-recent Annotation record
     (see `_latest_annotation_per_case`) is in one of `statuses`. Shared by
     `_annotated_case_ids` (combined submitted-or-approved / approved-or-
     rejected checks) and Review's per-decision materialization (approved-
     only, rejected-only), below."""
-    latest_per_case = _latest_annotation_per_case(db, case_ids, since=since)
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=since, branch=branch)
     return sorted(str(cid) for cid, (_id, status, _created_at) in latest_per_case.items() if status in statuses)
 
 
-def _annotated_case_ids(db: Session, case_ids: list[str], review: bool, since=None) -> list[str]:
+def _annotated_case_ids(db: Session, case_ids: list[str], review: bool, since=None, branch: str | None = None) -> list[str]:
     """The subset of `case_ids` that actually have a real, *deliberately
     submitted* Annotation record (or, for Review, one already
     approved/rejected) -- a bare draft (created on every ct-annotator
@@ -153,10 +158,10 @@ def _annotated_case_ids(db: Session, case_ids: list[str], review: bool, since=No
     they resubmit, the new Annotation row's own SUBMITTED status counts
     it again, regardless of the older REJECTED row still sitting there."""
     statuses = [AnnotationStatus.APPROVED, AnnotationStatus.REJECTED] if review else _ANNOTATED_STATUSES
-    return _case_ids_with_status(db, case_ids, statuses, since=since)
+    return _case_ids_with_status(db, case_ids, statuses, since=since, branch=branch)
 
 
-def _annotation_progress(db: Session, case_ids: list[str], review: bool, since=None) -> dict:
+def _annotation_progress(db: Session, case_ids: list[str], review: bool, since=None, branch: str | None = None) -> dict:
     if not case_ids:
         return {"annotated": 0, "total": 0}
     if review:
@@ -164,12 +169,12 @@ def _annotation_progress(db: Session, case_ids: list[str], review: bool, since=N
         # to decide on -- it shouldn't count toward this job's total any
         # more than it belongs in its case list (see
         # _cases_with_annotated_status, which excludes it the same way).
-        latest_per_case = _latest_annotation_per_case(db, case_ids, since=since)
+        latest_per_case = _latest_annotation_per_case(db, case_ids, since=since, branch=branch)
         annotated = sum(
             1 for entry in latest_per_case.values() if entry[1] in (AnnotationStatus.APPROVED, AnnotationStatus.REJECTED)
         )
         return {"annotated": annotated, "total": len(latest_per_case)}
-    return {"annotated": len(_annotated_case_ids(db, case_ids, review, since=since)), "total": len(case_ids)}
+    return {"annotated": len(_annotated_case_ids(db, case_ids, review, since=since, branch=branch)), "total": len(case_ids)}
 
 
 def _case_status(entry, review: bool) -> str:
@@ -250,7 +255,7 @@ def compute_job_status(db: Session, card: WorkflowCard) -> str:
     if not case_ids:
         return "todo"
     review = card.type == WorkflowCardType.REVIEW
-    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at)
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at, branch=card_branch(db, card))
     upstream = _upstream_annotation_card(db, card) if review else None
     upstream_done = upstream is None or compute_job_status(db, upstream) == "done"
     return _job_status_from_entries(case_ids, latest_per_case, review, upstream_done)
@@ -293,7 +298,8 @@ def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
     # finished would show as never annotated. It stays for Annotation,
     # where it protects against a *different* new card of the same type
     # falsely taking credit for unrelated old work on a shared case pool.
-    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at)
+    branch = card_branch(db, card)
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at, branch=branch)
     # A sent-back case the annotator is reworking (their draft on top of
     # the rejection) still reads as sent back, with the reviewer's reason,
     # until it is handed in again (D-02).
@@ -301,7 +307,7 @@ def _cases_with_annotated_status(db: Session, card: WorkflowCard) -> list[dict]:
     if not review:
         drafts = [str(cid) for cid, entry in latest_per_case.items() if entry[1] == AnnotationStatus.DRAFT]
         if drafts:
-            handed_in = _latest_annotation_per_case(db, drafts, since=card.created_at, handed_in_only=True)
+            handed_in = _latest_annotation_per_case(db, drafts, since=card.created_at, handed_in_only=True, branch=branch)
             reworking = {cid: entry for cid, entry in handed_in.items() if entry[1] == AnnotationStatus.REJECTED}
     # The reviewer's comment on each latest version's decision, if any --
     # shown to the annotator on My Jobs / the job page so a rejected case
@@ -365,7 +371,7 @@ def job_case_states(db: Session, card: WorkflowCard) -> dict[str, str]:
     if not case_ids:
         return {}
     review = card.type == WorkflowCardType.REVIEW
-    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at)
+    latest_per_case = _latest_annotation_per_case(db, case_ids, since=None if review else card.created_at, branch=card_branch(db, card))
     latest_by_str_id = {str(cid): entry for cid, entry in latest_per_case.items()}
     states: dict[str, str] = {}
     for cid in case_ids:

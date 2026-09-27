@@ -2,6 +2,7 @@
 from shared_models.models import WorkflowCard, WorkflowCardType, WorkflowEdge
 from sqlalchemy.orm import Session
 
+from .branches import card_branch
 from .graph import _dataset_output_ids, _llm_connected_summary, _materialized_children, _output_count, card_is_stale
 from .status import _annotation_progress, compute_job_status
 
@@ -43,10 +44,10 @@ def _serialize_card(db: Session, card: WorkflowCard, cards_by_id: dict, edges_by
     if card.type in (WorkflowCardType.ANNOTATION, WorkflowCardType.REVIEW) and output_case_ids:
         is_review = card.type == WorkflowCardType.REVIEW
         result["annotation_progress"] = _annotation_progress(
-            db, output_case_ids, review=is_review, since=None if is_review else card.created_at
+            db, output_case_ids, review=is_review, since=None if is_review else card.created_at, branch=card_branch(db, card)
         )
 
-    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.REVIEW, WorkflowCardType.LLM, WorkflowCardType.CRITERION):
+    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.DUPLICATE, WorkflowCardType.REVIEW, WorkflowCardType.LLM, WorkflowCardType.CRITERION):
         # Split materializes one Dataset per part (part_0, part_1, ...);
         # Review materializes one per decision (approved, rejected) -- the
         # "rejected" one is what a feedback edge back into an Annotation

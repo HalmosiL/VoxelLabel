@@ -115,6 +115,8 @@ def _makes(card_type: str, handle: str) -> bool:
     """Whether a card of this type makes a card for this output when it runs."""
     if card_type == WorkflowCardType.SPLIT.value:
         return handle.startswith("part_") and handle[5:].isdigit()
+    if card_type == WorkflowCardType.DUPLICATE.value:
+        return handle.startswith("copy_") and handle[5:].isdigit()
     if card_type == WorkflowCardType.REVIEW.value:
         return handle in ("approved", "rejected")
     if card_type == WorkflowCardType.CRITERION.value:

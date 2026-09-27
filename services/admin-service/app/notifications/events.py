@@ -32,6 +32,7 @@ from shared_models.models import (
 )
 from sqlalchemy.orm import Session
 
+from app.api.workflow.branches import card_branch
 from app.api.workflow.status import _annotation_progress, compute_job_status, job_case_states
 from app.keycloak_admin import get_user
 
@@ -299,7 +300,7 @@ def run_cycle(db: Session) -> dict:
 
         if events:
             is_review = card.type == WorkflowCardType.REVIEW
-            progress = _annotation_progress(db, card.output_case_ids or [], review=is_review, since=None if is_review else card.created_at)
+            progress = _annotation_progress(db, card.output_case_ids or [], review=is_review, since=None if is_review else card.created_at, branch=card_branch(db, card))
             ctx = CardContext(
                 card=card,
                 study_name=studies.get(card.study_id),

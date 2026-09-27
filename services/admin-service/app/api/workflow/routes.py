@@ -29,6 +29,7 @@ from app.api.studies import _require_global_admin
 from app.llm_client import run_llm_turn
 from app.versioning import autosave
 
+from .branches import MAX_COPIES, MIN_COPIES, card_branch
 from .constants import _NO_INPUT_TYPES, _NO_OUTPUT_TYPES, _READ_ROLES, _UNRESTRICTED_SURFACE_CONFIG, _WRITE_ROLES
 from .engine import _append_messages, run_card_with_ripple
 from .graph import _card_or_404, _dataset_output_ids, _has_study_role, _materialized_children
@@ -181,6 +182,7 @@ def create_workflow_card(
     _validate_assignee(db, WorkflowCard(study_id=study_id, type=body.type), body.config)
     _validate_case_ids(db, study_id, body.config)
     _validate_split_parts(body.type, body.config)
+    _validate_duplicate(body.type, body.config)
     card = WorkflowCard(
         id=body.id or uuid.uuid4(),
         study_id=study_id,
@@ -204,6 +206,18 @@ def create_workflow_card(
     db.refresh(card)
     autosave(db, card.study_id, user.subject)
     return _serialize_card(db, card, {card.id: card}, {})
+
+
+def _validate_duplicate(card_type, config: dict) -> None:
+    """A Duplicate makes MIN_COPIES..MAX_COPIES copies; names, if given, are text."""
+    if card_type != WorkflowCardType.DUPLICATE:
+        return
+    copies = config.get("copies", MIN_COPIES)
+    if not isinstance(copies, int) or isinstance(copies, bool) or not MIN_COPIES <= copies <= MAX_COPIES:
+        raise HTTPException(status_code=422, detail=f"A Duplicate makes {MIN_COPIES} to {MAX_COPIES} copies")
+    names = config.get("names", [])
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise HTTPException(status_code=422, detail="A Duplicate's copy names are a list of text")
 
 
 def _validate_split_parts(card_type, config: dict) -> None:
@@ -308,6 +322,7 @@ def update_workflow_card(
         _validate_assignee(db, card, body.config)
         _validate_case_ids(db, card.study_id, body.config)
         _validate_split_parts(card.type, body.config)
+        _validate_duplicate(card.type, body.config)
         # A merge, not a replace: a caller that only knows about the one
         # field it's changing (e.g. ct-annotator's status-dropdown proxy,
         # which sends only {"status": ...} with no visibility into the
@@ -471,7 +486,9 @@ def get_surface_config(
             upstream = upstream or _upstream_annotation_surface(db, card)
             config["case_fields"] = _case_fields(upstream.config) if upstream is not None else []
 
-    return {**config, "card_type": card.type.value, "status": compute_job_status(db, card)}
+    # the branch of the annotations this job saves on and reads (a
+    # Duplicate's copy, see branches.py): ct-annotator passes it through
+    return {**config, "card_type": card.type.value, "status": compute_job_status(db, card), "branch": card_branch(db, card)}
 
 
 @router.get("/jobs")
@@ -509,7 +526,7 @@ def list_all_jobs(
         is_review = card.type == WorkflowCardType.REVIEW
         case_ids = card.output_case_ids or []
         progress = _annotation_progress(
-            db, case_ids, review=is_review, since=None if is_review else card.created_at
+            db, case_ids, review=is_review, since=None if is_review else card.created_at, branch=card_branch(db, card)
         )
         result.append(
             {
@@ -687,7 +704,7 @@ def create_workflow_edge(
 
 
 # Card types whose Run reads exactly one input (see graph._single_incoming_edge).
-_SINGLE_INPUT_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.SPLIT, WorkflowCardType.FILTER, WorkflowCardType.REVIEW}
+_SINGLE_INPUT_TYPES = {WorkflowCardType.DATASET, WorkflowCardType.SPLIT, WorkflowCardType.DUPLICATE, WorkflowCardType.FILTER, WorkflowCardType.REVIEW}
 
 
 def _validate_data_edge(db: Session, source: WorkflowCard, target: WorkflowCard, target_handle: str) -> None:
