@@ -136,16 +136,23 @@ def test_concurrent_decisions_record_one_review(client, db):
     assert db.query(AnnotationReview).count() == 3
 
 
-def test_nobody_reviews_their_own_work(client, db):
-    """F-10: a member holding both roles approved their own submission."""
+def test_a_member_holding_both_roles_may_review_their_own_work(client, db):
+    """A small team (or one person trying the flow) holds both roles: they
+    may decide their own hand-in -- review it, save a review draft of it,
+    approve or reject it. It used to be refused as "your own work" (F-10);
+    the owner chose to allow it."""
     study, series = _setup(db)
     db.add(StudyMembership(study_id=study, user_id=ALICE, role="reviewer"))
     db.commit()
     client.as_user(ALICE)
     submitted = _save(client, study, series, status="submitted").json()["id"]
-    r = _decide(client, submitted)
-    assert r.status_code == 403 and "your own work" in r.json()["detail"]
     draft = _save(client, study, series, review_of=submitted)
-    assert draft.status_code == 403
-    client.as_user(REVIEWER)
-    assert _decide(client, submitted).status_code == 200
+    assert draft.status_code == 200, draft.text
+    r = _decide(client, draft.json()["id"])
+    assert r.status_code == 200, r.text
+    # the reviewer role is still what decides: an annotator-only member can't
+    client.as_user(ALICE)
+    other = _save(client, study, series, status="submitted").json()["id"]
+    db.query(StudyMembership).filter_by(study_id=study, user_id=ALICE, role="reviewer").delete()
+    db.commit()
+    assert _decide(client, other).status_code == 403
