@@ -3,18 +3,7 @@ import React, { DragEvent, useEffect, useMemo, useState } from "react";
 import { describeApiError } from "../../api/client";
 import keycloak from "../../keycloak";
 import { deletePipelineTemplate, listPipelineTemplates, WorkflowCardType } from "../../api/workflowApi";
-import {
-  DatabaseIcon,
-  DocumentIcon,
-  ForkIcon,
-  FunnelCheckIcon,
-  FunnelIcon,
-  MergeIcon,
-  PencilIcon,
-  SparklesIcon,
-  TrashIcon,
-  WrenchIcon,
-} from "../icons";
+import { CopiesIcon, DatabaseIcon, DocumentIcon, ForkIcon, FunnelCheckIcon, FunnelIcon, MergeIcon, PencilIcon, SparklesIcon, TrashIcon, WrenchIcon } from "../icons";
 import {
   materializedChildrenFor,
   PIPELINE_TEMPLATES,
@@ -30,6 +19,7 @@ import {
 const TYPE_ICON: Partial<Record<WorkflowCardType, (props: { className?: string }) => JSX.Element>> = {
   dataset: DatabaseIcon,
   split: ForkIcon,
+  duplicate: CopiesIcon,
   filter: FunnelIcon,
   union: MergeIcon,
   annotation: PencilIcon,
@@ -263,7 +253,7 @@ function TemplateCard({
 }) {
   const busy = inserting === template.id;
   const types = templateTypes(template);
-  const autoRuns = template.cards.some((c) => ["split", "review", "filter", "union", "annotation"].includes(c.type));
+  const autoRuns = template.cards.some((c) => ["split", "duplicate", "review", "filter", "union", "annotation"].includes(c.type));
   const usesAi = template.cards.some((c) => ["llm", "builder", "criterion"].includes(c.type));
 
   function handleDragStart(event: DragEvent<HTMLDivElement>) {

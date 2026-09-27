@@ -129,6 +129,10 @@ export default function WorkflowPropertiesPanel({
           />
         )}
 
+        {card.type === "duplicate" && (
+          <DuplicateFields card={card} onPatch={onPatch} onRun={onRun} onSelectCard={onSelectCard} running={running} />
+        )}
+
         {card.type === "filter" && (
           <FilterFields card={card} studyId={studyId} cases={cases} onPatch={onPatch} onRun={onRun} running={running} />
         )}
@@ -514,6 +518,89 @@ function SplitFields({
                     className="mt-0.5 text-xs font-medium text-brand-600 hover:text-brand-700"
                   >
                     → Open dataset card
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** How many copies (2-4) and their names; after a Run, each copy's
+ * Dataset card -- the lane an Annotation job is wired to. */
+function DuplicateFields({
+  card,
+  onPatch,
+  onRun,
+  onSelectCard,
+  running,
+}: {
+  card: WorkflowCard;
+  onPatch: (cardId: string, patch: WorkflowCardPatchInput) => void;
+  onRun: (cardId: string) => void;
+  onSelectCard: (cardId: string) => void;
+  running: boolean;
+}) {
+  const copies = typeof card.config.copies === "number" ? card.config.copies : 2;
+  const [names, setNames] = useState<string[]>(() => (card.config.names as string[] | undefined) ?? []);
+  const counts = card.output_count as Record<string, number> | null;
+  const materializedIds = card.materialized_card_ids ?? {};
+  const nameOf = (index: number) => names[index]?.trim() || `Copy ${String.fromCharCode(65 + index)}`;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="flex flex-col gap-1">
+        <span className="label">Copies</span>
+        <select
+          className="input"
+          value={copies}
+          onChange={(e) => onPatch(card.id, { config: { ...card.config, copies: Number(e.target.value) } })}
+          data-testid="duplicate-copies"
+        >
+          {[2, 3, 4].map((n) => (
+            <option key={n} value={n}>
+              {n} copies
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="flex flex-col gap-1.5">
+        <span className="label">Names</span>
+        {Array.from({ length: copies }, (_, index) => (
+          <input
+            key={index}
+            className="input"
+            placeholder={`Copy ${String.fromCharCode(65 + index)}`}
+            value={names[index] ?? ""}
+            onChange={(e) => setNames((prev) => Object.assign([...prev], { [index]: e.target.value }))}
+            onBlur={() => onPatch(card.id, { config: { ...card.config, names: Array.from({ length: copies }, (_, i) => names[i] ?? "") } })}
+            data-testid={`duplicate-name-${index}`}
+          />
+        ))}
+      </div>
+      <p className="hint">
+        Every copy gets all the cases. Each is annotated on its own -- one annotator's work never shows in another copy -- so the
+        same images can be compared. Run it, then wire an Annotation job to each copy.
+      </p>
+      <RunButton card={card} onRun={onRun} running={running} label="Run duplicate" />
+      <LastRun card={card} />
+      <StaleBadge card={card} />
+      {counts && (
+        <div className="flex flex-col gap-1.5">
+          {Array.from({ length: copies }, (_, index) => {
+            const handle = `copy_${index}`;
+            const childId = materializedIds[handle];
+            return (
+              <div key={handle} className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-gray-700">
+                  {nameOf(index)} -- {counts[handle] ?? 0} cases
+                </p>
+                {childId && (
+                  <button onClick={() => onSelectCard(childId)} className="text-xs font-medium text-brand-600 hover:text-brand-700">
+                    → Open its card
                   </button>
                 )}
               </div>

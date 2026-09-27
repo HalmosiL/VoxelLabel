@@ -46,6 +46,11 @@ function describeCard(card: WorkflowCard): string {
         .map((p, i) => `${p.name} ${Math.round(p.ratio * 100)}%${counts ? ` (${counts[`part_${i}`] ?? 0})` : ""}`)
         .join(", ");
     }
+    case "duplicate": {
+      const counts = (card.output_count as Record<string, number> | null) ?? null;
+      const copies = typeof card.config.copies === "number" ? card.config.copies : 2;
+      return counts ? `${copies} copies · ${Object.values(counts)[0] ?? 0} cases each` : `${copies} copies · not run yet`;
+    }
     case "filter": {
       const tag = card.config.tag as string | undefined;
       const count = card.output_count as number | null;

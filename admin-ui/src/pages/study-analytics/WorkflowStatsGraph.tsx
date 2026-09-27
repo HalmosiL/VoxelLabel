@@ -18,6 +18,7 @@ import { formatDuration } from "../usage/shared";
 const TYPE_LABEL: Record<string, string> = {
   dataset: "Dataset",
   split: "Split",
+  duplicate: "Duplicate",
   filter: "Filter",
   annotation: "Annotation",
   review: "Review",

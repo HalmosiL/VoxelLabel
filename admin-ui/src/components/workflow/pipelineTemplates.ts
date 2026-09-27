@@ -34,6 +34,10 @@ export function materializedChildrenFor(card: PipelineTemplateCard): { handle: s
     const parts = (card.config.parts as { name?: string }[] | undefined) ?? [];
     return parts.map((part, i) => ({ handle: `part_${i}`, label: part.name || `Part ${i + 1}` }));
   }
+  if (card.type === "duplicate") {
+    const copies = typeof card.config.copies === "number" ? card.config.copies : 2;
+    return Array.from({ length: copies }, (_, i) => ({ handle: `copy_${i}`, label: `Copy ${String.fromCharCode(65 + i)}` }));
+  }
   if (card.type === "review") {
     return [
       { handle: "approved", label: "approved" },

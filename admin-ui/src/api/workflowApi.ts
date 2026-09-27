@@ -24,7 +24,10 @@ export type WorkflowCardType =
   // (BuilderNode.tsx / CriterionNode.tsx).
   | "llm"
   | "builder"
-  | "criterion";
+  | "criterion"
+  // the same cases down 2-4 lanes ("copy_0", ...), each annotated apart on
+  // its own branch -- for comparing annotators on the same images
+  | "duplicate";
 
 export type WorkflowCardConfig = Record<string, unknown>;
 

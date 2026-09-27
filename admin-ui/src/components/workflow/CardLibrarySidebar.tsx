@@ -1,20 +1,7 @@
 import { DragEvent, ReactNode } from "react";
 
 import { WorkflowCardConfig, WorkflowCardType } from "../../api/workflowApi";
-import {
-  DatabaseIcon,
-  DocumentIcon,
-  FlagIcon,
-  ForkIcon,
-  FunnelCheckIcon,
-  FunnelIcon,
-  MergeIcon,
-  MonitorCheckIcon,
-  MonitorIcon,
-  PencilIcon,
-  SparklesIcon,
-  WrenchIcon,
-} from "../icons";
+import { CopiesIcon, DatabaseIcon, DocumentIcon, FlagIcon, ForkIcon, FunnelCheckIcon, FunnelIcon, MergeIcon, MonitorCheckIcon, MonitorIcon, PencilIcon, SparklesIcon, WrenchIcon } from "../icons";
 
 export interface CardTemplate {
   type: WorkflowCardType;
@@ -79,6 +66,17 @@ const GROUPS: { label: string; items: CardTemplate[] }[] = [
             { name: "Part 2", ratio: 0.5 },
           ],
         },
+        defaultWidth: 220,
+        defaultHeight: 100,
+      },
+      {
+        type: "duplicate",
+        label: "Duplicate",
+        icon: <CopiesIcon className="h-4 w-4" />,
+        defaultTitle: "Duplicate",
+        // Every copy gets all the cases, each annotated apart -- wire an
+        // Annotation job to each copy, then compare them.
+        defaultConfig: { copies: 2 },
         defaultWidth: 220,
         defaultHeight: 100,
       },

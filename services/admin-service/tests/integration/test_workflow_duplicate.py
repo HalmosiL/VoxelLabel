@@ -49,6 +49,8 @@ def test_every_copy_holds_every_case(client, db):
     assert [lane["title"] for lane in lanes] == ["Copy A", "Copy B", "Copy C"]
     for lane in lanes:
         assert sorted(lane["config"]["case_ids"]) == sorted(c["id"] for c in cases)
+    board = client.get(f"/admin/studies/{sid}/workflow").json()
+    assert next(c for c in board["cards"] if c["id"] == dup["id"])["output_count"] == {"copy_0": 2, "copy_1": 2, "copy_2": 2}
 
 
 def test_copies_are_two_to_four(client, db):

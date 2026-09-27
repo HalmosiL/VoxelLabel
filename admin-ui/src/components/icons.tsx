@@ -67,6 +67,16 @@ export function ForkIcon({ className }: { className?: string }) {
   );
 }
 
+/** Two stacked sheets: the Duplicate card (the same cases, twice or more). */
+export function CopiesIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+      <rect x="6.5" y="6.5" width="10" height="10" rx="1.5" />
+      <path d="M13.5 4V3.5A1.5 1.5 0 0 0 12 2H4.5A1.5 1.5 0 0 0 3 3.5V11a1.5 1.5 0 0 0 1.5 1.5H5" />
+    </svg>
+  );
+}
+
 export function FunnelIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor">

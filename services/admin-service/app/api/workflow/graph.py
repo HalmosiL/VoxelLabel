@@ -62,7 +62,7 @@ def _is_stale(card_last_run_at, source_last_run_at) -> bool:
 def _output_count(card: WorkflowCard, output_case_ids):
     if output_case_ids is None:
         return None
-    if card.type == WorkflowCardType.SPLIT:
+    if card.type in (WorkflowCardType.SPLIT, WorkflowCardType.DUPLICATE):
         return {handle: len(ids) for handle, ids in output_case_ids.items()}
     return len(output_case_ids)
 

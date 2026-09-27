@@ -71,6 +71,7 @@ import NoteNode from "../components/workflow/nodes/NoteNode";
 import ReviewNode from "../components/workflow/nodes/ReviewNode";
 import ReviewSurfaceNode from "../components/workflow/nodes/ReviewSurfaceNode";
 import SplitNode from "../components/workflow/nodes/SplitNode";
+import DuplicateNode from "../components/workflow/nodes/DuplicateNode";
 import UnionNode from "../components/workflow/nodes/UnionNode";
 import { CardNode } from "../components/workflow/types";
 import { useWorkflowHistory, type Snapshot } from "../components/workflow/useWorkflowHistory";
@@ -93,6 +94,7 @@ import { trackAction } from "../usage/tracker";
 const NODE_TYPES = {
   dataset: DatasetNode,
   split: SplitNode,
+  duplicate: DuplicateNode,
   filter: FilterNode,
   annotation: AnnotationNode,
   review: ReviewNode,
@@ -117,7 +119,7 @@ const EDGE_TYPES = { flow: FlowEdge };
 // downstream of one may need its output_case_ids populated to Run in
 // turn. Never Criterion/LLM/Builder -- those call out to a real local
 // model, which must stay a deliberate, user-triggered action.
-const _AUTO_RUN_TEMPLATE_TYPES = new Set<WorkflowCardType>(["split", "filter", "union", "annotation", "review"]);
+const _AUTO_RUN_TEMPLATE_TYPES = new Set<WorkflowCardType>(["split", "duplicate", "filter", "union", "annotation", "review"]);
 
 function isEditableTarget(): boolean {
   const active = document.activeElement;

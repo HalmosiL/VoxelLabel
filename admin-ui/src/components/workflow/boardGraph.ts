@@ -60,7 +60,7 @@ export function materializationEdges(cards: WorkflowCard[]): Edge[] {
     // the branch key (needed to tell them apart for flow tone/count -- see
     // annotateFlowEdges) has to travel separately from the anchor handle.
     const childEntries: Array<readonly [string, string, string]> =
-      card.type === "split" || card.type === "llm" || card.type === "criterion"
+      card.type === "split" || card.type === "duplicate" || card.type === "llm" || card.type === "criterion"
         ? Object.entries(card.materialized_card_ids ?? {}).map(([key, childId]) => [childId, "materialize", key] as const)
         : card.type === "review"
           ? Object.entries(card.materialized_card_ids ?? {}).map(([key, childId]) => [childId, "output", key] as const)
@@ -147,7 +147,7 @@ export function annotateFlowEdges(edges: Edge[], cards: WorkflowCard[]): Edge[] 
       } else if (parent?.type === "criterion") {
         count = parent.materialized_counts?.[branchKey ?? ""] ?? 0;
         tone = branchKey === "included" ? "done" : "rejected";
-      } else if (parent?.type === "split") {
+      } else if (parent?.type === "split" || parent?.type === "duplicate") {
         const splitCounts = parent.output_count;
         count = splitCounts && typeof splitCounts !== "number" ? (splitCounts[branchKey ?? ""] ?? 0) : 0;
         tone = "neutral";
