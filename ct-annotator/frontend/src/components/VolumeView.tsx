@@ -69,6 +69,7 @@ uniform vec3 uClipLo;
 uniform vec3 uClipHi;
 uniform vec3 uPlanes;
 uniform bool uShowPlanes;
+uniform bool uShowCross;
 uniform vec3 uPlaneX;
 uniform vec3 uPlaneY;
 uniform vec3 uPlaneZ;
@@ -123,8 +124,25 @@ vec2 hitBox(vec3 o, vec3 d) {
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
 
+// Where the three 2D planes meet (the crosshair's point), in the box's
+// real proportions: a ball where it is in depth, and a ring around it that
+// shows through whatever is in front -- so it is always findable.
+const float CROSS_R = 0.010;
+
+/** How much of the always-visible ring this ray passes through (0..1). */
+float crossRing(vec3 dir) {
+  vec3 o = uCamLocal * uAspect;
+  vec3 d = dir * uAspect;
+  vec3 c = uPlanes * uAspect;
+  float tc = dot(c - o, d) / dot(d, d);
+  if (tc <= 0.0) return 0.0; // behind the camera
+  float miss = length(o + d * tc - c);
+  return smoothstep(CROSS_R * 1.3, CROSS_R * 1.5, miss) * (1.0 - smoothstep(CROSS_R * 1.7, CROSS_R * 1.9, miss));
+}
+
 void main() {
   vec3 dir = normalize(vLocal - uCamLocal);
+  float ring = uShowCross ? crossRing(dir) : 0.0;
   vec2 t = hitBox(uCamLocal, dir);
   float tStart = max(max(t.x, 0.0), uNearCut); // from the camera when it is inside; minus the cut
   if (t.y <= tStart) discard;
@@ -156,6 +174,11 @@ void main() {
     // the picked point: a small yellow ball, round in real proportions
     if (uShowPick && length((p - uPick) * uAspect) < 0.012) {
       fragColor = vec4(1.0, 0.85, 0.2, 1.0) * (1.0 - acc.a) + vec4(acc.rgb, 0.0);
+      return;
+    }
+    // the planes' meeting point, where it really is: behind tissue, only its ring shows
+    if (uShowCross && length((p - uPlanes) * uAspect) < CROSS_R) {
+      fragColor = vec4(mix(acc.rgb + (1.0 - acc.a) * vec3(1.0), vec3(1.0), ring), 1.0);
       return;
     }
     // a soft edge (softMask + linear filtering): a smooth cut, not voxel steps
@@ -205,9 +228,9 @@ void main() {
   if (uMode == 1) {
     vec3 c = vec3(best);
     if (maskHit.a > 0.0 && (uShowMask || uShowAirway || uShowVessel)) c = mix(c, maskHit.rgb, uMaskOpacity);
-    fragColor = vec4(c, 1.0);
+    fragColor = vec4(mix(c, vec3(1.0), ring * 0.9), 1.0);
   } else {
-    fragColor = vec4(acc.rgb, 1.0);
+    fragColor = vec4(mix(acc.rgb, vec3(1.0), ring * 0.9), 1.0);
   }
 }
 `;
@@ -341,6 +364,8 @@ export default function VolumeView({
   const [follow, setFollow] = useState(false);
   const [focused, setFocused] = useState<number | null>(null);
   const [showPlanes, setShowPlanes] = useState(true);
+  // the planes' meeting point (the crosshair in 3D), marked unless switched off
+  const [showCross, setShowCross] = useState(true);
   const [recording, setRecording] = useState(false);
   // the crop box, 0..1 along columns (right -> left), rows (front -> back), slices (head -> feet)
   const [clipLo, setClipLo] = useState<Vec3>([0, 0, 0]);
@@ -633,6 +658,7 @@ export default function VolumeView({
             uClipLo: { value: new THREE.Vector3(0, 0, 0) },
             uClipHi: { value: new THREE.Vector3(1, 1, 1) },
             uShowPlanes: { value: true },
+            uShowCross: { value: true },
             uPlaneX: { value: new THREE.Color(PLANE_COLOR.sagittal) },
             uPlaneY: { value: new THREE.Color(PLANE_COLOR.coronal) },
             uPlaneZ: { value: new THREE.Color(PLANE_COLOR.axial) },
@@ -727,8 +753,9 @@ export default function VolumeView({
     const y = slices.y ?? Math.floor(rows / 2);
     (u.uPlanes.value as THREE.Vector3).set((x + 0.5) / columns, (y + 0.5) / rows, (slices.z + 0.5) / numSlices);
     u.uShowPlanes.value = showPlanes;
+    u.uShowCross.value = showCross;
     if (world.current) world.current.dirty = true;
-  }, [slices?.x, slices?.y, slices?.z, showPlanes, rows, columns, numSlices, info]);
+  }, [slices?.x, slices?.y, slices?.z, showPlanes, showCross, rows, columns, numSlices, info]);
 
   // ── the lungs (the backend's own segmentation), for "Only inside the lungs"
   useEffect(() => {
@@ -1171,6 +1198,9 @@ export default function VolumeView({
                   <input type="checkbox" checked={showPlanes} onChange={(e) => setShowPlanes(e.target.checked)} data-testid="volume-planes" /> The 2D slices
                 </label>
               )}
+              <label className="flex items-center gap-2" title="The point the three 2D panes cut through -- the crosshair, in 3D. A ring shows it even behind tissue">
+                <input type="checkbox" checked={showCross} onChange={(e) => setShowCross(e.target.checked)} data-testid="volume-cross" /> Where the planes meet
+              </label>
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={showMask} onChange={(e) => setShowMask(e.target.checked)} data-testid="volume-show-mask" /> Annotation

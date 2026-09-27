@@ -4,7 +4,7 @@
 // Real touch events (CDP Input.dispatchTouchEvent), not mouse ones.
 const { chromium } = require("playwright");
 const { F, token } = require("./helpers");
-const ADMIN = "http://localhost:8004", VIEWER = "http://localhost:5174";
+const ADMIN = F.ADMIN, VIEWER = F.VIEWER;
 
 const results = [];
 const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra });

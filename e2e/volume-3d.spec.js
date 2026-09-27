@@ -6,7 +6,7 @@
 // (SwiftShader).
 const { chromium } = require("playwright");
 const { F, token } = require("./helpers");
-const ADMIN = "http://localhost:8004", VIEWER = "http://localhost:5174";
+const ADMIN = F.ADMIN, VIEWER = F.VIEWER;
 
 const results = [];
 const check = (name, ok, extra) => results.push({ name, ok: Boolean(ok), extra });
@@ -75,6 +75,13 @@ async function api(tok, url) { return (await fetch(url, { headers: { Authorizati
   await page.locator('[data-testid="volume-planes"]').uncheck(); await page.waitForTimeout(1200);
   check("the 2D slices show in the volume, and switch off", !(await shot()).equals(withPlanes));
   await page.locator('[data-testid="volume-planes"]').check();
+  // where the three planes meet: marked, and it can be switched off
+  check("the planes' meeting point is marked by default", await page.locator('[data-testid="volume-cross"]').isChecked());
+  await page.waitForTimeout(1200);
+  const withCross = await shot();
+  await page.locator('[data-testid="volume-cross"]').uncheck(); await page.waitForTimeout(1200);
+  check("... and switches off", !(await shot()).equals(withCross));
+  await page.locator('[data-testid="volume-cross"]').check();
   await page.locator('[data-testid="volume-mode-mip"]').click();
   // the crop box cuts the volume down, and gives it back whole
   const whole = await shot();
