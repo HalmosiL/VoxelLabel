@@ -10,7 +10,9 @@ Duplicate upstream: the main chain, None -- every board without one works
 exactly as before.
 
 A job fed from two copies at once would mix two annotators' work on one
-image: `lanes_reaching` lets the Run refuse that.
+image: `lanes_reaching` lets the Run refuse that. The copies end at a
+Compare card: its "agree"/"disagree" Datasets are back on the main chain,
+for an adjudicator's final segmentation.
 """
 from shared_models.models import WorkflowCard, WorkflowCardType, WorkflowEdge
 from sqlalchemy.orm import Session
@@ -56,7 +58,9 @@ def _branches(db: Session, card: WorkflowCard, visiting: frozenset) -> set:
         # a made Dataset stands for its maker's output: a Split part,
         # "(annotated)", "(approved)" ... -- or one of a Duplicate's copies
         maker = db.get(WorkflowCard, card.materialized_source_card_id)
-        if maker is None:
+        if maker is None or maker.type == WorkflowCardType.COMPARE:
+            # the copies end at a Compare: what it hands on ("agree",
+            # "disagree") is for the agreed, final work -- the main chain
             return {None}
         above = _branches(db, maker, visiting) or {None}
         if maker.type == WorkflowCardType.DUPLICATE:

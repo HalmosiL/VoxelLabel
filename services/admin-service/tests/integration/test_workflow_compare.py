@@ -108,3 +108,20 @@ def test_compare_is_not_rerun_by_a_ripple(client, db, monkeypatch):
     assert client.post(f"/admin/workflow-cards/{job_a['id']}/run").status_code == 200
     card = next(c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"] if c["id"] == cmp["id"])
     assert card["last_run_at"] is None
+
+
+def test_what_comes_out_of_a_compare_is_back_on_the_main_chain(client, db, monkeypatch):
+    """The copies end at the Compare: its "disagree" cases go on to an
+    adjudicator's job for the final, agreed segmentation -- on the main
+    chain, not on either copy (and not refused as mixing the two)."""
+    masks = {"a0": _mask((0, 4)), "b0": _mask((2, 6))}
+    sid, cases, series, cmp, *_rest, a, b = _board(client, db, monkeypatch, masks)
+    _save(db, sid, series[0], ANNOTATOR_SUBJECT, a, "a0")
+    _save(db, sid, series[0], OTHER_ANNOTATOR, b, "b0")
+    client.post(f"/admin/workflow-cards/{cmp['id']}/run")
+    disagree = _children(client, sid, cmp["id"])["disagree"]
+    final = _card(client, sid, "annotation", "Adjudicate", {"assigned_user_id": ANNOTATOR_SUBJECT}, x=1500)
+    _edge(client, sid, disagree["id"], final["id"])
+    r = client.post(f"/admin/workflow-cards/{final['id']}/run")
+    assert r.status_code == 200, r.text
+    assert client.get(f"/admin/workflow-cards/{final['id']}/surface-config").json()["branch"] is None
