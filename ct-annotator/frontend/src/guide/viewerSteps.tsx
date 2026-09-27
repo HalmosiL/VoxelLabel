@@ -81,8 +81,8 @@ export const ANNOTATE_STEPS: GuideStep[] = [
         </p>
         <p>
           The <b>strip</b> along a pane&apos;s edge (or its arrows) changes slice · <b>pinch</b> zooms · <b>two-finger drag</b> pans ·{" "}
-          <b>two-finger tap</b> jumps every pane to that point · <b>long-press</b> reads the Hounsfield value · <b>double-tap</b> with the
-          Cursor tool resets. The coloured crosshair shows where the other planes cut.
+          <b>long-press</b> reads the Hounsfield value · <b>double-tap</b> with the Cursor tool resets. The coloured crosshair shows where the
+          other planes cut: with the Cursor tool a <b>tap</b> moves it (every pane jumps there), or <b>drag</b> the ring in its middle.
         </p>
       </>
     ),

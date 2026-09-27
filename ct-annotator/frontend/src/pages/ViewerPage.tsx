@@ -43,6 +43,7 @@ import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement,
 import { nextUndecidedIndex } from "../lib/reviewNav";
 import { handInObjects, isNewThisRound, previousReviewText, REJECT_REASONS, rejectReasonLabel, reviewCommentText, sentBackItems } from "../lib/reviewRound";
 import { reviewBlockedMessage, ReviewState, reviewStateOf } from "../lib/reviewState";
+import { crosshairPoint, displayToScreen, grabsCrosshair } from "../lib/crosshair";
 import { compactNow, TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout, useNarrowLayout } from "../lib/touch";
 import {
   CaseDocument,
@@ -1051,6 +1052,8 @@ export default function ViewerPage() {
   );
   const RIGHT_CLICK_DRAG_THRESHOLD_PX = 4;
   const dragRef = useRef<{ pane: PaneKey; startX: number; startY: number; panX: number; panY: number } | null>(null);
+  // the crosshair's middle, grabbed with the Cursor tool and dragged
+  const crosshairDragRef = useRef<{ pane: PaneKey; pointerId: number } | null>(null);
 
   // ── Touch (tablet) ──────────────────────────────────────────────────
   // See lib/touch.ts for the gesture vocabulary. One tracker + tap
@@ -1068,8 +1071,9 @@ export default function ViewerPage() {
   // it starts on the first real move, and a finger that never moves
   // becomes a tap. A tap's own action (a paint dot, a fill) is then
   // held back TAP_ACTION_DELAY_MS so a second tap can still make the
-  // pair a double-tap (zoom reset) instead.
-  const pendingTapRef = useRef<{ pane: PaneKey; kind: "dot" | "fill"; point: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
+  // pair a double-tap (zoom reset) instead. With the Cursor tool a tap
+  // moves the crosshair there ("navigate").
+  const pendingTapRef = useRef<{ pane: PaneKey; kind: "dot" | "fill" | "navigate"; point: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
   const pendingTapTimerRef = useRef<number | null>(null);
   const blobUrlsRef = useRef<string[]>([]);
   // Undo/redo history: one {pane, index, slice} snapshot per mutating
@@ -2074,7 +2078,11 @@ export default function ViewerPage() {
 
   /** The tap's deferred action, run on release unless a gesture claimed
    * the finger first -- see pendingTapRef. */
-  function runPendingTap(kind: "dot" | "fill", pane: PaneKey, point: { x: number; y: number }) {
+  function runPendingTap({ kind, pane, point, clientX, clientY }: NonNullable<typeof pendingTapRef.current>) {
+    if (kind === "navigate") {
+      handleCtrlClickNavigate({ clientX, clientY }, pane);
+      return;
+    }
     if (!maskReady) return;
     if (kind === "fill") {
       if (activeObjectId === null) return;
@@ -2109,7 +2117,7 @@ export default function ViewerPage() {
     if (tapRef.current[pane].longPressActive) return;
     pendingTapTimerRef.current = window.setTimeout(() => {
       pendingTapTimerRef.current = null;
-      runPendingTap(pending.kind, pending.pane, pending.point);
+      runPendingTap(pending);
     }, TAP_ACTION_DELAY_MS);
   }
 
@@ -2275,14 +2283,9 @@ export default function ViewerPage() {
    * square; a native index i of n sits at (i + 0.5) / n of it. */
   function renderCrosshair(pane: PaneKey, width: number, height: number, scale: number) {
     if (!showCrosshair || !rows || !columns || !numSlices) return null;
-    const at = (i: number | null, n: number, size: number) => (((i ?? 0) + 0.5) / n) * size;
-    // [plane drawn as a vertical line, its x] and [plane drawn horizontally, its y]
-    const [vPlane, vx, hPlane, hy]: [PaneKey, number, PaneKey, number] =
-      pane === "axial"
-        ? ["sagittal", at(sagittalIndex, columns, width), "coronal", at(coronalIndex, rows, height)]
-        : pane === "sagittal"
-          ? ["coronal", at(coronalIndex, rows, width), "axial", at(axialIndex, numSlices, height)]
-          : ["sagittal", at(sagittalIndex, columns, width), "axial", at(axialIndex, numSlices, height)];
+    // the planes drawn as its vertical and its horizontal line (the pane is a square: width = height)
+    const [vPlane, hPlane]: [PaneKey, PaneKey] = pane === "axial" ? ["sagittal", "coronal"] : pane === "sagittal" ? ["coronal", "axial"] : ["sagittal", "axial"];
+    const { x: vx, y: hy } = crosshairPoint(pane, { axial: axialIndex, sagittal: sagittalIndex, coronal: coronalIndex }, { columns, rows, numSlices }, width);
     const gap = CROSSHAIR_GAP_PX / scale;
     const line = (x1: number, y1: number, x2: number, y2: number, color: string, key: string) =>
       (x2 - x1) ** 2 + (y2 - y1) ** 2 > 0 ? (
@@ -2294,6 +2297,10 @@ export default function ViewerPage() {
         {line(vx, Math.min(height, hy + gap), vx, height, PLANE_COLORS[vPlane], "v2")}
         {line(0, hy, Math.max(0, vx - gap), hy, PLANE_COLORS[hPlane], "h1")}
         {line(Math.min(width, vx + gap), hy, width, hy, PLANE_COLORS[hPlane], "h2")}
+        {/* a finger needs to see what it can grab: the middle, with the Cursor tool */}
+        {coarse && tab === "view" && (
+          <circle cx={vx} cy={hy} r={(CROSSHAIR_GAP_PX * 0.75) / scale} fill="none" stroke="#fff" strokeOpacity={0.55} strokeWidth={1.5} vectorEffect="non-scaling-stroke" data-testid={`crosshair-handle-${pane}`} />
+        )}
       </svg>
     );
   }
@@ -2980,12 +2987,36 @@ export default function ViewerPage() {
       handleCtrlClickNavigate(event, pane);
       return;
     }
-    if (zoom[pane].scale <= 1) return;
     // A second finger means a pinch/pan (handled by the capture-phase
     // touch handlers), not a one-finger drag.
     if (event.pointerType === "touch" && touchRef.current[pane].count >= 2) return;
+    if (event.button === 0 && startCrosshairDrag(event, pane)) return;
+    // a tap puts the crosshair where the finger was -- held back like a
+    // paint tap, so a double-tap only resets the zoom
+    if (event.pointerType === "touch") pendingTapRef.current = { pane, kind: "navigate", point: { x: 0, y: 0 }, clientX: event.clientX, clientY: event.clientY };
+    if (zoom[pane].scale <= 1) return;
     if (event.pointerType === "touch") event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { pane, startX: event.clientX, startY: event.clientY, panX: zoom[pane].panX, panY: zoom[pane].panY };
+  }
+
+  /** A press on the crosshair's middle (CROSSHAIR_GRAB_PX of it) grabs
+   * it: the moves that follow put it under the pointer, as Ctrl+click
+   * would at each point. */
+  function startCrosshairDrag(event: ReactPointerEvent<HTMLDivElement>, pane: PaneKey): boolean {
+    const container = paneContainerRefs[pane].current;
+    if (!showCrosshair || !container || !rows || !columns || !numSlices) return false;
+    const rect = container.getBoundingClientRect();
+    const z = zoom[pane];
+    const middle = crosshairPoint(pane, { axial: axialIndex, sagittal: sagittalIndex, coronal: coronalIndex }, { columns, rows, numSlices }, paneSize);
+    const onScreen = {
+      x: displayToScreen(middle.x, rect.width / 2, z.scale, z.panX, paneSize),
+      y: displayToScreen(middle.y, rect.height / 2, z.scale, z.panY, paneSize),
+    };
+    if (!grabsCrosshair({ x: event.clientX - rect.left, y: event.clientY - rect.top }, onScreen, event.pointerType)) return false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    crosshairDragRef.current = { pane, pointerId: event.pointerId };
+    trackAction("crosshair.drag");
+    return true;
   }
 
   // Screen-space -> this-pane's-own-display-space conversion for a wrapper
@@ -3734,8 +3765,16 @@ export default function ViewerPage() {
   // a keydown event has no cursor position of its own to read.
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
-  function handlePaneMouseMove(event: ReactMouseEvent<HTMLDivElement>) {
+  function handlePaneMouseMove(event: ReactPointerEvent<HTMLDivElement>) {
     lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    const grabbed = crosshairDragRef.current;
+    if (grabbed && grabbed.pointerId === event.pointerId) {
+      handleCtrlClickNavigate(event, grabbed.pane);
+      return;
+    }
+    const pending = pendingTapRef.current;
+    // the finger moved: a pan, not a tap
+    if (pending?.kind === "navigate" && Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY) >= 6) cancelPendingTap();
     const drag = dragRef.current;
     if (!drag) return;
     const dx = event.clientX - drag.startX;
@@ -3743,8 +3782,12 @@ export default function ViewerPage() {
     setZoom((prev) => ({ ...prev, [drag.pane]: { ...prev[drag.pane], panX: drag.panX + dx, panY: drag.panY + dy } }));
   }
 
-  function handlePaneMouseUp() {
+  /** `event` only on a real release (not on leaving the pane): a tap's
+   * crosshair move then runs. */
+  function handlePaneMouseUp(event?: ReactPointerEvent<HTMLDivElement>) {
     dragRef.current = null;
+    crosshairDragRef.current = null;
+    if (event?.pointerType === "touch" && pendingTapRef.current?.kind === "navigate") finishPendingTap(pendingTapRef.current.pane);
   }
 
   function handlePaneDoubleClick(pane: PaneKey) {
@@ -3778,6 +3821,7 @@ export default function ViewerPage() {
       setRoiBox(null);
     }
     if (dragRef.current?.pane === pane) dragRef.current = null;
+    if (crosshairDragRef.current?.pane === pane) crosshairDragRef.current = null;
   }
 
   function handleTouchDownCapture(event: ReactPointerEvent<HTMLDivElement>, pane: PaneKey) {
@@ -4558,9 +4602,12 @@ export default function ViewerPage() {
                   // produces mousemove, so the View tool's pan needs these.
                   onPointerDown={(e) => handlePaneMouseDown(e, pane)}
                   onPointerMove={handlePaneMouseMove}
-                  onPointerUp={handlePaneMouseUp}
-                  onPointerCancel={handlePaneMouseUp}
-                  onPointerLeave={handlePaneMouseUp}
+                  onPointerUp={(e) => handlePaneMouseUp(e)}
+                  onPointerCancel={() => {
+                    cancelPendingTap();
+                    handlePaneMouseUp();
+                  }}
+                  onPointerLeave={() => handlePaneMouseUp()}
                   onDoubleClick={() => handlePaneDoubleClick(pane)}
                   onPointerEnter={() => (hoveredPaneRef.current = pane)}
                   onContextMenu={(e) => handlePaneContextMenu(e, pane)}
@@ -5006,10 +5053,10 @@ export default function ViewerPage() {
         <span className="truncate">
           {coarse
             ? tab === "view"
-              ? "View · Pinch=Zoom · Two-finger drag=Pan · Arrows/slider=Slice · Long-press=HU value · Double-tap=Reset · Two-finger tap=Jump all planes"
+              ? "View · Tap or drag the ring=Crosshair · Pinch=Zoom · Two-finger drag=Pan · Arrows/slider=Slice · Long-press=HU value · Double-tap=Reset"
               : `${TOOL_TOUCH_HINT[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Two-finger tap=Jump all planes`
             : tab === "view"
-            ? "View · Scroll=Slice · Ctrl/Cmd+Scroll=Zoom · Right/middle-drag=Window · Drag=Pan (zoomed) · Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset · ?=All keys"
+            ? "View · Scroll=Slice · Ctrl/Cmd+Scroll=Zoom · Right/middle-drag=Window · Drag=Pan (zoomed) · Drag the crosshair's middle or Ctrl/Cmd+click=Jump all planes · Alt+click=HU value · Double-click=Reset · ?=All keys"
             : tool === "fill"
               ? "Fill · Click inside a closed outline on any pane · Right-click (no drag)=Comment · Scroll=Slice · Middle-drag=Window · Ctrl/Cmd+click=Jump all planes"
               : tool === "polygon"

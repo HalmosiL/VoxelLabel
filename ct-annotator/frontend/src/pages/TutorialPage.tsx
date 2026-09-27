@@ -11,6 +11,7 @@ import KeyboardHelp from "../components/KeyboardHelp";
 import { isHelpKey } from "../lib/keymap";
 import { OUTLINE_MIN_ALPHA, OverlayStyle, outlineMask, rememberedOverlayStyle, rememberOverlayStyle } from "../lib/overlayStyle";
 import { enterFullscreen, exitFullscreen, fullscreenDeclined, fullscreenElement, onFullscreenChange, rememberFullscreenDeclined } from "../lib/fullscreen";
+import { crosshairPoint, grabsCrosshair } from "../lib/crosshair";
 import { TAP_ACTION_DELAY_MS, TapDetector, TapGesture, TouchTracker, useCoarsePointer, useCompactLayout } from "../lib/touch";
 import { ADMIN_UI_URL } from "../config";
 import GuideTour from "../guide/GuideTour";
@@ -136,7 +137,7 @@ const SLAB_HELP: Record<SlabMode, string> = {
 };
 
 const TOOL_HELP: Record<DrawTool, string> = {
-  cursor: "Navigate only: scroll to change slice, Ctrl+scroll to zoom, right-drag to window (up/down level, left/right width), drag to pan when zoomed. Nothing is drawn.",
+  cursor: "Navigate only: scroll to change slice, Ctrl+scroll to zoom, right-drag to window (up/down level, left/right width), drag to pan when zoomed, drag the crosshair's middle to move it. Nothing is drawn.",
   paint: "Brush into the active object. Drag to paint; right-drag to erase.",
   erase: "Remove paint from any object under the brush.",
   fill: "Click inside a closed outline to fill it into the active object -- paint or Polygon the boundary first.",
@@ -374,9 +375,12 @@ export default function TutorialPage() {
     coronal: new TapDetector((g, x, y) => gestureHandlerRef.current(g, "coronal", x, y)),
     axial: new TapDetector((g, x, y) => gestureHandlerRef.current(g, "axial", x, y)),
   });
-  const pendingTapRef = useRef<{ pane: PaneKey; kind: "dot" | "fill"; point: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
+  // "navigate": a Cursor-tool tap, which moves the crosshair there (as in the viewer)
+  const pendingTapRef = useRef<{ pane: PaneKey; kind: "dot" | "fill" | "navigate"; point: { x: number; y: number }; clientX: number; clientY: number } | null>(null);
   const pendingTapTimerRef = useRef<number | null>(null);
   const panStartRef = useRef<{ pane: PaneKey; clientX: number; clientY: number; panX: number; panY: number } | null>(null);
+  // the crosshair's middle, grabbed with the Cursor tool and dragged
+  const crosshairDragRef = useRef<{ pane: PaneKey; pointerId: number } | null>(null);
   // The pane the mouse most recently entered -- arrow-key slice
   // stepping, arrow-key zoom and WASD panning all act on this one, the
   // same "keyboard follows the mouse" convention the real viewer uses.
@@ -624,13 +628,8 @@ export default function TutorialPage() {
    * width = x, height = z). */
   function renderCrosshair(pane: PaneKey) {
     if (!showCrosshair) return null;
-    const at = (i: number, n: number) => ((i + 0.5) / n) * paneSize;
-    const [vPlane, vx, hPlane, hy]: [PaneKey, number, PaneKey, number] =
-      pane === "axial"
-        ? ["sagittal", at(sagittalIndex, TUTORIAL_SIZE), "coronal", at(coronalIndex, TUTORIAL_SIZE)]
-        : pane === "sagittal"
-          ? ["coronal", at(coronalIndex, TUTORIAL_SIZE), "axial", at(axialIndex, TUTORIAL_SLICES)]
-          : ["sagittal", at(sagittalIndex, TUTORIAL_SIZE), "axial", at(axialIndex, TUTORIAL_SLICES)];
+    const [vPlane, hPlane]: [PaneKey, PaneKey] = pane === "axial" ? ["sagittal", "coronal"] : pane === "sagittal" ? ["coronal", "axial"] : ["sagittal", "axial"];
+    const { x: vx, y: hy } = crosshairMiddle(pane);
     const gap = CROSSHAIR_GAP_PX / zoom[pane].scale;
     const size = paneSize;
     const line = (x1: number, y1: number, x2: number, y2: number, color: string, key: string) =>
@@ -641,8 +640,16 @@ export default function TutorialPage() {
         {line(vx, Math.min(size, hy + gap), vx, size, PLANE_COLORS[vPlane], "v2")}
         {line(0, hy, Math.max(0, vx - gap), hy, PLANE_COLORS[hPlane], "h1")}
         {line(Math.min(size, vx + gap), hy, size, hy, PLANE_COLORS[hPlane], "h2")}
+        {coarse && tool === "cursor" && (
+          <circle cx={vx} cy={hy} r={(CROSSHAIR_GAP_PX * 0.75) / zoom[pane].scale} fill="none" stroke="#fff" strokeOpacity={0.55} strokeWidth={1.5} vectorEffect="non-scaling-stroke" data-testid={`crosshair-handle-${pane}`} />
+        )}
       </svg>
     );
+  }
+
+  /** The crosshair's middle in the pane's display square (0..paneSize). */
+  function crosshairMiddle(pane: PaneKey) {
+    return crosshairPoint(pane, { axial: axialIndex, sagittal: sagittalIndex, coronal: coronalIndex }, { columns: TUTORIAL_SIZE, rows: TUTORIAL_SIZE, numSlices: TUTORIAL_SLICES }, paneSize);
   }
 
   // ── Mouse window/level drag -- the real viewer's gesture: right button
@@ -887,6 +894,17 @@ export default function TutorialPage() {
       return;
     }
     if (tool === "cursor") {
+      // a press on the crosshair's middle grabs it (the canvas's rect is the zoomed image's)
+      const rect = e.currentTarget.getBoundingClientRect();
+      const middle = crosshairMiddle(pane);
+      const k = rect.width / paneSize;
+      if (showCrosshair && e.button === 0 && grabsCrosshair({ x: e.clientX, y: e.clientY }, { x: rect.left + middle.x * k, y: rect.top + middle.y * k }, e.pointerType)) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        crosshairDragRef.current = { pane, pointerId: e.pointerId };
+        return;
+      }
+      // a tap puts it where the finger was, held back for a possible double-tap
+      if (touch) pendingTapRef.current = { pane, kind: "navigate", point: toCanvasXY(e, pane), clientX: e.clientX, clientY: e.clientY };
       if (zoom[pane].scale > 1) {
         e.currentTarget.setPointerCapture(e.pointerId);
         panStartRef.current = { pane, clientX: e.clientX, clientY: e.clientY, panX: zoom[pane].panX, panY: zoom[pane].panY };
@@ -967,6 +985,14 @@ export default function TutorialPage() {
         withPaneMask(right.pane, (view, width, height) => stampCircle(view, width, height, Math.round(right.point.x), Math.round(right.point.y), brushRadius, 0, isProtected));
       }
     }
+    const grabbed = crosshairDragRef.current;
+    if (grabbed && grabbed.pointerId === e.pointerId) {
+      const { x, y } = toCanvasXY(e, grabbed.pane);
+      jumpAllPanesTo(grabbed.pane, x, y);
+      return;
+    }
+    const tapped = pendingTapRef.current;
+    if (tapped?.kind === "navigate" && Math.hypot(e.clientX - tapped.clientX, e.clientY - tapped.clientY) >= 6) cancelPendingTap(); // a pan, not a tap
     if (panStartRef.current) {
       const start = panStartRef.current;
       setZoom((z) => ({ ...z, [start.pane]: { ...z[start.pane], panX: start.panX + (e.clientX - start.clientX), panY: start.panY + (e.clientY - start.clientY) } }));
@@ -1096,6 +1122,7 @@ export default function TutorialPage() {
     rightClickRef.current = null;
     if (right && !right.moved) openFormAt(right.pane, right.point);
     if (e.pointerType === "touch" && pendingTapRef.current) finishPendingTap(pendingTapRef.current.pane);
+    crosshairDragRef.current = null;
     if (panStartRef.current) {
       panStartRef.current = null;
       return;
@@ -1135,7 +1162,11 @@ export default function TutorialPage() {
     return { x: ((clientX - rect.left) * width) / rect.width, y: ((clientY - rect.top) * height) / rect.height };
   }
 
-  function runPendingTap(kind: "dot" | "fill", pane: PaneKey, point: { x: number; y: number }) {
+  function runPendingTap(kind: "dot" | "fill" | "navigate", pane: PaneKey, point: { x: number; y: number }) {
+    if (kind === "navigate") {
+      jumpAllPanesTo(pane, point.x, point.y);
+      return;
+    }
     if (phase !== "annotate") return;
     if (kind === "fill") {
       if (!canDraw || !activeObjectId) return;
@@ -1168,6 +1199,7 @@ export default function TutorialPage() {
   /** A second finger landed: whatever the first one started is undone. */
   function abortOneFingerInteraction() {
     cancelPendingTap();
+    crosshairDragRef.current = null;
     if (drawingRef.current) {
       drawingRef.current = false;
       lastPointRef.current = null;
@@ -2194,8 +2226,8 @@ export default function TutorialPage() {
             <span className="truncate">
               {coarse
                 ? reviewMode
-                  ? "Review · look, decide, comment -- nothing here draws · Pinch=Zoom · Long-press=HU value · Two-finger tap=Jump all planes"
-                  : `${TOOL_HELP[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Double-tap=Reset · Two-finger tap=Jump all planes`
+                  ? "Review · look, decide, comment -- nothing here draws · Tap or drag the ring=Crosshair · Pinch=Zoom · Long-press=HU value"
+                  : `${TOOL_HELP[tool]} · Pinch=Zoom · Two-finger drag=Pan · Long-press=HU value · Double-tap=Reset · ${tool === "cursor" ? "Tap or drag the ring=Crosshair" : "Two-finger tap=Jump all planes"}`
                 : reviewMode
                   ? "Review · look, decide, comment -- nothing here draws · Scroll=Slice · Ctrl+Scroll=Zoom · Right/middle-drag=Window · Alt+click=HU value · ?=All keys"
                   : `${TOOL_HELP[tool]} · Scroll=Slice · Ctrl+Scroll=Zoom · ${tool === "cursor" ? "Right" : "Middle"}-drag=Window · Ctrl+click=Jump all planes · Alt+click=HU value · ?=All keys`}
