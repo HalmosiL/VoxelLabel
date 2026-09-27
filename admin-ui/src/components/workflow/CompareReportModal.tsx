@@ -44,7 +44,8 @@ export default function CompareReportModal({
       <div className="flex flex-col gap-5" data-testid="compare-report">
         <p className="text-sm text-gray-600">
           Each input's latest hand-in, compared image by image. Dice runs from 0 (no overlap) to 1 (identical); at or above{" "}
-          <b>{threshold.toFixed(2)}</b> a case counts as agreeing. A finding is drawn by both when their outlines overlap enough (IoU ≥ 0.1).
+          <b>{threshold.toFixed(2)}</b>, with every finding drawn by both, a case counts as agreeing -- a missed finding is a disagreement
+          whatever the Dice. A finding is drawn by both when their outlines overlap enough (IoU ≥ 0.1).
           Computed {new Date(results.computed_at).toLocaleString()}.
         </p>
 

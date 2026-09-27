@@ -125,3 +125,19 @@ def test_what_comes_out_of_a_compare_is_back_on_the_main_chain(client, db, monke
     r = client.post(f"/admin/workflow-cards/{final['id']}/run")
     assert r.status_code == 200, r.text
     assert client.get(f"/admin/workflow-cards/{final['id']}/surface-config").json()["branch"] is None
+
+
+def test_a_finding_only_one_reader_drew_is_a_disagreement_whatever_the_dice(client, db, monkeypatch):
+    """A small nodule one reader missed barely moves the Dice -- but a
+    missed finding is exactly the disagreement that matters."""
+    big_and_small = _mask((0, 18))
+    big_and_small[19] = 2  # a one-voxel second finding
+    masks = {"a0": big_and_small, "b0": _mask((0, 18))}
+    sid, cases, series, cmp, *_rest, a, b = _board(client, db, monkeypatch, masks)
+    _save(db, sid, series[0], ANNOTATOR_SUBJECT, a, "a0")
+    _save(db, sid, series[0], OTHER_ANNOTATOR, b, "b0")
+    client.post(f"/admin/workflow-cards/{cmp['id']}/run")
+    card = next(c for c in client.get(f"/admin/studies/{sid}/workflow").json()["cards"] if c["id"] == cmp["id"])
+    image = card["config"]["results"]["images"][0]
+    assert image["min_dice"] >= 0.9 and image["pairs"][0]["objects"]["only_a"] == 1
+    assert _children(client, sid, cmp["id"])["disagree"]["config"]["case_ids"] == [cases[0]["id"]]

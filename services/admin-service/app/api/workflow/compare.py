@@ -8,7 +8,8 @@ branch (submitted, or since decided) -- not a draft being reworked, not a
 reviewer's edit of it -- through app/quality/compare.py.
 
 The result is a plain dict the engine stores on the card
-(`config.results`), with the cases that agree and those that don't.
+(`config.results`), with the cases that agree -- every pair's Dice at
+least `agree_dice` and every finding drawn by both -- and those that don't.
 """
 import gzip
 from datetime import datetime
@@ -130,7 +131,10 @@ def compare(db: Session, card: WorkflowCard, now: datetime) -> tuple[dict, list[
             compared_any = True
             dices = [p["dice"] for p in pairs if p["dice"] is not None]
             min_dice = min(dices) if dices else None
-            case_ok = case_ok and (min_dice is None or min_dice >= threshold)
+            # a finding only one of them drew is a disagreement however high
+            # the Dice -- a small missed nodule barely moves it
+            unmatched = any(p["objects"]["only_a"] or p["objects"]["only_b"] for p in pairs)
+            case_ok = case_ok and (min_dice is None or min_dice >= threshold) and not unmatched
             images.append({"case_id": case_id, "case_title": case.title, "series_id": str(series_id), "pairs": pairs, "min_dice": min_dice})
         if compared_any:
             (agree if case_ok else disagree).append(case_id)

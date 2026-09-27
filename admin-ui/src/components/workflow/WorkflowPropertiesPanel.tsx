@@ -589,7 +589,7 @@ function CompareFields({
           onBlur={commitThreshold}
           data-testid="compare-threshold"
         />
-        <span className="hint">A case agrees when every pair reaches it; the rest go to "disagree" -- wire that on to an adjudicating review.</span>
+        <span className="hint">A case agrees when every pair reaches it and every finding was drawn by both; the rest go to "disagree" -- wire that on to an adjudicator's job.</span>
       </label>
       <RunButton card={card} onRun={onRun} running={running} label="Run compare" />
       <LastRun card={card} />
