@@ -633,6 +633,14 @@ export default function ViewerPage() {
   // worth hardcoding and would drift if either changes independently.
   const paneRowRef = useRef<HTMLDivElement>(null);
   const [paneSize, setPaneSize] = useState(DEFAULT_PANE_SIZE);
+  // whether the panes wrap onto two rows (a tablet in portrait) -- see recompute
+  const [paneRowWrapped, setPaneRowWrapped] = useState(false);
+  // Whenever the panes sit in one row (or the 3D view is alone), the 3D view fills what the
+  // square 2D panes leave: the rest of the row's width, all of its height
+  // (a square 3D left black bars above and below it -- and a flex-1 inside
+  // it collapsed to the view's 240px minimum). Wrapped (a tablet in
+  // portrait), it keeps its square in the grid.
+  const fill3d = visiblePaneKeys.includes("three_d") && (only3d || !paneRowWrapped);
   // handleWheel below is registered inside a mount-only effect, so its
   // closure never sees later renders' paneSize directly -- mirrored into
   // a ref, updated every render, same pattern already used for
@@ -692,6 +700,7 @@ export default function ViewerPage() {
       const fitHeight = (space: number, n: number) => Math.floor((space - GAP * (n - 1)) / n);
       const wrapped = count > 1 && rect.width < 900 ? Math.min(fit(rect.width, cols), fitHeight(rect.height, rowsWrapped) - CHROME_HEIGHT) : 0;
       setPaneSize(Math.max(160, Math.max(single, wrapped)));
+      setPaneRowWrapped(wrapped > single);
     }
     recompute();
     const resizeObserver = new ResizeObserver(recompute);
@@ -4506,15 +4515,15 @@ export default function ViewerPage() {
         {/* `safe center`: centred when the panes fit, top-aligned (and
             scrollable) when they don't -- plain `center` would push the
             first row's top above the visible area with no way to reach it. */}
-        {/* When the 3D view is alone the row must NOT wrap: a wrapped
-            row's line is only as tall as its content, so the pane's
-            `self-stretch` would have nothing to stretch to and the
-            canvas would keep its default height in a half-empty row. */}
+        {/* When the 3D view fills its room (see fill3d) the row must NOT
+            wrap: a wrapped row's line is only as tall as its content, so
+            the pane's `self-stretch` would have nothing to stretch to and
+            the canvas would keep its default height in a half-empty row. */}
         <div
           ref={paneRowRef}
           data-guide="panes"
           className={`flex min-w-0 flex-1 bg-black ${
-            only3d ? "" : "flex-wrap items-start justify-center gap-px overflow-auto [align-content:safe_center]"
+            fill3d ? "items-center gap-px overflow-hidden" : "flex-wrap items-start justify-center gap-px overflow-auto [align-content:safe_center]"
           }`}
         >
           {PANE_ORDER.map((pane) => {
@@ -4722,8 +4731,8 @@ export default function ViewerPage() {
             // nothing to keep square. Alongside other panes it stays
             // paneSize so the row still lines up.
             <div
-              className={`flex flex-col bg-black ${only3d ? "min-w-0 flex-1 self-stretch" : "flex-shrink-0"}`}
-              style={only3d ? undefined : { width: paneSize }}
+              className={`flex flex-col bg-black ${fill3d ? "min-w-0 flex-1 self-stretch" : "flex-shrink-0"}`}
+              style={fill3d ? undefined : { width: paneSize }}
             >
               <div className="flex flex-shrink-0 items-center justify-center gap-1.5 bg-[#111] py-1">
                 <span className="text-center text-[11px] uppercase tracking-wider text-gray-400">3D</span>
@@ -4769,7 +4778,7 @@ export default function ViewerPage() {
                   <EyeIcon visible={true} />
                 </button>
               </div>
-              <div className="relative min-h-0 flex-1 overflow-hidden bg-black" style={only3d ? undefined : { height: paneSize }}>
+              <div className={`relative overflow-hidden bg-black ${fill3d ? "min-h-0 flex-1" : "flex-none"}`} style={fill3d ? undefined : { height: paneSize }}>
                 {threeDView === "volume" ? (
                   <VolumeView
                     seriesId={seriesId}
