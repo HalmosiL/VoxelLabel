@@ -894,11 +894,13 @@ export default function TutorialPage() {
       return;
     }
     if (tool === "cursor") {
-      // a press on the crosshair's middle grabs it (the canvas's rect is the zoomed image's)
+      // a press on the crosshair's middle grabs it (the canvas's rect is the
+      // zoomed image's) -- by a mouse only unzoomed: zoomed in, a drag pans
       const rect = e.currentTarget.getBoundingClientRect();
       const middle = crosshairMiddle(pane);
       const k = rect.width / paneSize;
-      if (showCrosshair && e.button === 0 && grabsCrosshair({ x: e.clientX, y: e.clientY }, { x: rect.left + middle.x * k, y: rect.top + middle.y * k }, e.pointerType)) {
+      const mayGrab = e.pointerType !== "mouse" || zoom[pane].scale <= 1;
+      if (showCrosshair && mayGrab && e.button === 0 && grabsCrosshair({ x: e.clientX, y: e.clientY }, { x: rect.left + middle.x * k, y: rect.top + middle.y * k }, e.pointerType)) {
         e.currentTarget.setPointerCapture(e.pointerId);
         crosshairDragRef.current = { pane, pointerId: e.pointerId };
         return;

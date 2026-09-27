@@ -3009,12 +3009,14 @@ export default function ViewerPage() {
 
   /** A press on the crosshair's middle (CROSSHAIR_GRAB_PX of it) grabs
    * it: the moves that follow put it under the pointer, as Ctrl+click
-   * would at each point. */
+   * would at each point. A mouse only grabs it unzoomed -- zoomed in, a
+   * drag pans, from anywhere (a finger has the ring for this). */
   function startCrosshairDrag(event: ReactPointerEvent<HTMLDivElement>, pane: PaneKey): boolean {
     const container = paneContainerRefs[pane].current;
     if (!showCrosshair || !container || !rows || !columns || !numSlices) return false;
-    const rect = container.getBoundingClientRect();
     const z = zoom[pane];
+    if (event.pointerType === "mouse" && z.scale > 1) return false;
+    const rect = container.getBoundingClientRect();
     const middle = crosshairPoint(pane, { axial: axialIndex, sagittal: sagittalIndex, coronal: coronalIndex }, { columns, rows, numSlices }, paneSize);
     const onScreen = {
       x: displayToScreen(middle.x, rect.width / 2, z.scale, z.panX, paneSize),

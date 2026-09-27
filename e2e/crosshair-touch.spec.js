@@ -155,6 +155,17 @@ async function openViewer(browser, opts) {
   await desk.page.mouse.click(d1.x - 150, d1.y - 100);
   await desk.page.waitForTimeout(500);
   check("... and a plain click still doesn't move it (Ctrl+click does)", same(await crosshair(desk.page), d1));
+  // zoomed in, a mouse drag from its middle pans as it always did (a finger has the ring for this)
+  const pane = desk.page.locator('[data-testid="pane-axial"]');
+  await desk.page.mouse.move(d1.x, d1.y);
+  await pane.dispatchEvent("wheel", { deltaY: -400, ctrlKey: true, clientX: d1.x, clientY: d1.y });
+  await desk.page.waitForTimeout(500);
+  const z0 = await crosshair(desk.page);
+  await desk.page.mouse.move(z0.x, z0.y); await desk.page.mouse.down();
+  await desk.page.mouse.move(z0.x + 60, z0.y + 20, { steps: 6 }); await desk.page.mouse.up();
+  await desk.page.waitForTimeout(400);
+  const z1 = await crosshair(desk.page);
+  check("... zoomed in, a mouse drag from its middle still pans", same(z1, z0) && z1.x - z0.x > 30, { z0, z1 });
   await browser.close();
 
   const fails = results.filter((x) => !x.ok);
