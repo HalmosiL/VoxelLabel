@@ -40,4 +40,11 @@ try {
   if (err.code !== "MODULE_NOT_FOUND") throw err;
 }
 
+// E2E_HOST=192.168.0.206 (say): the stack built for the LAN (its PUBLIC_*
+// URLs, and so its tokens' issuer, on that address) -- localhost URLs would
+// mint tokens the backends reject.
+if (process.env.E2E_HOST) {
+  for (const key of ["UI", "VIEWER", "KC", "ADMIN", "DATA", "ANNOTATOR_API"]) fixtures[key] = fixtures[key].replace("localhost", process.env.E2E_HOST);
+}
+
 module.exports = fixtures;

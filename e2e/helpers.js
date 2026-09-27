@@ -30,7 +30,7 @@ async function login(page, user, pass, url) {
     await page.fill("#password", pass);
     await page.click("#kc-login");
   }
-  await page.waitForURL((u) => !u.href.includes("localhost:8080"), { timeout: 30000 });
+  await page.waitForURL((u) => !u.href.startsWith(F.KC), { timeout: 30000 });
 }
 
 /** A password-grant access token for API calls from the spec itself. */

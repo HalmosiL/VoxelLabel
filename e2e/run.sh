@@ -5,6 +5,7 @@
 #
 #   e2e/run.sh                 # every spec
 #   e2e/run.sh auth-page viewas # just these
+#   E2E_HOST=192.168.0.206 e2e/run.sh viewer  # a stack built for the LAN
 #
 # Each spec is a plain Node script printing PASS/FAIL lines and exiting
 # non-zero on a failure; this prints one summary line per spec.
@@ -23,7 +24,7 @@ for s in "${specs[@]}"; do
   printf '%-32s ' "$s"
   # A spec fails on a non-zero exit OR a "checks N, fails M" summary with M > 0
   # (a few older specs print the summary without setting an exit code).
-  if out=$(docker run --rm --network host -v "$PWD:/w" -w /w "$IMAGE" sh -c "node $s.spec.js" 2>&1) && ! echo "$out" | grep -qE '^checks [0-9]+, fails [1-9]'; then
+  if out=$(docker run --rm --network host -e E2E_HOST -v "$PWD:/w" -w /w "$IMAGE" sh -c "node $s.spec.js" 2>&1) && ! echo "$out" | grep -qE '^checks [0-9]+, fails [1-9]'; then
     echo "ok   $(echo "$out" | grep -E '^checks|ALL VISIBLE' | tail -1)"
   else
     fail=1; echo "FAIL"; echo "$out" | grep -E '^FAIL|EXC|Error' | head -8 | sed 's/^/    /'
